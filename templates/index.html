@@ -943,6 +943,21 @@ function startWizard() {
   goStep(1);
 }
 
+// ── Timestamp parser ─────────────────────────────────────────────────────────
+function safeParseUnixSeconds(timeVal) {
+  if (typeof timeVal === 'number') return timeVal;
+  let safeTs = timeVal;
+  if (safeTs.includes('T') && !safeTs.endsWith('Z') && !safeTs.match(/[+-]\d\d:\d\d$/)) {
+    safeTs += 'Z';
+  }
+  const parsedTime = new Date(safeTs).getTime();
+  if (isNaN(parsedTime)) {
+    console.error('Failed to parse timestamp:', timeVal);
+    return 0;
+  }
+  return Math.floor(parsedTime / 1000);
+}
+
 // ── Chart instances ───────────────────────────────────────────────────────────
 let _candleChart = null;
 let _equityChart = null;
@@ -1506,8 +1521,6 @@ function renderChart(candles, trades) {
     return;
   }
 
-  // chart_trades ts: ISO string without tz → append Z for UTC
-  const tradeTs  = s => Math.floor(new Date(s + 'Z').getTime() / 1000);
   const priceFmt = PRICE_FMT[state.instrument] || {precision:5, minMove:0.0005};
 
   wrap.style.position = "relative";
@@ -1577,7 +1590,7 @@ function renderChart(candles, trades) {
     const tradeByTime = new Map();
 
     recent.forEach(t => {
-      const exactTradeTime = Math.floor(new Date(t.ts + 'Z').getTime() / 1000);
+      const exactTradeTime = safeParseUnixSeconds(t.ts);
       const alignedTime    = alignTradeToCandle(exactTradeTime, validCandleTimes);
       const isLong         = t.signal === 1;
       const isWin          = t.win;
@@ -1637,9 +1650,7 @@ function renderEquityCurve(trades, slMult, tpMult) {
   const reward = RISK * tpMult / slMult;
   const MS_DAY = 86400000;
 
-  // chart_trades ts: ISO string without tz → append Z for UTC
-  const tradeToMs  = s => new Date(s + 'Z').getTime();
-  const sorted = [...trades].sort((a, b) => tradeToMs(a.ts) - tradeToMs(b.ts));
+  const sorted = [...trades].sort((a, b) => safeParseUnixSeconds(a.ts) - safeParseUnixSeconds(b.ts));
 
   const toMidnight = ms => {
     const d = new Date(ms);
@@ -1648,12 +1659,12 @@ function renderEquityCurve(trades, slMult, tpMult) {
 
   const dailyPnl = {};
   sorted.forEach(t => {
-    const key = toMidnight(tradeToMs(t.ts));
+    const key = toMidnight(safeParseUnixSeconds(t.ts) * 1000);
     dailyPnl[key] = (dailyPnl[key] || 0) + (t.win ? reward : -RISK);
   });
 
-  const startMs = toMidnight(tradeToMs(sorted[0].ts));
-  const endMs   = toMidnight(tradeToMs(sorted[sorted.length - 1].ts));
+  const startMs = toMidnight(safeParseUnixSeconds(sorted[0].ts) * 1000);
+  const endMs   = toMidnight(safeParseUnixSeconds(sorted[sorted.length - 1].ts) * 1000);
 
   // equity curve points: YYYY-MM-DD midnight UTC → no Z needed for date-only strings
   const points = [{ time: Math.floor((startMs - MS_DAY) / 1000), value: 1000 }];

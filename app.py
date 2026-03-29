@@ -685,7 +685,7 @@ def api_finalise():
         is_win     = t["win"]
         exit_price = round(t["tp"] if is_win else t["sl"], meta["decimals"])
         chart_trades.append({
-            "ts":         t["ts"].isoformat() if hasattr(t["ts"], "isoformat") else str(t["ts"]),
+            "ts":         (pd.Timestamp(t["ts"]).tz_localize("UTC") if pd.Timestamp(t["ts"]).tzinfo is None else pd.Timestamp(t["ts"])).isoformat(),
             "signal":     t["signal"],
             "entry":      round(t["entry"], meta["decimals"]),
             "tp":         round(t["tp"], meta["decimals"]),
