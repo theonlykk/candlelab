@@ -494,27 +494,15 @@
   }
   #name-input:focus { border-color: var(--accent); }
 
-  /* Chart */
-  #chart-wrap {
-    background: var(--card);
+  /* Bloomberg-style subplot container */
+  #multi-chart-container {
     border: 1px solid var(--border);
     border-radius: var(--radius);
     overflow: hidden;
-    margin: 20px 0;
-    height: 350px;
+    margin: 20px 0 0;
   }
-  #equity-wrap {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    overflow: hidden;
-    height: 200px;
-  }
-  #equity-final {
-    font-size: 12px;
-    text-align: right;
-    padding: 5px 2px 12px;
-  }
+  #top-chart    { overflow: hidden; }
+  #bottom-chart { overflow: hidden; border-top: 1px solid var(--border); }
   #ai-commentary {
     background: var(--card);
     border: 1px solid var(--border);
@@ -927,8 +915,10 @@
     </div>
 
     <div id="saved-state">
-      <div id="chart-wrap"></div>
-      <div id="equity-wrap"></div>
+      <div id="multi-chart-container" style="display:flex; flex-direction:column; width:100%; height:500px;">
+        <div id="top-chart" style="flex:0 0 65%; width:100%;"></div>
+        <div id="bottom-chart" style="flex:0 0 35%; width:100%;"></div>
+      </div>
       <div id="equity-final"></div>
       <div id="stats-table-wrap"></div>
       <div id="trade-log-wrap"></div>
@@ -953,7 +943,7 @@ function startWizard() {
   goStep(1);
 }
 
-// ── Chart instances (for cross-chart range sync) ──────────────────────────────
+// ── Chart instances ───────────────────────────────────────────────────────────
 let _candleChart = null;
 let _equityChart = null;
 
@@ -964,6 +954,23 @@ function syncChartRange(candles) {
   const to   = toSec(Date.parse(candles.ts[candles.ts.length - 1]));
   if (_candleChart) try { _candleChart.timeScale().setVisibleRange({ from, to }); } catch(e) {}
   if (_equityChart) try { _equityChart.timeScale().setVisibleRange({ from, to }); } catch(e) {}
+}
+
+function _attachRangeSync() {
+  if (!_candleChart || !_equityChart) return;
+  let _syncing = false;
+  _candleChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+    if (_syncing || !range) return;
+    _syncing = true;
+    try { _equityChart.timeScale().setVisibleLogicalRange(range); } catch(e) {}
+    _syncing = false;
+  });
+  _equityChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+    if (_syncing || !range) return;
+    _syncing = true;
+    try { _candleChart.timeScale().setVisibleLogicalRange(range); } catch(e) {}
+    _syncing = false;
+  });
 }
 
 // ── State ────────────────────────────────────────────────────────────────────
@@ -1173,15 +1180,14 @@ function renderComplements(data) {
           <span class="comp-delta">+${c.delta}%</span>
         </div>
         <div class="comp-meta">${c.win_pct}% win rate · ${c.signals} signals</div>
-        <div class="connector-radios">
+        <div class="connector-radios" data-card="${i}">
           ${[
             ["ordered",   "•——•›", "In sequence",   "Pattern 2 fires after Pattern 1 within the window"],
             ["any-order", "•——•",  "Either order",   "Both patterns fire close together, any sequence"],
             ["optional",  "◦——•",  "As confirmation","Trade fires without Pattern 2, but wins more often with it"],
           ].map(([cn, icon, title, sub]) =>
-            `<button class="connector-radio${cn === c.connector ? " active" : ""}"
-               data-card="${i}" data-conn="${cn}"
-               onclick="selectConnector(this); event.stopPropagation();">
+            `<button class="connector-radio${cn === (c.connector || "ordered") ? " active" : ""}"
+               data-value="${cn}">
                <span class="conn-icon">${icon}</span><span class="conn-title">${title}</span>
                <span class="conn-sub">${sub}</span>
              </button>`
@@ -1191,6 +1197,23 @@ function renderComplements(data) {
         if (e.target.closest(".connector-radio")) return;
         selectComplement(i);
       };
+
+      const radiosEl = card.querySelector(".connector-radios");
+      radiosEl.addEventListener("click", e => {
+        const btn = e.target.closest(".connector-radio");
+        if (!btn) return;
+        e.stopPropagation();
+        const val     = btn.dataset.value;
+        const cardIdx = parseInt(radiosEl.dataset.card);
+        state.complementData[cardIdx].connector = val;
+        if (state.complement === state.complementData[cardIdx].complement) {
+          state.connector = val;
+        }
+        radiosEl.querySelectorAll(".connector-radio").forEach(b => {
+          b.classList.toggle("active", b === btn);
+        });
+      });
+
       content.appendChild(card);
     });
   }
@@ -1223,16 +1246,6 @@ function selectComplement(idx) {
   if (btn) btn.disabled = false;
 }
 
-function selectConnector(btn) {
-  const idx = parseInt(btn.dataset.card);
-  state.complementData[idx].connector = btn.dataset.conn;
-  if (state.complement === state.complementData[idx].complement) {
-    state.connector = btn.dataset.conn;
-  }
-  btn.closest(".connector-radios").querySelectorAll(".connector-radio").forEach(b => {
-    b.classList.toggle("active", b === btn);
-  });
-}
 
 // ── Step 6: Indicators ────────────────────────────────────────────────────────
 function buildIndicatorStep() {
@@ -1476,16 +1489,16 @@ function goLive() {
 
 // ── Chart ─────────────────────────────────────────────────────────────────────
 const PRICE_FMT = {
-  EURUSD:    {precision:5, minMove:0.00001}, GBPUSD:    {precision:5, minMove:0.00001},
-  USDJPY:    {precision:3, minMove:0.001},   USDCAD:    {precision:5, minMove:0.00001},
-  AUDUSD:    {precision:5, minMove:0.00001}, USDCHF:    {precision:5, minMove:0.00001},
-  NZDUSD:    {precision:5, minMove:0.00001}, XAUUSD:    {precision:2, minMove:0.01},
-  XAGUSD:    {precision:4, minMove:0.0001},  WTICOUSD:  {precision:3, minMove:0.001},
-  SPX500USD: {precision:2, minMove:0.01},    BTCUSD:    {precision:2, minMove:0.01},
+  EURUSD:    {precision:5, minMove:0.0005}, GBPUSD:    {precision:5, minMove:0.0005},
+  USDJPY:    {precision:3, minMove:0.001},  USDCAD:    {precision:5, minMove:0.0005},
+  AUDUSD:    {precision:5, minMove:0.0005}, USDCHF:    {precision:5, minMove:0.0005},
+  NZDUSD:    {precision:5, minMove:0.0005}, XAUUSD:    {precision:2, minMove:0.01},
+  XAGUSD:    {precision:4, minMove:0.0001}, WTICOUSD:  {precision:3, minMove:0.001},
+  SPX500USD: {precision:2, minMove:0.01},   BTCUSD:    {precision:2, minMove:0.01},
 };
 
 function renderChart(candles, trades) {
-  const wrap = document.getElementById("chart-wrap");
+  const wrap = document.getElementById("top-chart");
   wrap.innerHTML = "";
   _candleChart = null;
   if (!candles || !candles.ts || !candles.ts.length) {
@@ -1493,25 +1506,24 @@ function renderChart(candles, trades) {
     return;
   }
 
-  const INTERVAL_MINS  = { "5m": 5, "15m": 15, "1h": 60 };
-  const intervalMins   = INTERVAL_MINS[state.interval] || 5;
-  const TIMEOUT        = 5;
-  const exitOffsetSec  = TIMEOUT * intervalMins * 60;
-  const toSec = ms     => ms > 9999999999 ? Math.floor(ms / 1000) : ms;
-  const priceFmt       = PRICE_FMT[state.instrument] || {precision:5, minMove:0.00001};
+  const toSec    = ms => ms > 9999999999 ? Math.floor(ms / 1000) : ms;
+  const priceFmt = PRICE_FMT[state.instrument] || {precision:5, minMove:0.0005};
 
   const chart = LightweightCharts.createChart(wrap, {
-    width: wrap.clientWidth,
-    height: 350,
-    layout: { backgroundColor: "#ffffff", textColor: "#1a2e1a" },
-    grid: { vertLines: { color: "#e8f0e8" }, horzLines: { color: "#e8f0e8" } },
+    width:  wrap.clientWidth,
+    height: wrap.clientHeight || Math.round(500 * 0.65),
+    layout: { backgroundColor: "#f5f9f5", textColor: "#1a2e1a" },
+    grid: {
+      vertLines: { color: "rgba(0,0,0,0.05)" },
+      horzLines: { color: "rgba(0,0,0,0.05)" },
+    },
     crosshair: {
       mode: LightweightCharts.CrosshairMode.Normal,
       vertLine: { color: "#4caf50", width: 1, style: 1 },
       horzLine: { color: "#4caf50", width: 1, style: 1 },
     },
-    rightPriceScale: { borderColor: "#e8f0e8" },
-    timeScale: { borderColor: "#e8f0e8", timeVisible: true },
+    rightPriceScale: { borderColor: "rgba(0,0,0,0.08)", minimumWidth: 75 },
+    timeScale: { borderColor: "rgba(0,0,0,0.08)", visible: false },
   });
   _candleChart = chart;
 
@@ -1525,39 +1537,25 @@ function renderChart(candles, trades) {
   const chartData = candles.ts.map((t, i) => ({
     time: toSec(Date.parse(t)),
     open: candles.open[i], high: candles.high[i],
-    low: candles.low[i], close: candles.close[i],
+    low:  candles.low[i],  close: candles.close[i],
   }));
   series.setData(chartData);
 
   if (trades && trades.length) {
     const markers = [];
+    const dec = priceFmt.precision;
 
     trades.forEach(t => {
       const entryTime = toSec(Date.parse(t.ts));
-      const exitTime  = entryTime + exitOffsetSec;
       const isLong    = t.signal === 1;
-      const fillColor = t.win ? "rgba(76,175,80,0.08)" : "rgba(239,83,80,0.08)";
-
       markers.push({
         time:     entryTime,
         position: isLong ? "aboveBar" : "belowBar",
-        color:    isLong ? "#4caf50" : "#ef5350",
+        color:    isLong ? "#2e7d32" : "#ef5350",
         shape:    isLong ? "arrowUp" : "arrowDown",
-        size:     2,
+        size:     1,
+        text:     `TP ${t.tp.toFixed(dec)}  SL ${t.sl.toFixed(dec)}`,
       });
-
-      series.createPriceLine({ price: t.tp, color: "#4caf50", lineStyle: 1, lineWidth: 1, axisLabelVisible: false, title: "TP" });
-      series.createPriceLine({ price: t.sl, color: "#ef5350", lineStyle: 1, lineWidth: 1, axisLabelVisible: false, title: "SL" });
-
-      const targetPrice = t.win ? t.tp : t.sl;
-      const band = chart.addBaselineSeries({
-        baseValue: { type: "price", price: t.entry },
-        topLineColor: "rgba(0,0,0,0)", topFillColor1: fillColor, topFillColor2: fillColor,
-        bottomLineColor: "rgba(0,0,0,0)", bottomFillColor1: fillColor, bottomFillColor2: fillColor,
-        lineWidth: 0, crosshairMarkerVisible: false, lastValueVisible: false,
-        priceLineVisible: false, axisLabelVisible: false,
-      });
-      band.setData([{ time: entryTime, value: targetPrice }, { time: exitTime, value: targetPrice }]);
     });
 
     markers.sort((a, b) => a.time - b.time);
@@ -1567,26 +1565,24 @@ function renderChart(candles, trades) {
 
 // ── Equity curve ─────────────────────────────────────────────────────────────
 function renderEquityCurve(trades, slMult, tpMult) {
-  const wrap = document.getElementById("equity-wrap");
+  const wrap    = document.getElementById("bottom-chart");
   const finalEl = document.getElementById("equity-final");
   wrap.innerHTML = "";
   finalEl.textContent = "";
+  _equityChart = null;
   if (!trades || !trades.length) return;
 
   const RISK   = 100;
   const reward = RISK * tpMult / slMult;
   const MS_DAY = 86400000;
 
-  // Sort trades chronologically
   const sorted = [...trades].sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
 
-  // UTC midnight for a date
   const toMidnight = ms => {
     const d = new Date(ms);
     return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
   };
 
-  // Accumulate PnL per calendar day
   const dailyPnl = {};
   sorted.forEach(t => {
     const key = toMidnight(Date.parse(t.ts));
@@ -1596,7 +1592,6 @@ function renderEquityCurve(trades, slMult, tpMult) {
   const startMs = toMidnight(Date.parse(sorted[0].ts));
   const endMs   = toMidnight(Date.parse(sorted[sorted.length - 1].ts));
 
-  // Build continuous daily points: day-zero then each calendar day
   const points = [{ time: Math.floor((startMs - MS_DAY) / 1000), value: 1000 }];
   let equity = 1000;
   for (let ms = startMs; ms <= endMs; ms += MS_DAY) {
@@ -1606,32 +1601,32 @@ function renderEquityCurve(trades, slMult, tpMult) {
 
   const finalEquity = points[points.length - 1].value;
   const gain        = finalEquity - 1000;
-  const lineColor   = gain >= 0 ? "#2e7d32" : "#ef5350";
 
-  _equityChart = null;
   const chart = LightweightCharts.createChart(wrap, {
-    width: wrap.clientWidth,
-    height: 200,
-    layout: { backgroundColor: "#ffffff", textColor: "#1a2e1a" },
-    grid: { vertLines: { color: "#e8f0e8" }, horzLines: { color: "#e8f0e8" } },
+    width:  wrap.clientWidth,
+    height: wrap.clientHeight || Math.round(500 * 0.35),
+    layout: { backgroundColor: "#f5f9f5", textColor: "#1a2e1a" },
+    grid: {
+      vertLines: { color: "rgba(0,0,0,0.05)" },
+      horzLines: { color: "rgba(0,0,0,0.05)" },
+    },
     crosshair: {
       mode: LightweightCharts.CrosshairMode.Normal,
       vertLine: { color: "#4caf50", width: 1, style: 1 },
       horzLine: { color: "#4caf50", width: 1, style: 1 },
     },
     rightPriceScale: {
-      borderColor: "#e8f0e8",
+      borderColor: "rgba(0,0,0,0.08)",
+      minimumWidth: 75,
       autoScale: true,
-      scaleMargins: { top: 0.15, bottom: 0.15 },
+      scaleMargins: { top: 0.1, bottom: 0.1 },
     },
-    timeScale: { borderColor: "#e8f0e8", timeVisible: true },
-    handleScroll: false,
-    handleScale: false,
+    timeScale: { borderColor: "rgba(0,0,0,0.08)", timeVisible: true, visible: true },
   });
   _equityChart = chart;
 
   const series = chart.addLineSeries({
-    color:            lineColor,
+    color:            "#2e7d32",
     lineWidth:        2,
     priceFormat:      { type: "price", precision: 2, minMove: 0.01 },
     lastValueVisible: true,
@@ -1639,13 +1634,12 @@ function renderEquityCurve(trades, slMult, tpMult) {
   });
 
   series.setData(points);
-  setTimeout(() => {
-    chart.timeScale().fitContent();
-    chart.applyOptions({ rightPriceScale: { autoScale: true } });
-  }, 50);
 
-  finalEl.textContent = `Final equity: $${Number(finalEquity).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })} (${gain >= 0 ? "+" : ""}${gain.toFixed(0)})`;
-  finalEl.style.color = gain >= 0 ? "var(--accent)" : "var(--red)";
+  // Wire up bi-directional logical-range sync after both charts exist
+  _attachRangeSync();
+
+  finalEl.style.cssText = `font-size:13px; font-weight:600; padding:6px 0 10px; color:${gain >= 0 ? "var(--accent)" : "var(--red)"};`;
+  finalEl.textContent = `Equity: $${Number(finalEquity).toLocaleString(undefined,{maximumFractionDigits:0})} (${gain >= 0 ? "+" : ""}${gain.toFixed(0)})`;
 }
 
 // ── Trade log ─────────────────────────────────────────────────────────────────
@@ -1794,9 +1788,10 @@ function renderSuggestionCard(d) {
 function _clearSavedState() {
   document.getElementById("saved-state").classList.remove("visible");
   document.getElementById("wizard-step9-form").classList.remove("hidden");
-  document.getElementById("chart-wrap").innerHTML = "";
-  document.getElementById("equity-wrap").innerHTML = "";
+  document.getElementById("top-chart").innerHTML = "";
+  document.getElementById("bottom-chart").innerHTML = "";
   document.getElementById("equity-final").textContent = "";
+  document.getElementById("equity-final").style.cssText = "";
   document.getElementById("stats-table-wrap").innerHTML = "";
   document.getElementById("trade-log-wrap").innerHTML = "";
   document.getElementById("ai-commentary").textContent = "";
