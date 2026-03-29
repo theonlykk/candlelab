@@ -959,8 +959,9 @@ function safeParseUnixSeconds(timeVal) {
 }
 
 // ── Chart instances ───────────────────────────────────────────────────────────
-let _candleChart = null;
-let _equityChart = null;
+let _candleChart    = null;
+let _equityChart    = null;
+let _lastCandleTime = null;
 
 function syncChartRange(candles) {
   if (!candles || !candles.ts || !candles.ts.length) return;
@@ -1560,11 +1561,7 @@ function renderChart(candles, trades) {
   series.setData(formattedCandles);
   chart.timeScale().fitContent();
 
-  const lastCandleTime = validCandleTimes[validCandleTimes.length - 1];
-  const defaultFrom    = lastCandleTime - 7 * 24 * 3600;
-  const defaultTo      = lastCandleTime + 3600;
-  chart.timeScale().setVisibleRange({ from: defaultFrom, to: defaultTo });
-  if (_equityChart) try { _equityChart.timeScale().setVisibleRange({ from: defaultFrom, to: defaultTo }); } catch(e) {}
+  _lastCandleTime = validCandleTimes[validCandleTimes.length - 1];
 
   function alignTradeToCandle(tradeTimeInSeconds, validTimes) {
     let alignedTime = validTimes[0];
@@ -1614,8 +1611,10 @@ function renderChart(candles, trades) {
       tradeByTime.set(alignedTime, t);
     });
 
-    markers.sort((a, b) => a.time - b.time);
-    series.setMarkers(markers);
+    const markerMap = new Map();
+    markers.forEach(m => { if (m.time) markerMap.set(m.time, m); });
+    const dedupedMarkers = Array.from(markerMap.values()).sort((a, b) => a.time - b.time);
+    series.setMarkers(dedupedMarkers);
 
     // Crosshair tooltip
     const INTERVAL_MINS = { "5m": 5, "15m": 15, "1h": 60 };
@@ -1672,14 +1671,22 @@ function renderEquityCurve(trades, slMult, tpMult) {
   const startMs = toMidnight(safeParseUnixSeconds(sorted[0].ts) * 1000);
   const endMs   = toMidnight(safeParseUnixSeconds(sorted[sorted.length - 1].ts) * 1000);
 
-  // equity curve points: YYYY-MM-DD midnight UTC → no Z needed for date-only strings
-  const points = [{ time: Math.floor((startMs - MS_DAY) / 1000), value: 1000 }];
+  // equity curve points: ms values are UTC midnight from Date.UTC() — divide directly
+  const rawPoints = [{ time: Math.floor((startMs - MS_DAY) / 1000), value: 1000 }];
   let equity = 1000;
   for (let ms = startMs; ms <= endMs; ms += MS_DAY) {
     equity = parseFloat((equity + (dailyPnl[ms] || 0)).toFixed(2));
-    // ms is already a UTC midnight value from Date.UTC() — divide directly
-    points.push({ time: Math.floor(ms / 1000), value: equity });
+    rawPoints.push({ time: Math.floor(ms / 1000), value: equity });
   }
+
+  // Deduplicate by time to prevent LWC crash on duplicate timestamps
+  const eqDataMap = new Map();
+  rawPoints.forEach(p => {
+    const timeVal = safeParseUnixSeconds(p.time);
+    if (!timeVal) return;
+    eqDataMap.set(timeVal, { time: timeVal, value: p.value });
+  });
+  const points = Array.from(eqDataMap.values()).sort((a, b) => a.time - b.time);
 
   const finalEquity = points[points.length - 1].value;
   const gain        = finalEquity - 1000;
@@ -1719,6 +1726,12 @@ function renderEquityCurve(trades, slMult, tpMult) {
 
   // Wire up bi-directional logical-range sync after both charts exist
   _attachRangeSync();
+
+  // Set initial visible range: from earliest equity point to last candle + 1h buffer
+  const rangeFrom = points[0].time;
+  const rangeTo   = (_lastCandleTime || points[points.length - 1].time) + 3600;
+  try { _candleChart.timeScale().setVisibleRange({ from: rangeFrom, to: rangeTo }); } catch(e) {}
+  try { _equityChart.timeScale().setVisibleRange({ from: rangeFrom, to: rangeTo }); } catch(e) {}
 
   finalEl.style.cssText = `font-size:13px; font-weight:600; padding:6px 0 10px; color:${gain >= 0 ? "var(--accent)" : "var(--red)"};`;
   finalEl.textContent = `Equity: $${Number(finalEquity).toLocaleString(undefined,{maximumFractionDigits:0})} (${gain >= 0 ? "+" : ""}${gain.toFixed(0)})`;
