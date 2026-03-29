@@ -89,12 +89,16 @@
     padding: 24px 16px 90px;
     max-width: var(--step-max);
     margin: 0 auto;
-    animation: fadeUp 0.25s ease;
   }
-  .step.active { display: block; }
+  .step.active           { display: block; animation: slideInUp   0.25s ease-out; }
+  .step.active.slide-back { display: block; animation: slideInDown 0.25s ease-out; }
 
-  @keyframes fadeUp {
-    from { opacity: 0; transform: translateY(12px); }
+  @keyframes slideInUp {
+    from { opacity: 0; transform: translateY(22px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes slideInDown {
+    from { opacity: 0; transform: translateY(-18px); }
     to   { opacity: 1; transform: translateY(0); }
   }
 
@@ -205,8 +209,8 @@
   .badge {
     display: inline-block;
     border-radius: 6px;
-    padding: 2px 8px;
-    font-size: 12px;
+    padding: 3px 10px;
+    font-size: 13px;
     font-weight: 700;
   }
   .badge-green { background: rgba(129,199,132,0.15); color: var(--green); }
@@ -218,7 +222,7 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 14px 16px;
+    padding: 18px 20px;
   }
   .pattern-rates {
     display: flex;
@@ -542,6 +546,7 @@
   .card.selected, .big-btn.selected, .comp-card.selected, .toggle-card.on {
     border-left-color: var(--accent);
   }
+  .card.selected { border-left-width: 4px; }
 
   /* Landing screen */
   #landing {
@@ -558,17 +563,17 @@
   }
   #landing.hidden { display: none; }
   .landing-logo {
-    font-size: 30px;
+    font-size: 28px;
     font-weight: 800;
     color: var(--accent);
-    margin-bottom: 28px;
+    margin-bottom: 20px;
     letter-spacing: -0.5px;
   }
   .landing-title {
-    font-size: 26px;
-    font-weight: 700;
+    font-size: 30px;
+    font-weight: 800;
     color: var(--text);
-    line-height: 1.3;
+    line-height: 1.2;
     margin-bottom: 14px;
     max-width: 340px;
   }
@@ -584,13 +589,24 @@
     color: #fff;
     border: none;
     border-radius: var(--radius);
-    padding: 18px 52px;
+    padding: 18px 0;
     font-size: 18px;
     font-weight: 700;
     cursor: pointer;
+    width: 100%;
+    max-width: 340px;
     transition: opacity 0.15s;
+    animation: ctaPulse 2.2s ease-in-out infinite;
   }
-  .landing-btn:hover { opacity: 0.88; }
+  .landing-btn:hover { opacity: 0.88; animation: none; }
+  @keyframes ctaPulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(76,175,80,0.45); }
+    55%       { box-shadow: 0 0 0 14px rgba(76,175,80,0); }
+  }
+
+  /* Go Live button — amber/gold to signal final commitment */
+  #go-live-btn { background: #F5A623; }
+  #go-live-btn:hover:not(:disabled) { opacity: 0.88; }
 
   /* Hide header + progress until wizard starts */
   #progress-bar.wizard-hidden, #header.wizard-hidden { display: none !important; }
@@ -875,8 +891,8 @@
   </svg>
   <div style="position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;">
     <div class="landing-logo">CandleLab</div>
-    <div class="landing-title">Welcome to CandleLab.</div>
-    <div class="landing-sub">We're going to build your first trading strategy together. It takes about 5 minutes.</div>
+    <div class="landing-title">Build your first trading strategy in 5 minutes.</div>
+    <div class="landing-sub">We guide you through every step. No experience needed.</div>
     <button class="landing-btn" onclick="startWizard()">Let's start →</button>
   </div>
 </div>
@@ -1035,7 +1051,7 @@
 
       <input type="text" id="name-input" placeholder="Strategy name…">
 
-      <button class="cta-btn" onclick="goLive()">Go Live 🚀</button>
+      <button class="cta-btn" id="go-live-btn" onclick="goLive()">Go Live 🚀</button>
     </div>
 
     <div id="saved-state">
@@ -1251,8 +1267,8 @@ function selectAnchor(name, tip) {
   });
   const tipBox = document.getElementById("ai-tip-box");
   if (tip) {
-    tipBox.textContent = "💡 " + tip;
     tipBox.classList.add("visible");
+    typewriter(tipBox, "💡 " + tip, 28);
   } else {
     tipBox.classList.remove("visible");
   }
@@ -2254,8 +2270,11 @@ function restartWizard() {
 <script>
 // Re-implement goStep cleanly (overrides the duplicate above)
 function goStep(n) {
-  document.querySelectorAll(".step").forEach(s => s.classList.remove("active"));
-  document.getElementById("step-" + n).classList.add("active");
+  const goingBack = n < state.currentStep;
+  document.querySelectorAll(".step").forEach(s => s.classList.remove("active", "slide-back"));
+  const nextEl = document.getElementById("step-" + n);
+  nextEl.classList.add("active");
+  if (goingBack) nextEl.classList.add("slide-back");
   state.currentStep = n;
   document.getElementById("step-indicator").textContent = n + " / 9";
   document.getElementById("progress-fill").style.width = (n / 9 * 100) + "%";
@@ -2310,6 +2329,14 @@ function checkScrollHint() {
   hint.classList.toggle("hidden", !scrollable);
 }
 window.addEventListener("scroll", checkScrollHint, { passive: true });
+
+function typewriter(el, text, msPerChar) {
+  el.textContent = "";
+  let i = 0;
+  (function tick() {
+    if (i < text.length) { el.textContent += text[i++]; setTimeout(tick, msPerChar); }
+  })();
+}
 
 function showRealTradeResponse() {
   document.getElementById("real-trade-btn").style.display = "none";
