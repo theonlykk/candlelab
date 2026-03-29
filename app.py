@@ -698,7 +698,7 @@ def api_finalise():
     try:
         df_main = get_ohlc(instrument, days=30, interval=interval)
         chart_candles = {
-            "ts":    [t.isoformat() for t in df_main.index[-200:]],
+            "ts":    [int(pd.Timestamp(t).timestamp()) for t in df_main.index[-200:]],
             "open":  df_main["open"].iloc[-200:].tolist(),
             "high":  df_main["high"].iloc[-200:].tolist(),
             "low":   df_main["low"].iloc[-200:].tolist(),

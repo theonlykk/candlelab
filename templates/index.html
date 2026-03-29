@@ -949,9 +949,9 @@ let _equityChart = null;
 
 function syncChartRange(candles) {
   if (!candles || !candles.ts || !candles.ts.length) return;
-  const tsToSec = s => Math.floor(new Date(s + 'Z').getTime() / 1000);
-  const from = tsToSec(candles.ts[0]);
-  const to   = tsToSec(candles.ts[candles.ts.length - 1]);
+  // candle ts values are Unix seconds integers — use directly
+  const from = candles.ts[0];
+  const to   = candles.ts[candles.ts.length - 1];
   if (_candleChart) try { _candleChart.timeScale().setVisibleRange({ from, to }); } catch(e) {}
   if (_equityChart) try { _equityChart.timeScale().setVisibleRange({ from, to }); } catch(e) {}
 }
@@ -1506,7 +1506,8 @@ function renderChart(candles, trades) {
     return;
   }
 
-  const tsToSec  = s => Math.floor(new Date(s + 'Z').getTime() / 1000);
+  // chart_trades ts: ISO string without tz → append Z for UTC
+  const tradeTs  = s => Math.floor(new Date(s + 'Z').getTime() / 1000);
   const priceFmt = PRICE_FMT[state.instrument] || {precision:5, minMove:0.0005};
 
   wrap.style.position = "relative";
@@ -1536,8 +1537,9 @@ function renderChart(candles, trades) {
     priceFormat: { type: "price", precision: priceFmt.precision, minMove: priceFmt.minMove },
   });
 
-  const chartData = candles.ts.map((t, i) => ({
-    time: tsToSec(t),
+  // chart_candles ts: already Unix seconds integers — pass directly
+  const chartData = candles.ts.map((c_ts, i) => ({
+    time: c_ts,
     open: candles.open[i], high: candles.high[i],
     low:  candles.low[i],  close: candles.close[i],
   }));
@@ -1562,7 +1564,7 @@ function renderChart(candles, trades) {
     const tradeByTime = new Map();
 
     recent.forEach(t => {
-      const entryTime = tsToSec(t.ts);
+      const entryTime = tradeTs(t.ts);
       const isLong    = t.signal === 1;
       const isWin     = t.win;
       // build a fresh object then destructure to guarantee no text property
@@ -1622,8 +1624,9 @@ function renderEquityCurve(trades, slMult, tpMult) {
   const reward = RISK * tpMult / slMult;
   const MS_DAY = 86400000;
 
-  const tsMs = s => new Date(s + 'Z').getTime();
-  const sorted = [...trades].sort((a, b) => tsMs(a.ts) - tsMs(b.ts));
+  // chart_trades ts: ISO string without tz → append Z for UTC
+  const tradeToMs  = s => new Date(s + 'Z').getTime();
+  const sorted = [...trades].sort((a, b) => tradeToMs(a.ts) - tradeToMs(b.ts));
 
   const toMidnight = ms => {
     const d = new Date(ms);
@@ -1632,17 +1635,19 @@ function renderEquityCurve(trades, slMult, tpMult) {
 
   const dailyPnl = {};
   sorted.forEach(t => {
-    const key = toMidnight(tsMs(t.ts));
+    const key = toMidnight(tradeToMs(t.ts));
     dailyPnl[key] = (dailyPnl[key] || 0) + (t.win ? reward : -RISK);
   });
 
-  const startMs = toMidnight(tsMs(sorted[0].ts));
-  const endMs   = toMidnight(tsMs(sorted[sorted.length - 1].ts));
+  const startMs = toMidnight(tradeToMs(sorted[0].ts));
+  const endMs   = toMidnight(tradeToMs(sorted[sorted.length - 1].ts));
 
+  // equity curve points: YYYY-MM-DD midnight UTC → no Z needed for date-only strings
   const points = [{ time: Math.floor((startMs - MS_DAY) / 1000), value: 1000 }];
   let equity = 1000;
   for (let ms = startMs; ms <= endMs; ms += MS_DAY) {
     equity = parseFloat((equity + (dailyPnl[ms] || 0)).toFixed(2));
+    // ms is already a UTC midnight value from Date.UTC() — divide directly
     points.push({ time: Math.floor(ms / 1000), value: equity });
   }
 
