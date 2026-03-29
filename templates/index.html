@@ -9,14 +9,14 @@
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
   :root {
-    --bg: #0d0d0d;
-    --card: #1a1a1a;
-    --border: #2a2a2a;
-    --text: #ffffff;
-    --muted: #888888;
-    --accent: #F5A623;
-    --green: #22c55e;
-    --amber: #F5A623;
+    --bg: #f5f9f5;
+    --card: #ffffff;
+    --border: #d4e8d4;
+    --text: #1a2e1a;
+    --muted: #4a7a4a;
+    --accent: #4caf50;
+    --green: #2e7d32;
+    --amber: #f59e0b;
     --red: #ef4444;
     --radius: 12px;
     --step-max: 560px;
@@ -53,8 +53,8 @@
     align-items: center;
     justify-content: space-between;
     padding: 0 16px;
-    background: var(--bg);
-    border-bottom: 1px solid var(--border);
+    background: var(--card);
+    border-bottom: 2px solid var(--accent);
     z-index: 99;
   }
   #header-logo {
@@ -122,10 +122,10 @@
     display: flex;
     align-items: center;
   }
-  .card:hover { border-color: #444; }
+  .card:hover { border-color: var(--accent); }
   .card.selected {
     border-color: var(--accent);
-    background: rgba(245,166,35,0.08);
+    background: rgba(76,175,80,0.08);
   }
   .card-main {
     flex: 1;
@@ -166,10 +166,10 @@
     transition: border-color 0.15s, background 0.15s;
     min-height: 72px;
   }
-  .big-btn:hover { border-color: #444; }
+  .big-btn:hover { border-color: var(--accent); }
   .big-btn.selected {
     border-color: var(--accent);
-    background: rgba(245,166,35,0.08);
+    background: rgba(76,175,80,0.08);
   }
   .big-btn-title {
     font-size: 16px;
@@ -187,7 +187,7 @@
   .cta-btn {
     width: 100%;
     background: var(--accent);
-    color: #000;
+    color: #fff;
     border: none;
     border-radius: var(--radius);
     padding: 16px;
@@ -209,9 +209,9 @@
     font-size: 12px;
     font-weight: 700;
   }
-  .badge-green { background: rgba(34,197,94,0.15); color: var(--green); }
-  .badge-amber { background: rgba(245,166,35,0.15); color: var(--amber); }
-  .badge-red   { background: rgba(239,68,68,0.15);  color: var(--red); }
+  .badge-green { background: rgba(129,199,132,0.15); color: var(--green); }
+  .badge-amber { background: rgba(255,241,118,0.15); color: var(--amber); }
+  .badge-red   { background: rgba(239,68,68,0.15);   color: var(--red); }
 
   /* Pattern card extras */
   .pattern-card {
@@ -231,8 +231,8 @@
 
   /* AI tip box */
   #ai-tip-box {
-    background: rgba(245,166,35,0.07);
-    border: 1px solid rgba(245,166,35,0.2);
+    background: rgba(76,175,80,0.07);
+    border: 1px solid rgba(76,175,80,0.2);
     border-radius: var(--radius);
     padding: 14px 16px;
     font-size: 14px;
@@ -275,7 +275,7 @@
   }
   .comp-card.selected {
     border-color: var(--accent);
-    background: rgba(245,166,35,0.08);
+    background: rgba(76,175,80,0.08);
   }
   .comp-card-top {
     display: flex;
@@ -328,7 +328,7 @@
   }
   .toggle-card.on {
     border-color: var(--accent);
-    background: rgba(245,166,35,0.08);
+    background: rgba(76,175,80,0.08);
   }
   .toggle-dot {
     width: 40px; height: 24px;
@@ -349,7 +349,7 @@
   }
   .toggle-card.on .toggle-dot {
     border-color: var(--accent);
-    background: rgba(245,166,35,0.2);
+    background: rgba(76,175,80,0.2);
   }
   .toggle-card.on .toggle-dot::after {
     transform: translateX(16px);
@@ -412,7 +412,7 @@
     border-radius: 50%;
     background: var(--accent);
     cursor: pointer;
-    box-shadow: 0 0 0 3px rgba(245,166,35,0.2);
+    box-shadow: 0 0 0 3px rgba(76,175,80,0.2);
   }
   input[type=range]::-moz-range-thumb {
     width: 22px; height: 22px;
@@ -501,7 +501,30 @@
     border-radius: var(--radius);
     overflow: hidden;
     margin: 20px 0;
-    height: 260px;
+    height: 350px;
+  }
+  #equity-wrap {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    height: 200px;
+  }
+  #equity-final {
+    font-size: 12px;
+    text-align: right;
+    padding: 5px 2px 12px;
+  }
+  #ai-commentary {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px;
+    font-size: 13px;
+    line-height: 1.65;
+    color: var(--text);
+    margin: 16px 0;
+    min-height: 44px;
   }
 
   /* Post-save CTA */
@@ -530,13 +553,218 @@
   #saved-state.visible { display: block; }
   #wizard-step9-form { display: block; }
   #wizard-step9-form.hidden { display: none; }
+
+  /* Card left accent */
+  .card, .big-btn, .comp-card, .toggle-card {
+    border-left: 3px solid rgba(76,175,80,0.2);
+  }
+  .card.selected, .big-btn.selected, .comp-card.selected, .toggle-card.on {
+    border-left-color: var(--accent);
+  }
+
+  /* Landing screen */
+  #landing {
+    position: fixed;
+    inset: 0;
+    background: var(--bg);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 32px 24px;
+    z-index: 200;
+    text-align: center;
+  }
+  #landing.hidden { display: none; }
+  .landing-logo {
+    font-size: 30px;
+    font-weight: 800;
+    color: var(--accent);
+    margin-bottom: 28px;
+    letter-spacing: -0.5px;
+  }
+  .landing-title {
+    font-size: 26px;
+    font-weight: 700;
+    color: var(--text);
+    line-height: 1.3;
+    margin-bottom: 14px;
+    max-width: 340px;
+  }
+  .landing-sub {
+    font-size: 16px;
+    color: var(--muted);
+    line-height: 1.65;
+    margin-bottom: 40px;
+    max-width: 320px;
+  }
+  .landing-btn {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius);
+    padding: 18px 52px;
+    font-size: 18px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  .landing-btn:hover { opacity: 0.88; }
+
+  /* Hide header + progress until wizard starts */
+  #progress-bar.wizard-hidden, #header.wizard-hidden { display: none !important; }
+
+  /* Suggestion card */
+  #suggestion-card {
+    display: none;
+    border-left: 3px solid var(--accent);
+    background: rgba(76,175,80,0.06);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    margin: 12px 0 0;
+  }
+  #suggestion-card.visible { display: block; }
+  .suggestion-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--green);
+    margin-bottom: 8px;
+  }
+  .suggestion-line {
+    font-size: 13px;
+    color: var(--text);
+    line-height: 1.55;
+    margin-bottom: 6px;
+  }
+  .suggestion-action-btn {
+    display: inline-block;
+    margin-top: 4px;
+    margin-bottom: 6px;
+    padding: 5px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent);
+    background: transparent;
+    border: 1px solid var(--accent);
+    border-radius: 20px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+    line-height: 1;
+  }
+  .suggestion-action-btn:hover {
+    background: rgba(76,175,80,0.12);
+  }
+  .suggestion-item { margin-bottom: 10px; }
+  .suggestion-item:last-child { margin-bottom: 0; }
+
+  /* Stats table */
+  #stats-table-wrap { margin: 16px 0 12px; }
+  .stats-label {
+    font-size: 13px;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: var(--card);
+  }
+  .stat-cell {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+  }
+  .stat-cell:nth-child(2n) { border-right: none; }
+  .stat-cell:last-child { border-bottom: none; }
+  .stat-cell:nth-last-child(2):not(.full-width) { border-bottom: none; }
+  .stat-cell.full-width {
+    grid-column: 1 / -1;
+    border-right: none;
+    border-bottom: none;
+  }
+  .stat-cell-label {
+    font-size: 11px;
+    color: var(--muted);
+    margin-bottom: 3px;
+  }
+  .stat-cell-value {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .stat-cell-value.positive { color: var(--green); }
+  .stat-cell-value.negative { color: var(--red); }
+
+  /* Connector radio cards */
+  .connector-radios { display:flex; flex-direction:column; gap:6px; margin-top:10px; }
+  .connector-radio {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    text-align: left;
+    cursor: pointer;
+    width: 100%;
+    transition: border-color 0.15s, background 0.15s;
+    border-left: 3px solid rgba(76,175,80,0.2);
+  }
+  .connector-radio:hover { border-color: var(--accent); }
+  .connector-radio.active {
+    border-color: var(--accent);
+    border-left-color: var(--accent);
+    background: rgba(76,175,80,0.06);
+  }
+  .conn-icon { font-family: monospace; font-size: 13px; color: var(--muted); margin-right: 8px; }
+  .conn-title { font-size: 13px; font-weight: 600; color: var(--text); }
+  .conn-sub { display:block; font-size:11px; color:var(--muted); margin-top:2px; }
+
+  /* Tweak cards */
+  .tweak-section-label { font-size:13px; color:var(--muted); margin:16px 0 8px; }
+  .tweak-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    margin-bottom: 10px;
+  }
+  .tweak-title { font-size:14px; font-weight:600; color:var(--text); margin-bottom:4px; }
+  .tweak-reason { font-size:12px; color:var(--muted); margin-bottom:10px; line-height:1.5; }
+  .tweak-result { font-size:12px; }
+
+  /* Market comparison */
+  .compare-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:10px; }
+  .compare-col {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    text-align: center;
+  }
+  .compare-col.winner { border-color: var(--accent); background: rgba(76,175,80,0.06); }
+  .compare-col-label { font-size:11px; color:var(--muted); margin-bottom:6px; font-weight:500; }
+  .compare-col-winpct { font-size:22px; font-weight:700; color:var(--text); }
+  .compare-col.winner .compare-col-winpct { color: var(--accent); }
+  .compare-col-sigs { font-size:11px; color:var(--muted); margin-top:3px; }
 </style>
 </head>
 <body>
 
-<div id="progress-bar"><div id="progress-fill"></div></div>
+<div id="landing">
+  <div class="landing-logo">CandleLab</div>
+  <div class="landing-title">Welcome to CandleLab.</div>
+  <div class="landing-sub">We're going to build your first trading strategy together. It takes about 5 minutes.</div>
+  <button class="landing-btn" onclick="startWizard()">Let's start →</button>
+</div>
 
-<div id="header">
+<div id="progress-bar" class="wizard-hidden"><div id="progress-fill"></div></div>
+
+<div id="header" class="wizard-hidden">
   <button id="back-btn" onclick="goBack()">← Back</button>
   <div id="header-logo">CandleLab</div>
   <div id="step-indicator">1 / 9</div>
@@ -545,16 +773,16 @@
 <div id="main">
 
   <!-- Step 1: Market -->
-  <div class="step active" id="step-1">
+  <div class="step" id="step-1">
     <div class="step-title">Choose a market</div>
-    <div class="step-subtitle">Pick the instrument you want to build a strategy for.</div>
+    <div class="step-subtitle">Pick the market you want to trade. Start with something you already follow.</div>
     <div class="grid-2" id="instrument-grid"></div>
   </div>
 
   <!-- Step 2: Timeframe -->
   <div class="step" id="step-2">
     <div class="step-title">Choose a timeframe</div>
-    <div class="step-subtitle">How quickly do you want to see results?</div>
+    <div class="step-subtitle">How often do you want to check in? Shorter timeframes fire more signals, longer ones are more reliable.</div>
     <button class="big-btn" data-interval="5m" onclick="selectInterval(this)">
       <span class="big-btn-title">5 minutes</span>
       <span class="big-btn-sub">See results in hours</span>
@@ -572,7 +800,7 @@
   <!-- Step 3: Direction -->
   <div class="step" id="step-3">
     <div class="step-title">What's your strategy?</div>
-    <div class="step-subtitle">Choose how you want to trade.</div>
+    <div class="step-subtitle">Every strategy starts with a direction. Are you looking to catch a turning point, or ride a move that's already underway?</div>
     <button class="big-btn" data-direction="reversal" onclick="selectDirection(this)">
       <span class="big-btn-title">Buy on a reversal</span>
       <span class="big-btn-sub">Catch a turning point</span>
@@ -590,7 +818,7 @@
   <!-- Step 4: Anchor pattern -->
   <div class="step" id="step-4">
     <div class="step-title">Choose your anchor pattern</div>
-    <div class="step-subtitle">This is the main signal that triggers your trade.</div>
+    <div class="step-subtitle">These are the patterns that have been firing most reliably on your chosen market over the last 30 days. Pick the one that resonates.</div>
     <div id="pattern-list"></div>
     <div id="ai-tip-box"></div>
     <button class="cta-btn" id="btn-anchor-continue" disabled onclick="continueToComplement()">
@@ -601,14 +829,14 @@
   <!-- Step 5: Complement -->
   <div class="step" id="step-5">
     <div class="step-title">Add a confirmation pattern</div>
-    <div class="step-subtitle">A second pattern that fires near your anchor can improve accuracy.</div>
+    <div class="step-subtitle">A second pattern as confirmation can dramatically improve accuracy. Our AI just tested every combination.</div>
     <div id="complement-content"></div>
   </div>
 
   <!-- Step 6: Indicator confirmation -->
   <div class="step" id="step-6">
     <div class="step-title">Add indicator confirmation</div>
-    <div class="step-subtitle">Filter your signals using technical indicators.</div>
+    <div class="step-subtitle">Classic technical analysis can act as a filter. These have been shown to improve signal quality when used as context.</div>
     <div id="indicator-cards"></div>
     <button class="cta-btn" onclick="goStep(7)">Continue →</button>
   </div>
@@ -616,7 +844,7 @@
   <!-- Step 7: Session filter -->
   <div class="step" id="step-7">
     <div class="step-title">Choose a session</div>
-    <div class="step-subtitle">Limit your strategy to when the market is most active.</div>
+    <div class="step-subtitle">Most traders choose All Sessions to start, and that's fine. Once you have some results you can come back and narrow to specific sessions to sharpen the edge.</div>
     <div class="session-grid">
       <button class="big-btn" data-session="London" onclick="selectSession(this)">
         <span class="big-btn-title">London</span>
@@ -635,17 +863,20 @@
         <span class="big-btn-sub">13:00 – 17:00 UTC</span>
       </button>
       <button class="big-btn session-all selected" data-session="All" onclick="selectSession(this)">
-        <span class="big-btn-title">All Sessions</span>
-        <span class="big-btn-sub">No filter applied</span>
+        <span class="big-btn-title">✓ All Sessions</span>
+        <span class="big-btn-sub">Recommended starting point</span>
       </button>
     </div>
+    <p style="font-size:12px; color:var(--muted); margin-top:14px; line-height:1.55;">
+      Tip: start with All Sessions, then return here after going live to see which sessions your signals concentrate in.
+    </p>
     <button class="cta-btn" onclick="goStep(8)">Continue →</button>
   </div>
 
   <!-- Step 8: SL / TP -->
   <div class="step" id="step-8">
     <div class="step-title">Set your stops & targets</div>
-    <div class="step-subtitle">Based on ATR — the market's natural volatility.</div>
+    <div class="step-subtitle">We use the Average True Range to set stops and targets proportional to how the market is actually moving.</div>
 
     <div class="slider-row">
       <div class="slider-label">
@@ -675,7 +906,7 @@
   <!-- Step 9: Summary -->
   <div class="step" id="step-9">
     <div class="step-title">Your strategy</div>
-    <div class="step-subtitle">Here's what the backtest says.</div>
+    <div class="step-subtitle">Here's your completed strategy. Review the results and when you're ready, go live.</div>
 
     <div id="wizard-step9-form">
       <div class="card" style="cursor:default; flex-direction:column; align-items:stretch; padding:0;">
@@ -697,6 +928,13 @@
 
     <div id="saved-state">
       <div id="chart-wrap"></div>
+      <div id="equity-wrap"></div>
+      <div id="equity-final"></div>
+      <div id="stats-table-wrap"></div>
+      <div id="trade-log-wrap"></div>
+      <div id="ai-commentary"></div>
+      <div id="suggestion-card"></div>
+      <div id="ai-tweaks"></div>
       <div id="build-another">
         <p>Strategy saved and running live.</p>
         <button onclick="restartWizard()">Build another strategy</button>
@@ -707,6 +945,27 @@
 </div><!-- /main -->
 
 <script>
+// ── Landing ───────────────────────────────────────────────────────────────────
+function startWizard() {
+  document.getElementById("landing").classList.add("hidden");
+  document.getElementById("progress-bar").classList.remove("wizard-hidden");
+  document.getElementById("header").classList.remove("wizard-hidden");
+  goStep(1);
+}
+
+// ── Chart instances (for cross-chart range sync) ──────────────────────────────
+let _candleChart = null;
+let _equityChart = null;
+
+function syncChartRange(candles) {
+  if (!candles || !candles.ts || !candles.ts.length) return;
+  const toSec = ms => ms > 9999999999 ? Math.floor(ms / 1000) : ms;
+  const from = toSec(Date.parse(candles.ts[0]));
+  const to   = toSec(Date.parse(candles.ts[candles.ts.length - 1]));
+  if (_candleChart) try { _candleChart.timeScale().setVisibleRange({ from, to }); } catch(e) {}
+  if (_equityChart) try { _equityChart.timeScale().setVisibleRange({ from, to }); } catch(e) {}
+}
+
 // ── State ────────────────────────────────────────────────────────────────────
 const state = {
   instrument: null,     // e.g. "EURUSD"
@@ -914,15 +1173,22 @@ function renderComplements(data) {
           <span class="comp-delta">+${c.delta}%</span>
         </div>
         <div class="comp-meta">${c.win_pct}% win rate · ${c.signals} signals</div>
-        <div class="connector-sel">
-          ${["ordered","any-order","optional"].map(cn =>
-            `<button class="conn-btn${cn === c.connector ? " active" : ""}"
+        <div class="connector-radios">
+          ${[
+            ["ordered",   "•——•›", "In sequence",   "Pattern 2 fires after Pattern 1 within the window"],
+            ["any-order", "•——•",  "Either order",   "Both patterns fire close together, any sequence"],
+            ["optional",  "◦——•",  "As confirmation","Trade fires without Pattern 2, but wins more often with it"],
+          ].map(([cn, icon, title, sub]) =>
+            `<button class="connector-radio${cn === c.connector ? " active" : ""}"
                data-card="${i}" data-conn="${cn}"
-               onclick="selectConnector(this)">${cn}</button>`
+               onclick="selectConnector(this); event.stopPropagation();">
+               <span class="conn-icon">${icon}</span><span class="conn-title">${title}</span>
+               <span class="conn-sub">${sub}</span>
+             </button>`
           ).join("")}
         </div>`;
       card.onclick = e => {
-        if (e.target.classList.contains("conn-btn")) return;
+        if (e.target.closest(".connector-radio")) return;
         selectComplement(i);
       };
       content.appendChild(card);
@@ -963,7 +1229,7 @@ function selectConnector(btn) {
   if (state.complement === state.complementData[idx].complement) {
     state.connector = btn.dataset.conn;
   }
-  btn.closest(".connector-sel").querySelectorAll(".conn-btn").forEach(b => {
+  btn.closest(".connector-radios").querySelectorAll(".connector-radio").forEach(b => {
     b.classList.toggle("active", b === btn);
   });
 }
@@ -1196,6 +1462,12 @@ function goLive() {
       document.getElementById("wizard-step9-form").classList.add("hidden");
       document.getElementById("saved-state").classList.add("visible");
       renderChart(d.chart_candles, d.chart_trades);
+      renderEquityCurve(d.chart_trades, state.slMult, state.tpMult);
+      syncChartRange(d.chart_candles);
+      renderStatsTable(d.chart_trades, state.slMult, state.tpMult);
+      renderTradeLog(d.chart_trades);
+      fetchAiCommentary(cfg, d);
+      fetchAiTweaks(cfg, d);
     })
     .catch(() => {
       alert("Failed to save strategy.");
@@ -1203,66 +1475,571 @@ function goLive() {
 }
 
 // ── Chart ─────────────────────────────────────────────────────────────────────
+const PRICE_FMT = {
+  EURUSD:    {precision:5, minMove:0.00001}, GBPUSD:    {precision:5, minMove:0.00001},
+  USDJPY:    {precision:3, minMove:0.001},   USDCAD:    {precision:5, minMove:0.00001},
+  AUDUSD:    {precision:5, minMove:0.00001}, USDCHF:    {precision:5, minMove:0.00001},
+  NZDUSD:    {precision:5, minMove:0.00001}, XAUUSD:    {precision:2, minMove:0.01},
+  XAGUSD:    {precision:4, minMove:0.0001},  WTICOUSD:  {precision:3, minMove:0.001},
+  SPX500USD: {precision:2, minMove:0.01},    BTCUSD:    {precision:2, minMove:0.01},
+};
+
 function renderChart(candles, trades) {
   const wrap = document.getElementById("chart-wrap");
   wrap.innerHTML = "";
+  _candleChart = null;
   if (!candles || !candles.ts || !candles.ts.length) {
     wrap.innerHTML = `<div style="padding:20px; color:var(--muted); text-align:center;">No chart data available.</div>`;
     return;
   }
 
+  const INTERVAL_MINS  = { "5m": 5, "15m": 15, "1h": 60 };
+  const intervalMins   = INTERVAL_MINS[state.interval] || 5;
+  const TIMEOUT        = 5;
+  const exitOffsetSec  = TIMEOUT * intervalMins * 60;
+  const toSec = ms     => ms > 9999999999 ? Math.floor(ms / 1000) : ms;
+  const priceFmt       = PRICE_FMT[state.instrument] || {precision:5, minMove:0.00001};
+
   const chart = LightweightCharts.createChart(wrap, {
     width: wrap.clientWidth,
-    height: 260,
-    layout: { backgroundColor: "#1a1a1a", textColor: "#888" },
-    grid: { vertLines: { color: "#2a2a2a" }, horzLines: { color: "#2a2a2a" } },
-    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-    rightPriceScale: { borderColor: "#2a2a2a" },
-    timeScale: { borderColor: "#2a2a2a", timeVisible: true },
+    height: 350,
+    layout: { backgroundColor: "#ffffff", textColor: "#1a2e1a" },
+    grid: { vertLines: { color: "#e8f0e8" }, horzLines: { color: "#e8f0e8" } },
+    crosshair: {
+      mode: LightweightCharts.CrosshairMode.Normal,
+      vertLine: { color: "#4caf50", width: 1, style: 1 },
+      horzLine: { color: "#4caf50", width: 1, style: 1 },
+    },
+    rightPriceScale: { borderColor: "#e8f0e8" },
+    timeScale: { borderColor: "#e8f0e8", timeVisible: true },
   });
+  _candleChart = chart;
 
   const series = chart.addCandlestickSeries({
-    upColor: "#22c55e", downColor: "#ef4444",
-    borderUpColor: "#22c55e", borderDownColor: "#ef4444",
-    wickUpColor: "#22c55e", wickDownColor: "#ef4444",
+    upColor: "#4caf50", downColor: "#ef5350",
+    borderUpColor: "#4caf50", borderDownColor: "#ef5350",
+    wickUpColor: "#4caf50", wickDownColor: "#ef5350",
+    priceFormat: { type: "price", precision: priceFmt.precision, minMove: priceFmt.minMove },
   });
 
   const chartData = candles.ts.map((t, i) => ({
-    time: Math.floor(new Date(t).getTime() / 1000),
+    time: toSec(Date.parse(t)),
     open: candles.open[i], high: candles.high[i],
     low: candles.low[i], close: candles.close[i],
   }));
   series.setData(chartData);
 
   if (trades && trades.length) {
-    const markers = trades.map(t => ({
-      time: Math.floor(new Date(t.ts).getTime() / 1000),
-      position: t.signal === 1 ? "belowBar" : "aboveBar",
-      color: t.win ? "#22c55e" : "#ef4444",
-      shape: t.signal === 1 ? "arrowUp" : "arrowDown",
-      text: t.win ? "W" : "L",
-    }));
+    const markers = [];
+
+    trades.forEach(t => {
+      const entryTime = toSec(Date.parse(t.ts));
+      const exitTime  = entryTime + exitOffsetSec;
+      const isLong    = t.signal === 1;
+      const fillColor = t.win ? "rgba(76,175,80,0.08)" : "rgba(239,83,80,0.08)";
+
+      markers.push({
+        time:     entryTime,
+        position: isLong ? "aboveBar" : "belowBar",
+        color:    isLong ? "#4caf50" : "#ef5350",
+        shape:    isLong ? "arrowUp" : "arrowDown",
+        size:     2,
+      });
+
+      series.createPriceLine({ price: t.tp, color: "#4caf50", lineStyle: 1, lineWidth: 1, axisLabelVisible: false, title: "TP" });
+      series.createPriceLine({ price: t.sl, color: "#ef5350", lineStyle: 1, lineWidth: 1, axisLabelVisible: false, title: "SL" });
+
+      const targetPrice = t.win ? t.tp : t.sl;
+      const band = chart.addBaselineSeries({
+        baseValue: { type: "price", price: t.entry },
+        topLineColor: "rgba(0,0,0,0)", topFillColor1: fillColor, topFillColor2: fillColor,
+        bottomLineColor: "rgba(0,0,0,0)", bottomFillColor1: fillColor, bottomFillColor2: fillColor,
+        lineWidth: 0, crosshairMarkerVisible: false, lastValueVisible: false,
+        priceLineVisible: false, axisLabelVisible: false,
+      });
+      band.setData([{ time: entryTime, value: targetPrice }, { time: exitTime, value: targetPrice }]);
+    });
+
     markers.sort((a, b) => a.time - b.time);
     series.setMarkers(markers);
   }
+}
 
-  chart.timeScale().fitContent();
+// ── Equity curve ─────────────────────────────────────────────────────────────
+function renderEquityCurve(trades, slMult, tpMult) {
+  const wrap = document.getElementById("equity-wrap");
+  const finalEl = document.getElementById("equity-final");
+  wrap.innerHTML = "";
+  finalEl.textContent = "";
+  if (!trades || !trades.length) return;
+
+  const RISK   = 100;
+  const reward = RISK * tpMult / slMult;
+  const MS_DAY = 86400000;
+
+  // Sort trades chronologically
+  const sorted = [...trades].sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
+
+  // UTC midnight for a date
+  const toMidnight = ms => {
+    const d = new Date(ms);
+    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+  };
+
+  // Accumulate PnL per calendar day
+  const dailyPnl = {};
+  sorted.forEach(t => {
+    const key = toMidnight(Date.parse(t.ts));
+    dailyPnl[key] = (dailyPnl[key] || 0) + (t.win ? reward : -RISK);
+  });
+
+  const startMs = toMidnight(Date.parse(sorted[0].ts));
+  const endMs   = toMidnight(Date.parse(sorted[sorted.length - 1].ts));
+
+  // Build continuous daily points: day-zero then each calendar day
+  const points = [{ time: Math.floor((startMs - MS_DAY) / 1000), value: 1000 }];
+  let equity = 1000;
+  for (let ms = startMs; ms <= endMs; ms += MS_DAY) {
+    equity = parseFloat((equity + (dailyPnl[ms] || 0)).toFixed(2));
+    points.push({ time: Math.floor(ms / 1000), value: equity });
+  }
+
+  const finalEquity = points[points.length - 1].value;
+  const gain        = finalEquity - 1000;
+  const lineColor   = gain >= 0 ? "#2e7d32" : "#ef5350";
+
+  _equityChart = null;
+  const chart = LightweightCharts.createChart(wrap, {
+    width: wrap.clientWidth,
+    height: 200,
+    layout: { backgroundColor: "#ffffff", textColor: "#1a2e1a" },
+    grid: { vertLines: { color: "#e8f0e8" }, horzLines: { color: "#e8f0e8" } },
+    crosshair: {
+      mode: LightweightCharts.CrosshairMode.Normal,
+      vertLine: { color: "#4caf50", width: 1, style: 1 },
+      horzLine: { color: "#4caf50", width: 1, style: 1 },
+    },
+    rightPriceScale: {
+      borderColor: "#e8f0e8",
+      autoScale: true,
+      scaleMargins: { top: 0.15, bottom: 0.15 },
+    },
+    timeScale: { borderColor: "#e8f0e8", timeVisible: true },
+    handleScroll: false,
+    handleScale: false,
+  });
+  _equityChart = chart;
+
+  const series = chart.addLineSeries({
+    color:            lineColor,
+    lineWidth:        2,
+    priceFormat:      { type: "price", precision: 2, minMove: 0.01 },
+    lastValueVisible: true,
+    priceLineVisible: false,
+  });
+
+  series.setData(points);
+  setTimeout(() => {
+    chart.timeScale().fitContent();
+    chart.applyOptions({ rightPriceScale: { autoScale: true } });
+  }, 50);
+
+  finalEl.textContent = `Final equity: $${Number(finalEquity).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })} (${gain >= 0 ? "+" : ""}${gain.toFixed(0)})`;
+  finalEl.style.color = gain >= 0 ? "var(--accent)" : "var(--red)";
+}
+
+// ── Trade log ─────────────────────────────────────────────────────────────────
+function renderTradeLog(trades) {
+  const wrap = document.getElementById("trade-log-wrap");
+  wrap.innerHTML = "";
+  if (!trades || !trades.length) return;
+
+  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const last20 = trades.slice(-20);
+
+  const rows = last20.map((t, i) => {
+    const d = new Date(t.ts);
+    const day = String(d.getUTCDate()).padStart(2, "0");
+    const mon = MONTHS[d.getUTCMonth()];
+    const hh  = String(d.getUTCHours()).padStart(2, "0");
+    const mm  = String(d.getUTCMinutes()).padStart(2, "0");
+    const date      = `${day} ${mon} ${hh}:${mm}`;
+    const dir       = t.signal === 1 ? "Long" : "Short";
+    const bg        = i % 2 === 0 ? "var(--card)" : "var(--bg)";
+    const resColor  = t.win ? "var(--green)" : "var(--red)";
+    const res       = t.win ? "Win" : "Loss";
+    const exitColor = t.exit_type === "TP" ? "var(--green)" : "var(--red)";
+    return `<tr style="background:${bg};">
+      <td style="padding:6px 10px;">${date}</td>
+      <td style="padding:6px 10px;">${dir}</td>
+      <td style="padding:6px 10px;">${t.entry}</td>
+      <td style="padding:6px 10px; color:${exitColor}; font-weight:600;">${t.exit_price ?? "—"}</td>
+      <td style="padding:6px 10px; color:${exitColor}; font-weight:600;">${t.exit_type ?? "—"}</td>
+      <td style="padding:6px 10px; color:${resColor}; font-weight:600;">${res}</td>
+    </tr>`;
+  }).join("");
+
+  wrap.innerHTML = `
+    <div style="font-size:13px; color:var(--muted); margin-bottom:6px;">Last ${last20.length} trades</div>
+    <div style="overflow-x:auto; border-radius:8px; border:1px solid var(--border);">
+      <table style="width:100%; border-collapse:collapse; font-size:12px; background:var(--card);">
+        <thead>
+          <tr style="background:var(--bg); color:var(--muted);">
+            <th style="padding:7px 10px; text-align:left; font-weight:500;">Date</th>
+            <th style="padding:7px 10px; text-align:left; font-weight:500;">Dir</th>
+            <th style="padding:7px 10px; text-align:left; font-weight:500;">Entry</th>
+            <th style="padding:7px 10px; text-align:left; font-weight:500;">Exit</th>
+            <th style="padding:7px 10px; text-align:left; font-weight:500;">Type</th>
+            <th style="padding:7px 10px; text-align:left; font-weight:500;">Result</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+// ── Stats table ───────────────────────────────────────────────────────────────
+function renderStatsTable(trades, slMult, tpMult) {
+  const wrap = document.getElementById("stats-table-wrap");
+  wrap.innerHTML = "";
+  if (!trades || !trades.length) return;
+
+  const RISK = 100;
+  const reward = RISK * tpMult / slMult;
+  const returns = trades.map(t => t.win ? reward : -RISK);
+  const n = returns.length;
+  const won = returns.filter(r => r > 0).length;
+  const lost = n - won;
+  const winRate = n ? (won / n * 100).toFixed(1) : "0.0";
+
+  const biggestWin  = Math.max(...returns.filter(r => r > 0), 0);
+  const biggestLoss = Math.min(...returns.filter(r => r < 0), 0);
+
+  let equity = 1000;
+  returns.forEach(r => { equity += r; });
+  const endEquity = equity.toFixed(0);
+  const equityGain = equity - 1000;
+
+  let sharpe = "N/A";
+  if (n > 1) {
+    const mean = returns.reduce((a, b) => a + b, 0) / n;
+    const variance = returns.reduce((s, r) => s + (r - mean) ** 2, 0) / n;
+    const std = Math.sqrt(variance);
+    if (std > 0) sharpe = ((mean / std) * Math.sqrt(n)).toFixed(2);
+  }
+
+  const winRateNum = parseFloat(winRate);
+  const winRateClass = winRateNum >= 50 ? "positive" : "negative";
+  const equityClass = equityGain >= 0 ? "positive" : "negative";
+
+  const cells = [
+    ["Total signals",   n],
+    ["Trades won",      won],
+    ["Trades lost",     lost],
+    ["Win rate",        winRate + "%",    winRateClass],
+    ["Biggest win",     biggestWin > 0 ? "+$" + biggestWin.toFixed(0) : "—", "positive"],
+    ["Biggest loss",    biggestLoss < 0 ? "-$" + Math.abs(biggestLoss).toFixed(0) : "—", "negative"],
+    ["Starting equity", "$1,000"],
+    ["Ending equity",   "$" + Number(endEquity).toLocaleString(), equityClass],
+    ["Sharpe ratio",    sharpe, null, true],
+  ];
+
+  const cellsHtml = cells.map((c, i) => {
+    const [label, value, cls, full] = c;
+    const valClass = cls ? ` ${cls}` : "";
+    const cellClass = full ? "stat-cell full-width" : "stat-cell";
+    return `<div class="${cellClass}">
+      <div class="stat-cell-label">${label}</div>
+      <div class="stat-cell-value${valClass}">${value}</div>
+    </div>`;
+  }).join("");
+
+  wrap.innerHTML = `
+    <div class="stats-label">Strategy statistics</div>
+    <div class="stats-grid">${cellsHtml}</div>`;
+}
+
+// ── Suggestion card ───────────────────────────────────────────────────────────
+function renderSuggestionCard(d) {
+  const card = document.getElementById("suggestion-card");
+  const items = [];
+
+  if (d.suggested_market) {
+    const code  = d.suggested_market_code;
+    const label = d.suggested_market_label || "another market";
+    const btn   = code
+      ? `<button class="suggestion-action-btn" onclick="tryOnMarket('${code}')">Try on ${label} →</button>`
+      : "";
+    items.push(`<div class="suggestion-item">
+      <div class="suggestion-line">💡 ${d.suggested_market}</div>${btn}
+    </div>`);
+  }
+
+  if (d.suggested_timeframe) {
+    const val = d.suggested_timeframe_value;
+    const btn = val
+      ? `<button class="suggestion-action-btn" onclick="quickTryTimeframe('${val}')">Try on ${val} →</button>`
+      : "";
+    items.push(`<div class="suggestion-item">
+      <div class="suggestion-line">💡 ${d.suggested_timeframe}</div>${btn}
+    </div>`);
+  }
+
+  if (!items.length) { card.classList.remove("visible"); return; }
+  card.innerHTML = `<div class="suggestion-label">Worth exploring</div>${items.join("")}`;
+  card.classList.add("visible");
+}
+
+// ── Quick-try actions ─────────────────────────────────────────────────────────
+function _clearSavedState() {
+  document.getElementById("saved-state").classList.remove("visible");
+  document.getElementById("wizard-step9-form").classList.remove("hidden");
+  document.getElementById("chart-wrap").innerHTML = "";
+  document.getElementById("equity-wrap").innerHTML = "";
+  document.getElementById("equity-final").textContent = "";
+  document.getElementById("stats-table-wrap").innerHTML = "";
+  document.getElementById("trade-log-wrap").innerHTML = "";
+  document.getElementById("ai-commentary").textContent = "";
+  document.getElementById("suggestion-card").classList.remove("visible");
+  document.getElementById("suggestion-card").innerHTML = "";
+  document.getElementById("ai-tweaks").innerHTML = "";
+}
+
+function tryOnMarket(code) {
+  const card     = document.getElementById("suggestion-card");
+  const sugInst  = INSTRUMENTS.find(i => i.code === code) || {};
+  const sugLabel = sugInst.label || code;
+  const origResult = state.finalResult || {};
+
+  card.innerHTML = `
+    <div class="suggestion-label">Worth exploring</div>
+    <div style="text-align:center; padding:20px 16px;">
+      <div class="spinner" style="display:inline-block;"></div>
+      <div style="font-size:12px; color:var(--muted); margin-top:8px;">Backtesting on ${sugLabel}…</div>
+    </div>`;
+  card.classList.add("visible");
+
+  const cfg = buildConfig(true);
+  cfg.instrument = code;
+
+  apiFetch("/api/finalise", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(cfg),
+  })
+    .then(r => r.json())
+    .then(d => {
+      const origInst  = INSTRUMENTS.find(i => i.code === state.instrument) || {};
+      const origLabel = origInst.label || state.instrument;
+      const origW  = origResult.win_pct  || 0;
+      const origS  = origResult.signals  || 0;
+      const sugW   = d.win_pct;
+      const sugS   = d.signals;
+      const origWins = origW >= sugW;
+      card.innerHTML = `
+        <div class="suggestion-label">Market comparison</div>
+        <div class="compare-grid">
+          <div class="compare-col${origWins ? " winner" : ""}">
+            <div class="compare-col-label">${origLabel}</div>
+            <div class="compare-col-winpct">${origW}%</div>
+            <div class="compare-col-sigs">${origS} signals</div>
+          </div>
+          <div class="compare-col${!origWins ? " winner" : ""}">
+            <div class="compare-col-label">${sugLabel}</div>
+            <div class="compare-col-winpct">${sugW}%</div>
+            <div class="compare-col-sigs">${sugS} signals</div>
+          </div>
+        </div>
+        <button class="suggestion-action-btn" style="margin-top:12px;"
+          onclick="useMarketInstead('${code}')">Use ${sugLabel} instead →</button>`;
+    })
+    .catch(() => {
+      card.innerHTML = `<div style="padding:12px; color:var(--red); font-size:13px;">Comparison failed.</div>`;
+    });
+}
+
+function useMarketInstead(code) {
+  state.instrument = code;
+  const cfg = buildConfig(false);
+  apiFetch("/api/finalise", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(cfg),
+  })
+    .then(r => r.json())
+    .then(d => {
+      state.finalResult = d;
+      renderChart(d.chart_candles, d.chart_trades);
+      renderEquityCurve(d.chart_trades, state.slMult, state.tpMult);
+      syncChartRange(d.chart_candles);
+      renderStatsTable(d.chart_trades, state.slMult, state.tpMult);
+      renderTradeLog(d.chart_trades);
+      document.getElementById("suggestion-card").classList.remove("visible");
+      document.getElementById("suggestion-card").innerHTML = "";
+    })
+    .catch(() => alert("Failed to switch market."));
+}
+
+function quickTryTimeframe(ivl) {
+  const savedInst = state.instrument;
+  Object.assign(state, {
+    instrument: savedInst, interval: ivl,
+    anchor: null, anchorTip: "", complement: null, connector: "ordered",
+    indicator: null, session: "All", slMult: 1.0, tpMult: 3.0,
+    patternsData: [], complementData: [], finalResult: null,
+  });
+  _clearSavedState();
+  goStep(3);
+}
+
+// ── AI commentary ─────────────────────────────────────────────────────────────
+function fetchAiCommentary(cfg, result) {
+  const el = document.getElementById("ai-commentary");
+  el.textContent = "Analysing your strategy…";
+  el.style.color = "var(--muted)";
+
+  const trades = result.chart_trades || [];
+  let equity = 1000;
+  const reward = 100 * (cfg.tp_multiplier || state.tpMult) / (cfg.sl_multiplier || state.slMult);
+  trades.forEach(t => { equity += t.win ? reward : -100; });
+
+  const payload = {
+    instrument: cfg.instrument,
+    interval: cfg.interval,
+    direction: cfg.direction || state.direction,
+    anchor: cfg.anchor,
+    complement: cfg.complement || null,
+    session_filter: cfg.session_filter || null,
+    indicator_filter: cfg.indicator_filter || null,
+    sl_multiplier: cfg.sl_multiplier,
+    tp_multiplier: cfg.tp_multiplier,
+    win_pct: result.win_pct,
+    signals: result.signals,
+    cross_timeframe: result.cross_timeframe || [],
+    final_equity: Math.round(equity),
+  };
+
+  apiFetch("/api/analyse", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  })
+    .then(r => r.json())
+    .then(d => {
+      el.textContent = d.commentary || "Strategy saved and ready to track live.";
+      el.style.color = "";
+      renderSuggestionCard(d);
+    })
+    .catch(() => {
+      el.textContent = "Strategy saved and ready to track live.";
+      el.style.color = "var(--muted)";
+    });
+}
+
+// ── AI tweaks ─────────────────────────────────────────────────────────────────
+function fetchAiTweaks(cfg, result) {
+  const el = document.getElementById("ai-tweaks");
+  el.innerHTML = `<div style="font-size:13px; color:var(--muted); margin-top:16px;">Generating tweak suggestions…</div>`;
+
+  apiFetch("/api/tweaks", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      instrument:       cfg.instrument,
+      interval:         cfg.interval,
+      anchor:           cfg.anchor,
+      complement:       cfg.complement || null,
+      session_filter:   cfg.session_filter || null,
+      indicator_filter: cfg.indicator_filter || null,
+      sl_multiplier:    cfg.sl_multiplier,
+      tp_multiplier:    cfg.tp_multiplier,
+      win_pct:          result.win_pct,
+      signals:          result.signals,
+    }),
+  })
+    .then(r => r.json())
+    .then(d => renderTweaks(d.tweaks || [], cfg, result))
+    .catch(() => { el.innerHTML = ""; });
+}
+
+function renderTweaks(tweaks, cfg, origResult) {
+  const el = document.getElementById("ai-tweaks");
+  if (!tweaks.length) { el.innerHTML = ""; return; }
+  el._tweaks      = tweaks;
+  el._cfg         = cfg;
+  el._origWinPct  = origResult.win_pct  || 0;
+  el._origSignals = origResult.signals  || 0;
+
+  const cards = tweaks.map((t, i) => `
+    <div class="tweak-card">
+      <div class="tweak-title">${t.tweak}</div>
+      <div class="tweak-reason">${t.reason}</div>
+      <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+        <button class="suggestion-action-btn" id="tweak-btn-${i}"
+          onclick="applyTweak(${i}, this)">Try this tweak →</button>
+        <span id="tweak-result-${i}" class="tweak-result"></span>
+      </div>
+    </div>`).join("");
+
+  el.innerHTML = `<div class="tweak-section-label">Suggested tweaks</div>${cards}`;
+}
+
+function applyTweak(idx, btn) {
+  const el     = document.getElementById("ai-tweaks");
+  const tweaks = el._tweaks;
+  const cfg    = Object.assign({}, el._cfg);
+  const text   = tweaks[idx].tweak.toLowerCase();
+  const resEl  = document.getElementById(`tweak-result-${idx}`);
+
+  if (text.includes("indicator") || text.includes("ma cross") || text.includes("rsi") || text.includes("filter")) {
+    cfg.indicator_filter = null;
+  } else if (text.includes("complement") || text.includes("second pattern") || text.includes("confirmation")) {
+    cfg.complement = null;
+  } else {
+    const m = text.match(/\b(15[\s-]?min|1[\s-]?hour|1h|15m|5[\s-]?min|5m)\b/);
+    if (m) {
+      const raw = m[0].replace(/\s|-/g, "");
+      cfg.interval = raw.startsWith("15") ? "15m" : raw.startsWith("1") ? "1h" : "5m";
+    }
+  }
+
+  cfg.preview = true;
+  btn.disabled = true;
+  btn.textContent = "Testing…";
+  resEl.textContent = "";
+
+  apiFetch("/api/finalise", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(cfg),
+  })
+    .then(r => r.json())
+    .then(d => {
+      const dW = (d.win_pct - el._origWinPct).toFixed(1);
+      const dS = d.signals - el._origSignals;
+      const color = parseFloat(dW) >= 0 ? "var(--accent)" : "var(--red)";
+      resEl.innerHTML = `<span style="color:${color}; font-weight:600;">${d.win_pct}% · ${d.signals} signals</span>`
+        + ` <span style="color:var(--muted); font-size:11px;">(${parseFloat(dW)>=0?"+":""}${dW}% win, ${dS>=0?"+":""}${dS} signals)</span>`;
+      btn.textContent = "Applied ✓";
+    })
+    .catch(() => {
+      btn.disabled = false;
+      btn.textContent = "Try this tweak →";
+      resEl.textContent = "Failed";
+    });
 }
 
 // ── Restart ───────────────────────────────────────────────────────────────────
 function restartWizard() {
   const savedInst = state.instrument;
-  const savedIvl = state.interval;
+  const savedIvl  = state.interval;
   Object.assign(state, {
+    instrument: savedInst, interval: savedIvl,
     anchor: null, anchorTip: "", complement: null, connector: "ordered",
     indicator: null, session: "All", slMult: 1.0, tpMult: 3.0,
     patternsData: [], complementData: [], finalResult: null,
   });
-  state.instrument = savedInst;
-  state.interval = savedIvl;
-  document.getElementById("saved-state").classList.remove("visible");
-  document.getElementById("wizard-step9-form").classList.remove("hidden");
-  document.getElementById("chart-wrap").innerHTML = "";
+  _clearSavedState();
   goStep(3);
 }
 

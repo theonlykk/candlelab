@@ -5,6 +5,7 @@ Gunicorn: 1 worker, 4 threads. PORT env var, default 7860.
 import os
 import json
 import logging
+import multiprocessing
 import concurrent.futures
 import numpy as np
 import pandas as pd
@@ -25,6 +26,8 @@ from indicators import check_ma_cross, check_rsi_extreme, check_ma_stable
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
+
+ctx = multiprocessing.get_context("spawn")
 
 app = Flask(__name__)
 
@@ -473,7 +476,7 @@ def api_patterns():
 
     tasks = [(df, pip, name, None, 1.0, 3.0) for name in pattern_names]
 
-    with concurrent.futures.ProcessPoolExecutor(max_workers=4) as executor:
+    with concurrent.futures.ProcessPoolExecutor(max_workers=4, mp_context=ctx) as executor:
         futures = {executor.submit(_task_pattern_multi_timeout, t): t[2] for t in tasks}
         raw = {}
         for fut in concurrent.futures.as_completed(futures):
@@ -547,7 +550,7 @@ def api_complement():
     ]
 
     results = []
-    with concurrent.futures.ProcessPoolExecutor(max_workers=4) as executor:
+    with concurrent.futures.ProcessPoolExecutor(max_workers=4, mp_context=ctx) as executor:
         futures = [executor.submit(_complement_task, t) for t in combo_tasks]
         for fut in concurrent.futures.as_completed(futures):
             r = fut.result()
@@ -679,13 +682,17 @@ def api_finalise():
 
     chart_trades = []
     for t in main_r["trades"][-50:]:
+        is_win     = t["win"]
+        exit_price = round(t["tp"] if is_win else t["sl"], meta["decimals"])
         chart_trades.append({
-            "ts":     t["ts"].isoformat() if hasattr(t["ts"], "isoformat") else str(t["ts"]),
-            "signal": t["signal"],
-            "entry":  round(t["entry"], meta["decimals"]),
-            "tp":     round(t["tp"], meta["decimals"]),
-            "sl":     round(t["sl"], meta["decimals"]),
-            "win":    t["win"],
+            "ts":         t["ts"].isoformat() if hasattr(t["ts"], "isoformat") else str(t["ts"]),
+            "signal":     t["signal"],
+            "entry":      round(t["entry"], meta["decimals"]),
+            "tp":         round(t["tp"], meta["decimals"]),
+            "sl":         round(t["sl"], meta["decimals"]),
+            "win":        is_win,
+            "exit_price": exit_price,
+            "exit_type":  "TP" if is_win else "SL",
         })
 
     try:
@@ -755,60 +762,206 @@ def api_live():
     return jsonify(result)
 
 
-# ── Startup ───────────────────────────────────────────────────────────────────
+_DISPLAY_TO_CODE = {
+    "Gold":    "XAUUSD",
+    "GBP/USD": "GBPUSD",
+    "USD/JPY": "USDJPY",
+    "S&P 500": "SPX500USD",
+    "Silver":  "XAGUSD",
+}
 
-def _precompute_startup():
-    import threading
-    def _work():
-        import time
-        time.sleep(2)
-        for direction in ("reversal", "trend", "both"):
-            try:
-                with app.test_request_context(
-                    f"/api/patterns?instrument=EURUSD&interval=5m&direction={direction}"
-                ):
-                    pass
-            except Exception:
-                pass
-        # Warm via direct compute
-        from data import get_ohlc, INSTRUMENTS
-        for direction in ("reversal", "trend", "both"):
-            try:
-                df = get_ohlc("EUR/USD", days=30, interval="5m")
-                if df.empty:
-                    continue
-                pip = INSTRUMENTS["EUR/USD"]["pip"]
-                names = _patterns_for_direction(direction)
-                tasks = [(df, pip, n, None, 1.0, 3.0) for n in names]
-                with concurrent.futures.ProcessPoolExecutor(max_workers=4) as ex:
-                    futs = {ex.submit(_task_pattern_multi_timeout, t): t[2] for t in tasks}
-                    raw = {}
-                    for fut in concurrent.futures.as_completed(futs):
-                        pname, r = fut.result()
-                        raw[pname] = r
-                data = []
-                for n in names:
-                    r = raw.get(n, {})
-                    data.append({
-                        "name": n, "signals": r.get("signals", 0),
-                        "win_pct_5": r.get("win_pct_5", 0.0),
-                        "win_pct_10": r.get("win_pct_10", 0.0),
-                        "win_pct_20": r.get("win_pct_20", 0.0),
-                        "tip": "",
-                    })
-                from cache import cache_set
-                cache_set(f"patterns:EUR/USD:5m:{direction}", data, ttl=300)
-                log.info(f"Precomputed patterns EUR/USD 5m {direction}")
-            except Exception as e:
-                log.warning(f"Precompute failed for {direction}: {e}")
+_REVERSAL_ALTS = {
+    "EURUSD":    ("Gold",    "Gold tends to show stronger and cleaner reversal signals."),
+    "GBPUSD":    ("Gold",    "Gold tends to show stronger reversal signals than most FX pairs."),
+    "USDJPY":    ("GBP/USD", "GBP/USD is known for sharp, well-defined reversals."),
+    "USDCAD":    ("Gold",    "Gold tends to show stronger reversal signals."),
+    "AUDUSD":    ("GBP/USD", "GBP/USD is known for sharp reversals and high volatility."),
+    "USDCHF":    ("Gold",    "Gold tends to show stronger reversal signals."),
+    "NZDUSD":    ("GBP/USD", "GBP/USD has more volume and sharper reversal moves."),
+    "XAUUSD":    ("GBP/USD", "GBP/USD is another instrument known for strong reversals."),
+    "XAGUSD":    ("Gold",    "Gold has more liquidity and shows cleaner reversal patterns than Silver."),
+    "WTICOUSD":  ("Gold",    "Gold tends to show cleaner and more reliable reversal setups."),
+    "SPX500USD": ("Gold",    "Gold tends to show stronger reversal signals than equity indices."),
+    "BTCUSD":    ("Gold",    "Gold tends to show more reliable and consistent reversal signals."),
+}
 
-    t = threading.Thread(target=_work, daemon=True)
-    t.start()
+_TREND_ALTS = {
+    "EURUSD":    ("S&P 500", "Indices like the S&P 500 tend to trend more persistently."),
+    "GBPUSD":    ("USD/JPY", "USD/JPY is one of the most consistently trending FX pairs."),
+    "USDJPY":    ("S&P 500", "The S&P 500 is one of the strongest and most consistent trending instruments."),
+    "USDCAD":    ("USD/JPY", "USD/JPY is a strong trending pair with clear momentum moves."),
+    "AUDUSD":    ("USD/JPY", "USD/JPY tends to trend more cleanly than AUD pairs."),
+    "USDCHF":    ("USD/JPY", "USD/JPY is a strong trending pair."),
+    "NZDUSD":    ("USD/JPY", "USD/JPY has more volume and cleaner trend structure."),
+    "XAUUSD":    ("S&P 500", "The S&P 500 tends to produce cleaner, longer-lasting trend signals."),
+    "XAGUSD":    ("S&P 500", "The S&P 500 trends more consistently than precious metals."),
+    "WTICOUSD":  ("S&P 500", "The S&P 500 tends to produce cleaner trend signals than oil."),
+    "SPX500USD": ("USD/JPY", "USD/JPY is a reliably trending pair worth comparing against."),
+    "BTCUSD":    ("S&P 500", "The S&P 500 trends more consistently and is easier to validate."),
+}
+
+
+@app.route("/api/analyse", methods=["POST"])
+def api_analyse():
+    body = request.get_json(force=True)
+
+    instrument   = body.get("instrument", "")
+    interval     = body.get("interval", "")
+    direction    = body.get("direction", "both")
+    anchor       = body.get("anchor", "")
+    complement   = body.get("complement")
+    session      = body.get("session_filter")
+    indicator    = body.get("indicator_filter")
+    sl_mult      = body.get("sl_multiplier", 1.0)
+    tp_mult      = body.get("tp_multiplier", 3.0)
+    win_pct      = body.get("win_pct", 0.0)
+    signals      = body.get("signals", 0)
+    cross_tf     = body.get("cross_timeframe", [])
+    final_equity = body.get("final_equity", 1000)
+
+    cross_lines = ""
+    if cross_tf:
+        cross_lines = "\n".join(
+            f"  {r['interval']}: {r['win_pct']}% win rate, {r['signals']} signals"
+            for r in cross_tf
+        )
+        cross_lines = f"\nCross-timeframe:\n{cross_lines}"
+
+    filters = []
+    if session:
+        filters.append(f"session filter: {session}")
+    if indicator:
+        filters.append(f"indicator filter: {indicator}")
+    if complement:
+        filters.append(f"complement pattern: {complement}")
+    filter_line = f"\nFilters: {', '.join(filters)}" if filters else ""
+
+    prompt = (
+        f"You are an encouraging trading coach. The user just built their first strategy. "
+        f"Comment on the results in 3 short sentences. "
+        f"If signal count is below 10 in 30 days, strongly encourage them to consider relaxing their filters "
+        f"or trying a different instrument or timeframe to get more signals, because a strategy that fires rarely "
+        f"is hard to validate. "
+        f"If win rate is above 60 percent, acknowledge it looks promising but remind them more signals would make "
+        f"this more statistically meaningful. "
+        f"Always end with an encouraging line about going live and watching it in real time. "
+        f"Keep it conversational, no jargon. Return plain text, no markdown.\n\n"
+        f"Strategy details:\n"
+        f"  Instrument: {instrument}, Timeframe: {interval}\n"
+        f"  Anchor pattern: {anchor}"
+        f"{filter_line}\n"
+        f"  SL: {sl_mult}×, TP: {tp_mult}×\n"
+        f"  Backtest: {win_pct}% win rate, {signals} signals over 30 days\n"
+        f"  Equity curve result: ${final_equity} (started at $1000)"
+        f"{cross_lines}"
+    )
+
+    try:
+        client = anthropic.Anthropic()
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=300,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        commentary = msg.content[0].text.strip()
+    except Exception as e:
+        log.warning(f"AI analyse failed: {e}")
+        commentary = "Your strategy is live and ready to track in real time. Keep an eye on it!"
+
+    # ── Suggested market ──────────────────────────────────────────────────────
+    suggested_market       = None
+    suggested_market_code  = None
+    suggested_market_label = None
+    if signals < 15 or win_pct < 50:
+        alt_map = _REVERSAL_ALTS if direction in ("reversal", "both") else _TREND_ALTS
+        alt = alt_map.get(instrument.upper())
+        if alt:
+            alt_name, alt_reason = alt
+            suggested_market       = f"Have you considered trying this on {alt_name}? {alt_reason}"
+            suggested_market_label = alt_name
+            suggested_market_code  = _DISPLAY_TO_CODE.get(alt_name)
+
+    # ── Suggested timeframe ───────────────────────────────────────────────────
+    suggested_timeframe       = None
+    suggested_timeframe_value = None
+    if interval == "5m" and signals < 10:
+        suggested_timeframe = (
+            "You might get more signals on the 15-minute chart — "
+            "it cuts out noise while still being active enough to validate quickly."
+        )
+        suggested_timeframe_value = "15m"
+    elif interval == "1h" and signals > 30:
+        suggested_timeframe = (
+            "With this many signals on the 1-hour chart, a 4-hour chart is worth exploring — "
+            "fewer but higher-quality setups can be easier to manage."
+        )
+        # 4h is not a supported interval in the UI, so no action button
+
+    return jsonify({
+        "commentary":               commentary,
+        "suggested_market":         suggested_market,
+        "suggested_market_code":    suggested_market_code,
+        "suggested_market_label":   suggested_market_label,
+        "suggested_timeframe":      suggested_timeframe,
+        "suggested_timeframe_value": suggested_timeframe_value,
+    })
+
+
+@app.route("/api/tweaks", methods=["POST"])
+def api_tweaks():
+    body        = request.get_json(force=True)
+    instrument  = body.get("instrument", "")
+    interval    = body.get("interval", "")
+    anchor      = body.get("anchor", "")
+    complement  = body.get("complement")
+    session     = body.get("session_filter")
+    indicator   = body.get("indicator_filter")
+    sl_mult     = body.get("sl_multiplier", 1.0)
+    tp_mult     = body.get("tp_multiplier", 3.0)
+    win_pct     = body.get("win_pct", 0.0)
+    signals     = body.get("signals", 0)
+
+    parts = []
+    if complement: parts.append(f"complement pattern: {complement}")
+    if indicator:  parts.append(f"indicator filter: {indicator}")
+    if session:    parts.append(f"session filter: {session}")
+    filter_desc = ", ".join(parts) if parts else "none"
+
+    prompt = (
+        f"You are a trading strategy coach. The user has a strategy with these results. "
+        f"Suggest exactly two specific tweaks they could try to get more signals or better results. "
+        f"Each tweak must be a concrete actionable change such as: remove the MA cross filter to get more signals, "
+        f"try removing the complement pattern, or switch to 15 minute candles. "
+        f"For each tweak give a one-sentence reason. "
+        f"Return JSON only, no other text. Format: "
+        f'{{\"tweaks\": [{{\"tweak\": \"description\", \"reason\": \"one sentence\"}}, '
+        f'{{\"tweak\": \"...\", \"reason\": \"...\"}}]}}\n\n'
+        f"Strategy: {instrument} on {interval} timeframe\n"
+        f"Anchor: {anchor}, Filters: {filter_desc}\n"
+        f"SL: {sl_mult}×, TP: {tp_mult}×\n"
+        f"Backtest: {win_pct}% win rate, {signals} signals in 30 days"
+    )
+
+    try:
+        client = anthropic.Anthropic()
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=400,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text  = msg.content[0].text.strip()
+        start = text.find("{")
+        end   = text.rfind("}") + 1
+        data  = json.loads(text[start:end]) if start >= 0 and end > start else {"tweaks": []}
+    except Exception as e:
+        log.warning(f"AI tweaks failed: {e}")
+        data = {"tweaks": []}
+
+    return jsonify(data)
 
 
 init_strategy_tables()
 start_scheduler()
-_precompute_startup()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))

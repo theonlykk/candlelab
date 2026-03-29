@@ -200,14 +200,11 @@ def backfill_instrument(instrument: str, interval: str = "5m"):
         log.info(f"Initial backfill: {instrument} @ {interval}...")
         n_bars = _INITIAL_BARS.get(interval, 12000)
         df = _fetch_tv(symbol, exchange, n_bars=n_bars, interval=interval)
-        if df.empty and interval != "5m":
-            log.warning(f"{instrument} @ {interval}: empty fetch with n_bars={n_bars}, retrying with 500")
-            df = _fetch_tv(symbol, exchange, n_bars=500, interval=interval)
         if not df.empty:
             insert_bars(instrument, df, interval)
             log.info(f"{instrument} @ {interval}: inserted {len(df)} bars")
         else:
-            log.error(f"{instrument} @ {interval}: backfill returned empty — symbol={symbol} exchange={exchange}")
+            log.error(f"{instrument} @ {interval}: backfill returned empty — symbol={symbol} exchange={exchange}; using cached data")
         return
 
     gap = (now - since).total_seconds() / 60
@@ -217,9 +214,6 @@ def backfill_instrument(instrument: str, interval: str = "5m"):
     log.info(f"Backfilling {instrument} @ {interval} ({gap:.0f} min gap)...")
     bars_needed = int(gap / mins_bar) + 50
     df = _fetch_tv(symbol, exchange, n_bars=bars_needed, interval=interval)
-    if df.empty and interval != "5m":
-        log.warning(f"{instrument} @ {interval}: empty fetch with n_bars={bars_needed}, retrying with 500")
-        df = _fetch_tv(symbol, exchange, n_bars=500, interval=interval)
 
     if not df.empty:
         new_bars = df[df.index > since]
