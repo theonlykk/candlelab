@@ -86,7 +86,7 @@
 
   .step {
     display: none;
-    padding: 24px 16px 80px;
+    padding: 24px 16px 90px;
     max-width: var(--step-max);
     margin: 0 auto;
     animation: fadeUp 0.25s ease;
@@ -718,6 +718,87 @@
   .tweak-reason { font-size:12px; color:var(--muted); margin-bottom:10px; line-height:1.5; }
   .tweak-result { font-size:12px; }
 
+  /* Sticky action bar */
+  #step-actions {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    background: var(--bg);
+    border-top: 1px solid var(--border);
+    padding: 12px 16px 16px;
+    z-index: 100;
+    display: none;
+  }
+  #step-actions .cta-btn { margin-top: 0; }
+  .sticky-btn-pair { display: flex; gap: 2%; }
+  .sticky-btn-pair .cta-btn { margin-top: 0; width: 70%; flex: none; }
+  .sticky-skip-btn {
+    width: 28%; flex: none;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--muted);
+    font-size: 15px; font-weight: 600;
+    cursor: pointer; min-height: 56px;
+    transition: border-color 0.15s, color 0.15s;
+  }
+  .sticky-skip-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* Scroll hint bounce */
+  @keyframes bounce {
+    0%, 100% { transform: translateY(0); }
+    50%       { transform: translateY(6px); }
+  }
+  #scroll-hint {
+    position: fixed;
+    bottom: 80px; left: 0; right: 0;
+    display: flex; flex-direction: column; align-items: center;
+    gap: 2px; font-size: 11px; color: var(--muted);
+    z-index: 99; pointer-events: none;
+    opacity: 1; transition: opacity 0.4s;
+  }
+  #scroll-hint.hidden { opacity: 0; }
+  #scroll-hint-chevron {
+    font-size: 18px; color: var(--accent); opacity: 0.6;
+    display: inline-block; transform: rotate(90deg);
+    animation: bounce 1.2s ease-in-out infinite;
+  }
+
+  /* Complement card connector-click flash */
+  @keyframes flashGreen {
+    0%   { background: rgba(76,175,80,0.28); }
+    100% { background: rgba(76,175,80,0.08); }
+  }
+  .comp-card.flash { animation: flashGreen 0.6s ease forwards; }
+
+  /* Real trading CTA */
+  #real-trade-cta {
+    margin-top: 24px;
+    border: 2px dashed var(--border);
+    border-radius: var(--radius);
+    background: rgba(76,175,80,0.04);
+    padding: 24px 20px;
+    text-align: center;
+  }
+  .cta-real-emoji { font-size: 28px; margin-bottom: 8px; }
+  .cta-real-headline { font-size: 18px; font-weight: 700; margin-bottom: 6px; }
+  .cta-real-sub { font-size: 14px; color: var(--muted); margin-bottom: 20px; line-height: 1.55; }
+  .cta-real-btn {
+    width: 100%; background: transparent;
+    border: 2px solid var(--accent); border-radius: var(--radius);
+    color: var(--accent); font-size: 16px; font-weight: 700;
+    padding: 16px; cursor: pointer; min-height: 56px;
+    transition: background 0.15s;
+  }
+  .cta-real-btn:hover { background: rgba(76,175,80,0.08); }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  #real-trade-response {
+    display: none;
+    color: var(--green); font-size: 15px; font-weight: 600;
+    line-height: 1.65; padding-top: 4px;
+    animation: fadeIn 0.5s ease;
+  }
+  #real-trade-response.visible { display: block; }
+
   /* Market comparison */
   .compare-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:10px; }
   .compare-col {
@@ -737,6 +818,9 @@
 <body>
 
 <div id="landing">
+  <svg style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;" viewBox="0 0 400 300" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M0,230 L25,220 L55,225 L85,195 L110,205 L140,165 L165,178 L195,138 L220,152 L250,108 L275,125 L305,82 L330,98 L360,58 L400,72" stroke="rgba(76,175,80,0.15)" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>
   <div class="landing-logo">CandleLab</div>
   <div class="landing-title">Welcome to CandleLab.</div>
   <div class="landing-sub">We're going to build your first trading strategy together. It takes about 5 minutes.</div>
@@ -802,9 +886,6 @@
     <div class="step-subtitle">These are the patterns that have been firing most reliably on your chosen market over the last 30 days. Pick the one that resonates.</div>
     <div id="pattern-list"></div>
     <div id="ai-tip-box"></div>
-    <button class="cta-btn" id="btn-anchor-continue" disabled onclick="continueToComplement()">
-      Analyse combinations →
-    </button>
   </div>
 
   <!-- Step 5: Complement -->
@@ -819,7 +900,6 @@
     <div class="step-title">Add indicator confirmation</div>
     <div class="step-subtitle">Classic technical analysis can act as a filter. These have been shown to improve signal quality when used as context.</div>
     <div id="indicator-cards"></div>
-    <button class="cta-btn" onclick="goStep(7)">Continue →</button>
   </div>
 
   <!-- Step 7: Session filter -->
@@ -851,7 +931,6 @@
     <p style="font-size:12px; color:var(--muted); margin-top:14px; line-height:1.55;">
       Tip: start with All Sessions, then return here after going live to see which sessions your signals concentrate in.
     </p>
-    <button class="cta-btn" onclick="goStep(8)">Continue →</button>
   </div>
 
   <!-- Step 8: SL / TP -->
@@ -880,8 +959,6 @@
     <div id="live-preview">
       <div id="preview-loading">Calculating…</div>
     </div>
-
-    <button class="cta-btn" onclick="goStep(9)">Finalise strategy →</button>
   </div>
 
   <!-- Step 9: Summary -->
@@ -920,10 +997,23 @@
         <p>Strategy saved and running live.</p>
         <button onclick="restartWizard()">Build another strategy</button>
       </div>
+      <div id="real-trade-cta">
+        <div class="cta-real-emoji">🚀</div>
+        <div class="cta-real-headline">Want to trade this for real?</div>
+        <div class="cta-real-sub">We can port your strategy to OANDA and execute it automatically. Just $1 to activate.</div>
+        <button id="real-trade-btn" class="cta-real-btn" onclick="showRealTradeResponse()">Yes, trade it for real! 🚀</button>
+        <div id="real-trade-response">🎉 Amazing! We are on it. We will reach out to set you up — watch your inbox. You are about to become an algo trader.</div>
+      </div>
     </div>
   </div>
 
 </div><!-- /main -->
+
+<div id="step-actions"></div>
+<div id="scroll-hint" class="hidden">
+  <span id="scroll-hint-chevron">›</span>
+  <span>more options below</span>
+</div>
 
 <script>
 // ── Landing ───────────────────────────────────────────────────────────────────
@@ -1096,6 +1186,7 @@ function renderPatterns(data) {
     card.onclick = () => selectAnchor(p.name, p.tip);
     list.appendChild(card);
   });
+  setTimeout(checkScrollHint, 50);
 }
 
 function selectAnchor(name, tip) {
@@ -1183,33 +1274,42 @@ function renderComplements(data) {
         const val     = btn.dataset.value;
         const cardIdx = parseInt(radiosEl.dataset.card);
         state.complementData[cardIdx].connector = val;
-        if (state.complement === state.complementData[cardIdx].complement) {
-          state.connector = val;
-        }
         radiosEl.querySelectorAll(".connector-radio").forEach(b => {
           b.classList.toggle("active", b === btn);
         });
+        selectComplement(cardIdx);
+        card.classList.add("flash");
+        setTimeout(() => { buildIndicatorStep(); goStep(6); }, 600);
       });
 
       content.appendChild(card);
     });
   }
 
-  const skipBtn = document.createElement("button");
-  skipBtn.className = "big-btn";
-  skipBtn.style.marginTop = "8px";
-  skipBtn.innerHTML = `<span class="big-btn-title">Skip — use anchor only</span>`;
-  skipBtn.onclick = () => { state.complement = null; buildIndicatorStep(); goStep(6); };
-  content.appendChild(skipBtn);
-
+  const actionsEl = document.getElementById("step-actions");
+  actionsEl.innerHTML = "";
   if (data && data.length > 0) {
+    const pair = document.createElement("div");
+    pair.className = "sticky-btn-pair";
     const contBtn = document.createElement("button");
     contBtn.className = "cta-btn";
     contBtn.id = "comp-continue";
     contBtn.disabled = true;
     contBtn.textContent = "Continue →";
     contBtn.onclick = () => { buildIndicatorStep(); goStep(6); };
-    content.appendChild(contBtn);
+    const skipBtn = document.createElement("button");
+    skipBtn.className = "sticky-skip-btn";
+    skipBtn.textContent = "Skip";
+    skipBtn.onclick = () => { state.complement = null; buildIndicatorStep(); goStep(6); };
+    pair.appendChild(contBtn);
+    pair.appendChild(skipBtn);
+    actionsEl.appendChild(pair);
+  } else {
+    const skipBtn = document.createElement("button");
+    skipBtn.className = "cta-btn";
+    skipBtn.textContent = "Skip — use anchor only";
+    skipBtn.onclick = () => { state.complement = null; buildIndicatorStep(); goStep(6); };
+    actionsEl.appendChild(skipBtn);
   }
 }
 
@@ -1582,15 +1682,11 @@ function renderCharts(data) {
   }
   wireTimeSync(topChart, bottomChart);
 
-  function timeRangesEqual(a, b) {
-    if (!a || !b) return false;
-    return String(a.from) === String(b.from) && String(a.to) === String(b.to);
-  }
-
-  function syncBottomToTop(timeRange) {
+  // Apply bottom chart's visible *time* window to the price chart. Do not compare to top's
+  // previous range (that equality check could skip real updates). Rely on syncingTimeRange
+  // so programmatic top→bottom updates do not loop.
+  function applyBottomVisibleRangeToTop(timeRange) {
     if (syncingTimeRange || !timeRange) return;
-    const topTr = topChart.timeScale().getVisibleRange();
-    if (timeRangesEqual(topTr, timeRange)) return;
     syncingTimeRange = true;
     try {
       topChart.timeScale().setVisibleRange(timeRange);
@@ -1599,23 +1695,54 @@ function renderCharts(data) {
     }
   }
 
-  // Primary: event payload matches the new view after the time scale updates.
   bottomChart.timeScale().subscribeVisibleTimeRangeChange((timeRange) => {
-    syncBottomToTop(timeRange);
+    applyBottomVisibleRangeToTop(timeRange);
   });
 
-  // Fallback when time events are sparse: logical range fires first, but synchronous
-  // getVisibleRange() was stale (price chart looked frozen). Defer two frames, then skip
-  // if the top chart already matches (avoids fighting top→bottom sync).
   bottomChart.timeScale().subscribeVisibleLogicalRangeChange(() => {
     if (syncingTimeRange) return;
     requestAnimationFrame(() => {
+      if (syncingTimeRange) return;
+      const tr = bottomChart.timeScale().getVisibleRange();
+      if (tr) applyBottomVisibleRangeToTop(tr);
+    });
+  });
+
+  // v3 line series can omit time-range notifications for wheel / drag; sync from the
+  // container after input so the candlestick pane always follows the equity pane.
+  let bottomSyncRaf = null;
+  function scheduleApplyBottomRangeToTop() {
+    if (syncingTimeRange) return;
+    if (bottomSyncRaf != null) return;
+    bottomSyncRaf = requestAnimationFrame(() => {
       requestAnimationFrame(() => {
+        bottomSyncRaf = null;
         if (syncingTimeRange) return;
         const tr = bottomChart.timeScale().getVisibleRange();
-        if (tr) syncBottomToTop(tr);
+        if (tr) applyBottomVisibleRangeToTop(tr);
       });
     });
+  }
+  bottomContainer.addEventListener("wheel", scheduleApplyBottomRangeToTop, { passive: true });
+  let bottomPanListeners = null;
+  bottomContainer.addEventListener("pointerdown", () => {
+    if (bottomPanListeners) {
+      window.removeEventListener("pointermove", bottomPanListeners.move);
+      window.removeEventListener("pointerup", bottomPanListeners.up);
+      window.removeEventListener("pointercancel", bottomPanListeners.up);
+      bottomPanListeners = null;
+    }
+    const onMove = () => scheduleApplyBottomRangeToTop();
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      bottomPanListeners = null;
+    };
+    bottomPanListeners = { move: onMove, up: onUp };
+    window.addEventListener("pointermove", onMove, { passive: true });
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
   });
 
   if (validTimes.length > 0) {
@@ -2080,6 +2207,7 @@ function goStep(n) {
   document.getElementById("progress-fill").style.width = (n / 9 * 100) + "%";
   document.getElementById("back-btn").style.display = n > 1 ? "block" : "none";
   window.scrollTo(0, 0);
+  updateStepActions(n);
 
   if (n === 8) {
     document.getElementById("sl-slider").value = Math.round(state.slMult * 10);
@@ -2092,6 +2220,46 @@ function goStep(n) {
   if (n === 9) {
     loadSummary();
   }
+}
+
+function updateStepActions(n) {
+  const el   = document.getElementById("step-actions");
+  const hint = document.getElementById("scroll-hint");
+  hint.classList.add("hidden");
+  if (n === 4) {
+    el.style.display = "block";
+    el.innerHTML = `<button class="cta-btn" id="btn-anchor-continue" disabled onclick="continueToComplement()">Analyse combinations →</button>`;
+  } else if (n === 5) {
+    el.style.display = "block";
+    el.innerHTML = "";  // populated async by renderComplements
+  } else if (n === 6) {
+    el.style.display = "block";
+    el.innerHTML = `<button class="cta-btn" onclick="goStep(7)">Continue →</button>`;
+  } else if (n === 7) {
+    el.style.display = "block";
+    el.innerHTML = `<button class="cta-btn" onclick="goStep(8)">Continue →</button>`;
+  } else if (n === 8) {
+    el.style.display = "block";
+    el.innerHTML = `<button class="cta-btn" onclick="goStep(9)">Finalise strategy →</button>`;
+  } else {
+    el.style.display = "none";
+  }
+}
+
+function checkScrollHint() {
+  const hint = document.getElementById("scroll-hint");
+  if (state.currentStep !== 4) { hint.classList.add("hidden"); return; }
+  const list = document.getElementById("pattern-list");
+  if (!list || !list.children.length) { hint.classList.add("hidden"); return; }
+  const rect = list.getBoundingClientRect();
+  const scrollable = rect.bottom > (window.innerHeight - 84);
+  hint.classList.toggle("hidden", !scrollable);
+}
+window.addEventListener("scroll", checkScrollHint, { passive: true });
+
+function showRealTradeResponse() {
+  document.getElementById("real-trade-btn").style.display = "none";
+  document.getElementById("real-trade-response").classList.add("visible");
 }
 </script>
 
