@@ -1580,7 +1580,7 @@ function renderCharts(data) {
 
   if (validTimes.length > 0) {
     const lastTime = validTimes[validTimes.length - 1];
-    const initialRange = { from: lastTime - (14 * 86400), to: lastTime + 3600 };
+    const initialRange = { from: validTimes[0], to: lastTime + 3600 };
     syncingTimeRange = true;
     try {
       topChart.timeScale().setVisibleRange(initialRange);
