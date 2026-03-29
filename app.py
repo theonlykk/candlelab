@@ -840,14 +840,8 @@ def api_analyse():
 
     prompt = (
         f"You are an encouraging trading coach. The user just built their first strategy. "
-        f"Comment on the results in 3 short sentences. "
-        f"If signal count is below 10 in 30 days, strongly encourage them to consider relaxing their filters "
-        f"or trying a different instrument or timeframe to get more signals, because a strategy that fires rarely "
-        f"is hard to validate. "
-        f"If win rate is above 60 percent, acknowledge it looks promising but remind them more signals would make "
-        f"this more statistically meaningful. "
-        f"Always end with an encouraging line about going live and watching it in real time. "
-        f"Keep it conversational, no jargon. Return plain text, no markdown.\n\n"
+        f"Comment on the results in exactly 3 short sentences, warm and conversational. "
+        f"Be specific to their setup. No jargon. Return plain text, no markdown.\n\n"
         f"Strategy details:\n"
         f"  Instrument: {instrument}, Timeframe: {interval}\n"
         f"  Anchor pattern: {anchor}"
@@ -869,6 +863,24 @@ def api_analyse():
     except Exception as e:
         log.warning(f"AI analyse failed: {e}")
         commentary = "Your strategy is live and ready to track in real time. Keep an eye on it!"
+
+    # Append mandatory context-aware sentences regardless of AI output
+    extra = []
+    if signals < 30:
+        extra.append(
+            f"Worth noting: with only {signals} signals over 30 days, this result could easily be random chance — "
+            f"you would want to see this play out over at least 3 months and 100 signals before trusting it with real money."
+        )
+    if win_pct > 60:
+        extra.append(
+            "A 60%+ win rate on a short backtest often reflects overfitting to recent market conditions rather than genuine edge — "
+            "test it on a different instrument or time period to see if it holds up."
+        )
+    extra.append(
+        "Candlestick patterns alone rarely produce consistent edge — the real value is in the combination of "
+        "pattern, session, and market context you have built here."
+    )
+    commentary = commentary + " " + " ".join(extra)
 
     # ── Suggested market ──────────────────────────────────────────────────────
     suggested_market       = None

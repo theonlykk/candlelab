@@ -818,13 +818,67 @@
 <body>
 
 <div id="landing">
-  <svg style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;" viewBox="0 0 400 300" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M0,230 L25,220 L55,225 L85,195 L110,205 L140,165 L165,178 L195,138 L220,152 L250,108 L275,125 L305,82 L330,98 L360,58 L400,72" stroke="rgba(76,175,80,0.15)" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <svg style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:0;" viewBox="0 0 400 400" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
+    <!-- Grid lines -->
+    <line x1="0" y1="120" x2="400" y2="120" stroke="rgba(76,175,80,0.08)" stroke-width="1"/>
+    <line x1="0" y1="200" x2="400" y2="200" stroke="rgba(76,175,80,0.08)" stroke-width="1"/>
+    <line x1="0" y1="280" x2="400" y2="280" stroke="rgba(76,175,80,0.08)" stroke-width="1"/>
+    <line x1="0" y1="360" x2="400" y2="360" stroke="rgba(76,175,80,0.08)" stroke-width="1"/>
+    <!-- Candle wicks -->
+    <line x1="20"  y1="265" x2="20"  y2="292" stroke="rgba(120,120,120,0.2)" stroke-width="1"/>
+    <line x1="38"  y1="282" x2="38"  y2="304" stroke="rgba(120,120,120,0.2)" stroke-width="1"/>
+    <line x1="56"  y1="271" x2="56"  y2="302" stroke="rgba(120,120,120,0.2)" stroke-width="1"/>
+    <line x1="74"  y1="253" x2="74"  y2="282" stroke="rgba(120,120,120,0.2)" stroke-width="1"/>
+    <line x1="92"  y1="254" x2="92"  y2="277" stroke="rgba(120,120,120,0.2)" stroke-width="1"/>
+    <line x1="110" y1="266" x2="110" y2="286" stroke="rgba(120,120,120,0.2)" stroke-width="1"/>
+    <line x1="128" y1="253" x2="128" y2="284" stroke="rgba(120,120,120,0.2)" stroke-width="1"/>
+    <line x1="146" y1="233" x2="146" y2="263" stroke="rgba(120,120,120,0.2)" stroke-width="1"/>
+    <line x1="164" y1="214" x2="164" y2="244" stroke="rgba(120,120,120,0.2)" stroke-width="1"/>
+    <line x1="182" y1="214" x2="182" y2="236" stroke="rgba(120,120,120,0.2)" stroke-width="1"/>
+    <line x1="200" y1="206" x2="200" y2="236" stroke="rgba(120,120,120,0.2)" stroke-width="1"/>
+    <line x1="218" y1="187" x2="218" y2="215" stroke="rgba(120,120,120,0.2)" stroke-width="1"/>
+    <line x1="236" y1="188" x2="236" y2="208" stroke="rgba(120,120,120,0.2)" stroke-width="1"/>
+    <line x1="254" y1="179" x2="254" y2="208" stroke="rgba(120,120,120,0.2)" stroke-width="1"/>
+    <line x1="272" y1="179" x2="272" y2="199" stroke="rgba(120,120,120,0.2)" stroke-width="1"/>
+    <line x1="290" y1="170" x2="290" y2="200" stroke="rgba(120,120,120,0.2)" stroke-width="1"/>
+    <line x1="308" y1="152" x2="308" y2="181" stroke="rgba(120,120,120,0.2)" stroke-width="1"/>
+    <line x1="326" y1="153" x2="326" y2="173" stroke="rgba(120,120,120,0.2)" stroke-width="1"/>
+    <line x1="344" y1="143" x2="344" y2="173" stroke="rgba(120,120,120,0.2)" stroke-width="1"/>
+    <line x1="362" y1="125" x2="362" y2="155" stroke="rgba(120,120,120,0.2)" stroke-width="1"/>
+    <!-- Candle bodies (bear=red, bull=green) -->
+    <rect x="15"  y="270" width="10" height="15" fill="rgba(239,83,80,0.2)"/>
+    <rect x="33"  y="286" width="10" height="12" fill="rgba(239,83,80,0.2)"/>
+    <rect x="51"  y="275" width="10" height="20" fill="rgba(76,175,80,0.2)"/>
+    <rect x="69"  y="257" width="10" height="18" fill="rgba(76,175,80,0.2)"/>
+    <rect x="87"  y="257" width="10" height="13" fill="rgba(239,83,80,0.2)"/>
+    <rect x="105" y="270" width="10" height="11" fill="rgba(239,83,80,0.2)"/>
+    <rect x="123" y="257" width="10" height="21" fill="rgba(76,175,80,0.2)"/>
+    <rect x="141" y="236" width="10" height="22" fill="rgba(76,175,80,0.2)"/>
+    <rect x="159" y="217" width="10" height="20" fill="rgba(76,175,80,0.2)"/>
+    <rect x="177" y="217" width="10" height="13" fill="rgba(239,83,80,0.2)"/>
+    <rect x="195" y="209" width="10" height="21" fill="rgba(76,175,80,0.2)"/>
+    <rect x="213" y="191" width="10" height="19" fill="rgba(76,175,80,0.2)"/>
+    <rect x="231" y="191" width="10" height="11" fill="rgba(239,83,80,0.2)"/>
+    <rect x="249" y="182" width="10" height="20" fill="rgba(76,175,80,0.2)"/>
+    <rect x="267" y="182" width="10" height="13" fill="rgba(239,83,80,0.2)"/>
+    <rect x="285" y="174" width="10" height="21" fill="rgba(76,175,80,0.2)"/>
+    <rect x="303" y="156" width="10" height="19" fill="rgba(76,175,80,0.2)"/>
+    <rect x="321" y="156" width="10" height="11" fill="rgba(239,83,80,0.2)"/>
+    <rect x="339" y="147" width="10" height="20" fill="rgba(76,175,80,0.2)"/>
+    <rect x="357" y="129" width="10" height="19" fill="rgba(76,175,80,0.2)"/>
+    <!-- Equity curve glow -->
+    <path d="M 0,345 L 35,328 L 60,336 L 90,308 L 120,324 L 155,288 L 185,264 L 215,280 L 248,244 L 278,218 L 302,233 L 328,200 L 354,176 L 378,155 L 400,140"
+          stroke="rgba(76,175,80,0.06)" stroke-width="14" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- Equity curve -->
+    <path d="M 0,345 L 35,328 L 60,336 L 90,308 L 120,324 L 155,288 L 185,264 L 215,280 L 248,244 L 278,218 L 302,233 L 328,200 L 354,176 L 378,155 L 400,140"
+          stroke="rgba(76,175,80,0.4)" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
   </svg>
-  <div class="landing-logo">CandleLab</div>
-  <div class="landing-title">Welcome to CandleLab.</div>
-  <div class="landing-sub">We're going to build your first trading strategy together. It takes about 5 minutes.</div>
-  <button class="landing-btn" onclick="startWizard()">Let's start →</button>
+  <div style="position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;">
+    <div class="landing-logo">CandleLab</div>
+    <div class="landing-title">Welcome to CandleLab.</div>
+    <div class="landing-sub">We're going to build your first trading strategy together. It takes about 5 minutes.</div>
+    <button class="landing-btn" onclick="startWizard()">Let's start →</button>
+  </div>
 </div>
 
 <div id="progress-bar" class="wizard-hidden"><div id="progress-fill"></div></div>
