@@ -307,6 +307,99 @@ def _task_pattern_multi_timeout(args):
     return pattern_name, r
 
 
+def _complement_task(args):
+    (comp_name, connector,
+     df, signals_df, anchor_indices, atr, anchor_signals, anchor_win_pct) = args
+
+    WINDOW = 5
+    if comp_name not in signals_df.columns:
+        return None
+    comp_signals = signals_df[comp_name].to_numpy()
+    comp_indices_set = set(np.where(comp_signals != 0)[0].tolist())
+
+    filtered_anchor_idx = []
+    for ai in anchor_indices:
+        ai_int = int(ai)
+        if connector == "ordered":
+            found = any(
+                j in comp_indices_set
+                for j in range(ai_int + 1, ai_int + WINDOW + 1)
+            )
+        elif connector == "any-order":
+            found = any(
+                abs(ai_int - j) <= WINDOW
+                for j in comp_indices_set
+                if abs(ai_int - j) <= WINDOW
+            )
+        else:  # optional — wider window
+            found = any(
+                abs(ai_int - j) <= WINDOW * 2
+                for j in comp_indices_set
+                if abs(ai_int - j) <= WINDOW * 2
+            )
+        if found:
+            filtered_anchor_idx.append(ai)
+
+    if not filtered_anchor_idx:
+        return None
+
+    subset_trades = []
+    n_df = len(df)
+    open_arr  = df["open"].to_numpy()
+    high_arr  = df["high"].to_numpy()
+    low_arr   = df["low"].to_numpy()
+    close_arr = df["close"].to_numpy()
+    atr_arr   = atr.to_numpy()
+    anc_arr   = anchor_signals.to_numpy()
+
+    for ai in filtered_anchor_idx:
+        ai_int = int(ai)
+        if ai_int + 6 >= n_df:
+            continue
+        trade_atr = float(atr_arr[ai_int])
+        if trade_atr == 0 or np.isnan(trade_atr):
+            continue
+        entry = float(open_arr[ai_int + 1])
+        direction_val = int(anc_arr[ai_int])
+        tp = entry + direction_val * 3.0 * trade_atr
+        sl = entry - direction_val * 1.0 * trade_atr
+        future_hi = high_arr[ai_int + 1: ai_int + 6]
+        future_lo = low_arr[ai_int + 1: ai_int + 6]
+        future_cl = close_arr[ai_int + 1: ai_int + 6]
+        if len(future_hi) == 0:
+            continue
+        if direction_val == 1:
+            tp_hits = np.where(future_hi >= tp)[0]
+            sl_hits = np.where(future_lo <= sl)[0]
+        else:
+            tp_hits = np.where(future_lo <= tp)[0]
+            sl_hits = np.where(future_hi >= sl)[0]
+        nf = len(future_hi)
+        tp_idx = int(tp_hits[0]) if len(tp_hits) else nf
+        sl_idx = int(sl_hits[0]) if len(sl_hits) else nf
+        if tp_idx <= sl_idx and tp_idx < nf:
+            subset_trades.append(True)
+        elif sl_idx < tp_idx and sl_idx < nf:
+            subset_trades.append(False)
+        else:
+            subset_trades.append(direction_val * (future_cl[-1] - entry) > 0)
+
+    total = len(subset_trades)
+    if total == 0:
+        return None
+    wins = sum(1 for w in subset_trades if w)
+    win_pct = round(wins / total * 100, 1)
+    delta = round(win_pct - anchor_win_pct, 1)
+
+    return {
+        "complement": comp_name,
+        "connector":  connector,
+        "win_pct":    win_pct,
+        "signals":    total,
+        "delta":      delta,
+    }
+
+
 # ── AI tips via Haiku ─────────────────────────────────────────────────────────
 
 def _get_ai_tips(patterns_data: list, instrument: str) -> dict:
@@ -444,80 +537,10 @@ def api_complement():
     anchor_r = _backtest_pattern(df, pip, anchor, timeout=5)
     anchor_win_pct = anchor_r["win_pct"]
 
-    WINDOW = 5
     CONNECTORS = ["ordered", "any-order", "optional"]
 
-    def _complement_task(args):
-        comp_name, connector = args
-        if comp_name not in signals_df.columns:
-            return None
-        comp_signals = signals_df[comp_name].to_numpy()
-        comp_indices_set = set(np.where(comp_signals != 0)[0].tolist())
-
-        filtered_anchor_idx = []
-        for ai in anchor_indices:
-            if connector == "ordered":
-                found = any((ai < j <= ai + WINDOW) for j in range(int(ai)+1, int(ai)+WINDOW+1) if j in comp_indices_set)
-            elif connector == "any-order":
-                found = any(abs(int(ai) - j) <= WINDOW for j in comp_indices_set if abs(int(ai) - j) <= WINDOW)
-            else:  # optional — wider window
-                found = any(abs(int(ai) - j) <= WINDOW * 2 for j in comp_indices_set if abs(int(ai) - j) <= WINDOW * 2)
-            if found:
-                filtered_anchor_idx.append(ai)
-
-        if not filtered_anchor_idx:
-            return None
-
-        subset_trades = []
-        for ai in filtered_anchor_idx:
-            if ai + 6 >= len(df):
-                continue
-            trade_atr = float(atr.iloc[ai])
-            if trade_atr == 0 or np.isnan(trade_atr):
-                continue
-            entry = float(df["open"].iloc[ai + 1])
-            direction_val = int(anchor_signals.iloc[ai])
-            tp = entry + direction_val * 3.0 * trade_atr
-            sl = entry - direction_val * 1.0 * trade_atr
-            future_hi = df["high"].iloc[ai+1:ai+6].to_numpy()
-            future_lo = df["low"].iloc[ai+1:ai+6].to_numpy()
-            future_cl = df["close"].iloc[ai+1:ai+6].to_numpy()
-            if len(future_hi) == 0:
-                continue
-            if direction_val == 1:
-                tp_hits = np.where(future_hi >= tp)[0]
-                sl_hits = np.where(future_lo <= sl)[0]
-            else:
-                tp_hits = np.where(future_lo <= tp)[0]
-                sl_hits = np.where(future_hi >= sl)[0]
-            nf = len(future_hi)
-            tp_idx = int(tp_hits[0]) if len(tp_hits) else nf
-            sl_idx = int(sl_hits[0]) if len(sl_hits) else nf
-            if tp_idx <= sl_idx and tp_idx < nf:
-                subset_trades.append(True)
-            elif sl_idx < tp_idx and sl_idx < nf:
-                subset_trades.append(False)
-            else:
-                exit_price = future_cl[-1]
-                subset_trades.append(direction_val * (exit_price - entry) > 0)
-
-        total = len(subset_trades)
-        if total == 0:
-            return None
-        wins = sum(1 for w in subset_trades if w)
-        win_pct = round(wins / total * 100, 1)
-        delta = round(win_pct - anchor_win_pct, 1)
-
-        return {
-            "complement": comp_name,
-            "connector":  connector,
-            "win_pct":    win_pct,
-            "signals":    total,
-            "delta":      delta,
-        }
-
     combo_tasks = [
-        (comp, conn)
+        (comp, conn, df, signals_df, anchor_indices, atr, anchor_signals, anchor_win_pct)
         for comp in ALL_PATTERN_NAMES
         for conn in CONNECTORS
         if comp != anchor
