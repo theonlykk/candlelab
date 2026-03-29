@@ -698,11 +698,11 @@ def api_finalise():
     try:
         df_main = get_ohlc(instrument, days=30, interval=interval)
         chart_candles = {
-            "ts":    [int(pd.Timestamp(t).timestamp()) for t in df_main.index[-200:]],
-            "open":  df_main["open"].iloc[-200:].tolist(),
-            "high":  df_main["high"].iloc[-200:].tolist(),
-            "low":   df_main["low"].iloc[-200:].tolist(),
-            "close": df_main["close"].iloc[-200:].tolist(),
+            "ts":    [int(pd.Timestamp(t).timestamp()) for t in df_main.index],
+            "open":  df_main["open"].tolist(),
+            "high":  df_main["high"].tolist(),
+            "low":   df_main["low"].tolist(),
+            "close": df_main["close"].tolist(),
         }
     except Exception:
         chart_candles = {}
