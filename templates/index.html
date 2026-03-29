@@ -1538,13 +1538,26 @@ function renderChart(candles, trades) {
   });
 
   // chart_candles ts: already Unix seconds integers — pass directly
-  const chartData = candles.ts.map((c_ts, i) => ({
+  const formattedCandles = candles.ts.map((c_ts, i) => ({
     time: c_ts,
     open: candles.open[i], high: candles.high[i],
     low:  candles.low[i],  close: candles.close[i],
   }));
-  series.setData(chartData);
+  const validCandleTimes = formattedCandles.map(c => c.time);
+  series.setData(formattedCandles);
   chart.timeScale().fitContent();
+
+  function alignTradeToCandle(tradeTimeInSeconds, validTimes) {
+    let alignedTime = validTimes[0];
+    for (let i = 0; i < validTimes.length; i++) {
+      if (validTimes[i] <= tradeTimeInSeconds) {
+        alignedTime = validTimes[i];
+      } else {
+        break;
+      }
+    }
+    return alignedTime;
+  }
 
   // Tooltip overlay
   const tooltip = document.createElement("div");
@@ -1564,12 +1577,12 @@ function renderChart(candles, trades) {
     const tradeByTime = new Map();
 
     recent.forEach(t => {
-      const entryTime = tradeTs(t.ts);
-      const isLong    = t.signal === 1;
-      const isWin     = t.win;
-      // build a fresh object then destructure to guarantee no text property
+      const exactTradeTime = Math.floor(new Date(t.ts + 'Z').getTime() / 1000);
+      const alignedTime    = alignTradeToCandle(exactTradeTime, validCandleTimes);
+      const isLong         = t.signal === 1;
+      const isWin          = t.win;
       const markerObj = {
-        time:     entryTime,
+        time:     alignedTime,
         position: isLong ? "aboveBar" : "belowBar",
         color:    isLong
           ? (isWin ? "#2e7d32" : "rgba(46,125,50,0.35)")
@@ -1579,7 +1592,7 @@ function renderChart(candles, trades) {
       };
       const { text, ...rest } = markerObj;
       markers.push(rest);
-      tradeByTime.set(entryTime, t);
+      tradeByTime.set(alignedTime, t);
     });
 
     markers.sort((a, b) => a.time - b.time);
