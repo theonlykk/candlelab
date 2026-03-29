@@ -1475,7 +1475,7 @@ function goLive() {
       document.getElementById("wizard-step9-form").classList.add("hidden");
       document.getElementById("saved-state").classList.add("visible");
       renderChart(d.chart_candles, d.chart_trades);
-      renderEquityCurve(d.chart_trades, state.slMult, state.tpMult);
+      renderEquityCurve(d.chart_trades, d.sl_multiplier || state.slMult, d.tp_multiplier || state.tpMult);
       syncChartRange(d.chart_candles);
       renderStatsTable(d.chart_trades, state.slMult, state.tpMult);
       renderTradeLog(d.chart_trades);
@@ -1509,6 +1509,8 @@ function renderChart(candles, trades) {
   const toSec    = ms => ms > 9999999999 ? Math.floor(ms / 1000) : ms;
   const priceFmt = PRICE_FMT[state.instrument] || {precision:5, minMove:0.0005};
 
+  wrap.style.position = "relative";
+
   const chart = LightweightCharts.createChart(wrap, {
     width:  wrap.clientWidth,
     height: wrap.clientHeight || Math.round(500 * 0.65),
@@ -1541,25 +1543,65 @@ function renderChart(candles, trades) {
   }));
   series.setData(chartData);
 
-  if (trades && trades.length) {
-    const markers = [];
-    const dec = priceFmt.precision;
+  // Tooltip overlay
+  const tooltip = document.createElement("div");
+  tooltip.style.cssText = [
+    "position:absolute", "top:8px", "left:8px", "z-index:10",
+    "background:rgba(255,255,255,0.96)", "border:1px solid var(--border)",
+    "border-radius:6px", "padding:8px 10px", "font-size:12px", "line-height:1.7",
+    "pointer-events:none", "display:none", "min-width:155px",
+    "box-shadow:0 2px 8px rgba(0,0,0,0.10)",
+  ].join(";");
+  wrap.appendChild(tooltip);
 
-    trades.forEach(t => {
+  if (trades && trades.length) {
+    // Limit to 20 most recent trades
+    const recent = trades.slice(-20);
+    const markers     = [];
+    const tradeByTime = new Map();
+
+    recent.forEach(t => {
       const entryTime = toSec(Date.parse(t.ts));
       const isLong    = t.signal === 1;
+      const isWin     = t.win;
       markers.push({
         time:     entryTime,
         position: isLong ? "aboveBar" : "belowBar",
-        color:    isLong ? "#2e7d32" : "#ef5350",
+        color:    isLong
+          ? (isWin ? "#2e7d32" : "rgba(46,125,50,0.35)")
+          : (isWin ? "#ef5350" : "rgba(239,83,80,0.35)"),
         shape:    isLong ? "arrowUp" : "arrowDown",
         size:     1,
-        text:     `TP ${t.tp.toFixed(dec)}  SL ${t.sl.toFixed(dec)}`,
       });
+      tradeByTime.set(entryTime, t);
     });
 
     markers.sort((a, b) => a.time - b.time);
     series.setMarkers(markers);
+
+    // Crosshair tooltip
+    const INTERVAL_MINS = { "5m": 5, "15m": 15, "1h": 60 };
+    const barSecs = (INTERVAL_MINS[state.interval] || 5) * 60;
+    const dec     = priceFmt.precision;
+
+    chart.subscribeCrosshairMove(param => {
+      if (!param || !param.time) { tooltip.style.display = "none"; return; }
+      let closest = null;
+      let minDist  = Infinity;
+      tradeByTime.forEach((t, ts) => {
+        const d = Math.abs(ts - param.time);
+        if (d < minDist && d <= barSecs * 2) { minDist = d; closest = t; }
+      });
+      if (!closest) { tooltip.style.display = "none"; return; }
+      const isLong   = closest.signal === 1;
+      const resColor = closest.win ? "#2e7d32" : "#ef5350";
+      tooltip.innerHTML =
+        `<div style="font-weight:600;margin-bottom:2px;">${isLong ? "Long ↑" : "Short ↓"} · <span style="color:${resColor}">${closest.win ? "Win" : "Loss"}</span></div>` +
+        `<div>Entry <b>${closest.entry.toFixed(dec)}</b></div>` +
+        `<div>TP <span style="color:#2e7d32">${closest.tp.toFixed(dec)}</span></div>` +
+        `<div>SL <span style="color:#ef5350">${closest.sl.toFixed(dec)}</span></div>`;
+      tooltip.style.display = "block";
+    });
   }
 }
 
@@ -1865,7 +1907,7 @@ function useMarketInstead(code) {
     .then(d => {
       state.finalResult = d;
       renderChart(d.chart_candles, d.chart_trades);
-      renderEquityCurve(d.chart_trades, state.slMult, state.tpMult);
+      renderEquityCurve(d.chart_trades, d.sl_multiplier || state.slMult, d.tp_multiplier || state.tpMult);
       syncChartRange(d.chart_candles);
       renderStatsTable(d.chart_trades, state.slMult, state.tpMult);
       renderTradeLog(d.chart_trades);

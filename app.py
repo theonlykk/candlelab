@@ -730,6 +730,8 @@ def api_finalise():
         "name":             saved["name"],
         "win_pct":          main_r["win_pct"],
         "signals":          main_r["signals"],
+        "sl_multiplier":    sl_mult,
+        "tp_multiplier":    tp_mult,
         "cross_timeframe":  cross_tf,
         "chart_candles":    chart_candles,
         "chart_trades":     chart_trades,
