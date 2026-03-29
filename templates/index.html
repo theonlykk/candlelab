@@ -1453,7 +1453,7 @@ function goLive() {
       document.getElementById("saved-state").classList.add("visible");
       renderCharts(d);
       renderStatsTable(d.chart_trades, state.slMult, state.tpMult);
-      renderTradeLog(d.chart_trades);
+      renderTradeLog(d.chart_trades, state.slMult, state.tpMult);
       fetchAiCommentary(cfg, d);
       fetchAiTweaks(cfg, d);
     })
@@ -1485,6 +1485,7 @@ function renderCharts(data) {
     height: 350,
     layout: { backgroundColor: "#f5f9f5", textColor: "#1a2e1a" },
     grid: { vertLines: { color: "rgba(0,0,0,0.05)" }, horzLines: { color: "rgba(0,0,0,0.05)" } },
+    handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true },
     timeScale: { visible: false },
     rightPriceScale: { minimumWidth: 80, autoScale: true },
   });
@@ -1528,6 +1529,7 @@ function renderCharts(data) {
     height: 180,
     layout: { backgroundColor: "#f5f9f5", textColor: "#1a2e1a" },
     grid: { vertLines: { color: "rgba(0,0,0,0.05)" }, horzLines: { color: "rgba(0,0,0,0.05)" } },
+    handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true },
     timeScale: { visible: true, timeVisible: true },
     rightPriceScale: { minimumWidth: 80, autoScale: true },
   });
@@ -1580,20 +1582,40 @@ function renderCharts(data) {
   }
   wireTimeSync(topChart, bottomChart);
 
-  // Sparse equity points: visible *time* range updates on the bottom chart do not always
-  // emit subscribeVisibleTimeRangeChange when the user drags the time scale. Logical range
-  // always updates; read the actual time window with getVisibleRange and apply to the top
-  // chart (never pass logical indices between charts).
-  bottomChart.timeScale().subscribeVisibleLogicalRangeChange(() => {
-    if (syncingTimeRange) return;
-    const tr = bottomChart.timeScale().getVisibleRange();
-    if (!tr) return;
+  function timeRangesEqual(a, b) {
+    if (!a || !b) return false;
+    return String(a.from) === String(b.from) && String(a.to) === String(b.to);
+  }
+
+  function syncBottomToTop(timeRange) {
+    if (syncingTimeRange || !timeRange) return;
+    const topTr = topChart.timeScale().getVisibleRange();
+    if (timeRangesEqual(topTr, timeRange)) return;
     syncingTimeRange = true;
     try {
-      topChart.timeScale().setVisibleRange(tr);
+      topChart.timeScale().setVisibleRange(timeRange);
     } finally {
       syncingTimeRange = false;
     }
+  }
+
+  // Primary: event payload matches the new view after the time scale updates.
+  bottomChart.timeScale().subscribeVisibleTimeRangeChange((timeRange) => {
+    syncBottomToTop(timeRange);
+  });
+
+  // Fallback when time events are sparse: logical range fires first, but synchronous
+  // getVisibleRange() was stale (price chart looked frozen). Defer two frames, then skip
+  // if the top chart already matches (avoids fighting top→bottom sync).
+  bottomChart.timeScale().subscribeVisibleLogicalRangeChange(() => {
+    if (syncingTimeRange) return;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (syncingTimeRange) return;
+        const tr = bottomChart.timeScale().getVisibleRange();
+        if (tr) syncBottomToTop(tr);
+      });
+    });
   });
 
   if (validTimes.length > 0) {
@@ -1617,15 +1639,15 @@ function renderCharts(data) {
 }
 
 // ── Trade log ─────────────────────────────────────────────────────────────────
-function renderTradeLog(trades) {
+function renderTradeLog(trades, slMult, tpMult) {
   const wrap = document.getElementById("trade-log-wrap");
   wrap.innerHTML = "";
   if (!trades || !trades.length) return;
 
   const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-  const last20 = trades.slice(-20);
+  const pnlWin  = +(100 * tpMult / slMult).toFixed(0);
 
-  const rows = last20.map((t, i) => {
+  const rows = trades.map((t, i) => {
     const d = new Date(t.ts);
     const day = String(d.getUTCDate()).padStart(2, "0");
     const mon = MONTHS[d.getUTCMonth()];
@@ -1637,6 +1659,8 @@ function renderTradeLog(trades) {
     const resColor  = t.win ? "var(--green)" : "var(--red)";
     const res       = t.win ? "Win" : "Loss";
     const exitColor = t.exit_type === "TP" ? "var(--green)" : "var(--red)";
+    const pnl       = t.win ? `+$${pnlWin}` : `-$100`;
+    const pnlColor  = t.win ? "var(--green)" : "var(--red)";
     return `<tr style="background:${bg};">
       <td style="padding:6px 10px;">${date}</td>
       <td style="padding:6px 10px;">${dir}</td>
@@ -1644,26 +1668,52 @@ function renderTradeLog(trades) {
       <td style="padding:6px 10px; color:${exitColor}; font-weight:600;">${t.exit_price ?? "—"}</td>
       <td style="padding:6px 10px; color:${exitColor}; font-weight:600;">${t.exit_type ?? "—"}</td>
       <td style="padding:6px 10px; color:${resColor}; font-weight:600;">${res}</td>
+      <td style="padding:6px 10px; color:${pnlColor}; font-weight:600;">${pnl}</td>
     </tr>`;
   }).join("");
 
+  const csvRows = [
+    "date,direction,entry,exit,type,result,pnl",
+    ...trades.map(t => {
+      const d = new Date(t.ts);
+      const date = d.toISOString().slice(0, 16).replace("T", " ");
+      const dir  = t.signal === 1 ? "Long" : "Short";
+      const pnl  = t.win ? pnlWin : -100;
+      return [date, dir, t.entry, t.exit_price ?? "", t.exit_type ?? "", t.win ? "Win" : "Loss", pnl].join(",");
+    })
+  ].join("\n");
+
   wrap.innerHTML = `
-    <div style="font-size:13px; color:var(--muted); margin-bottom:6px;">Last ${last20.length} trades</div>
-    <div style="overflow-x:auto; border-radius:8px; border:1px solid var(--border);">
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+      <div style="font-size:13px; color:var(--muted);">${trades.length} trades</div>
+      <button id="download-csv-btn" style="font-size:11px; padding:3px 10px; border:1px solid var(--accent); background:transparent; color:var(--accent); border-radius:5px; cursor:pointer;">Download CSV</button>
+    </div>
+    <div style="overflow-x:auto; overflow-y:auto; max-height:300px; border-radius:8px; border:1px solid var(--border);">
       <table style="width:100%; border-collapse:collapse; font-size:12px; background:var(--card);">
         <thead>
-          <tr style="background:var(--bg); color:var(--muted);">
+          <tr style="background:var(--bg); color:var(--muted); position:sticky; top:0; z-index:1;">
             <th style="padding:7px 10px; text-align:left; font-weight:500;">Date</th>
             <th style="padding:7px 10px; text-align:left; font-weight:500;">Dir</th>
             <th style="padding:7px 10px; text-align:left; font-weight:500;">Entry</th>
             <th style="padding:7px 10px; text-align:left; font-weight:500;">Exit</th>
             <th style="padding:7px 10px; text-align:left; font-weight:500;">Type</th>
             <th style="padding:7px 10px; text-align:left; font-weight:500;">Result</th>
+            <th style="padding:7px 10px; text-align:left; font-weight:500;">PnL</th>
           </tr>
         </thead>
         <tbody>${rows}</tbody>
       </table>
     </div>`;
+
+  document.getElementById("download-csv-btn").addEventListener("click", () => {
+    const blob = new Blob([csvRows], { type: "text/csv" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href = url;
+    a.download = "candlelab-trades.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  });
 }
 
 // ── Stats table ───────────────────────────────────────────────────────────────
@@ -1840,7 +1890,7 @@ function useMarketInstead(code) {
       state.finalResult = d;
       renderCharts(d);
       renderStatsTable(d.chart_trades, state.slMult, state.tpMult);
-      renderTradeLog(d.chart_trades);
+      renderTradeLog(d.chart_trades, state.slMult, state.tpMult);
       document.getElementById("suggestion-card").classList.remove("visible");
       document.getElementById("suggestion-card").innerHTML = "";
     })
