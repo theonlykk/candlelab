@@ -1567,15 +1567,33 @@ function renderCharts(data) {
   if (equityData.length > 0) { equitySeries.setData(equityData); }
 
   let syncingTimeRange = false;
-  topChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
-    if (syncingTimeRange || !range) return;
+  function wireTimeSync(fromChart, toChart) {
+    fromChart.timeScale().subscribeVisibleTimeRangeChange((timeRange) => {
+      if (syncingTimeRange || !timeRange) return;
+      syncingTimeRange = true;
+      try {
+        toChart.timeScale().setVisibleRange(timeRange);
+      } finally {
+        syncingTimeRange = false;
+      }
+    });
+  }
+  wireTimeSync(topChart, bottomChart);
+
+  // Sparse equity points: visible *time* range updates on the bottom chart do not always
+  // emit subscribeVisibleTimeRangeChange when the user drags the time scale. Logical range
+  // always updates; read the actual time window with getVisibleRange and apply to the top
+  // chart (never pass logical indices between charts).
+  bottomChart.timeScale().subscribeVisibleLogicalRangeChange(() => {
+    if (syncingTimeRange) return;
+    const tr = bottomChart.timeScale().getVisibleRange();
+    if (!tr) return;
     syncingTimeRange = true;
-    try { bottomChart.timeScale().setVisibleLogicalRange(range); } finally { syncingTimeRange = false; }
-  });
-  bottomChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
-    if (syncingTimeRange || !range) return;
-    syncingTimeRange = true;
-    try { topChart.timeScale().setVisibleLogicalRange(range); } finally { syncingTimeRange = false; }
+    try {
+      topChart.timeScale().setVisibleRange(tr);
+    } finally {
+      syncingTimeRange = false;
+    }
   });
 
   if (validTimes.length > 0) {
