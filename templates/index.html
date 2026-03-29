@@ -494,15 +494,8 @@
   }
   #name-input:focus { border-color: var(--accent); }
 
-  /* Bloomberg-style subplot container */
-  #multi-chart-container {
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    overflow: hidden;
-    margin: 20px 0 0;
-  }
-  #top-chart    { overflow: hidden; }
-  #bottom-chart { overflow: hidden; border-top: 1px solid var(--border); }
+  #top-chart    { overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius) var(--radius) 0 0; margin-top: 20px; }
+  #bottom-chart { overflow: hidden; border: 1px solid var(--border); border-top: none; border-radius: 0 0 var(--radius) var(--radius); }
   #ai-commentary {
     background: var(--card);
     border: 1px solid var(--border);
@@ -915,10 +908,8 @@
     </div>
 
     <div id="saved-state">
-      <div id="multi-chart-container" style="display:flex; flex-direction:column; width:100%; height:500px;">
-        <div id="top-chart" style="flex:0 0 65%; width:100%;"></div>
-        <div id="bottom-chart" style="flex:0 0 35%; width:100%;"></div>
-      </div>
+      <div id="top-chart" style="width:100%; height:350px;"></div>
+      <div id="bottom-chart" style="width:100%; height:180px;"></div>
       <div id="equity-final"></div>
       <div id="stats-table-wrap"></div>
       <div id="trade-log-wrap"></div>
@@ -958,49 +949,6 @@ function safeParseUnixSeconds(timeVal) {
   return Math.floor(parsedTime / 1000);
 }
 
-// ── Chart instances ───────────────────────────────────────────────────────────
-let _candleChart     = null;
-let _equityChart     = null;
-let _lastCandleTime  = null;
-let _validCandleTimes = null;
-
-function alignTradeToCandle(tradeTimeInSeconds, validTimes) {
-  let alignedTime = validTimes[0];
-  for (let i = 0; i < validTimes.length; i++) {
-    if (validTimes[i] <= tradeTimeInSeconds) {
-      alignedTime = validTimes[i];
-    } else {
-      break;
-    }
-  }
-  return alignedTime;
-}
-
-function syncChartRange(candles) {
-  if (!candles || !candles.ts || !candles.ts.length) return;
-  // candle ts values are Unix seconds integers — use directly
-  const from = candles.ts[0];
-  const to   = candles.ts[candles.ts.length - 1];
-  if (_candleChart) try { _candleChart.timeScale().setVisibleRange({ from, to }); } catch(e) {}
-  if (_equityChart) try { _equityChart.timeScale().setVisibleRange({ from, to }); } catch(e) {}
-}
-
-function _attachRangeSync() {
-  if (!_candleChart || !_equityChart) return;
-  let _syncing = false;
-  _candleChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
-    if (_syncing || !range) return;
-    _syncing = true;
-    try { _equityChart.timeScale().setVisibleLogicalRange(range); } catch(e) {}
-    _syncing = false;
-  });
-  _equityChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
-    if (_syncing || !range) return;
-    _syncing = true;
-    try { _candleChart.timeScale().setVisibleLogicalRange(range); } catch(e) {}
-    _syncing = false;
-  });
-}
 
 // ── State ────────────────────────────────────────────────────────────────────
 const state = {
@@ -1503,9 +1451,7 @@ function goLive() {
       state.finalResult = d;
       document.getElementById("wizard-step9-form").classList.add("hidden");
       document.getElementById("saved-state").classList.add("visible");
-      renderChart(d.chart_candles, d.chart_trades);
-      renderEquityCurve(d.chart_trades, d.sl_multiplier || state.slMult, d.tp_multiplier || state.tpMult);
-      syncChartRange(d.chart_candles);
+      renderCharts(d);
       renderStatsTable(d.chart_trades, state.slMult, state.tpMult);
       renderTradeLog(d.chart_trades);
       fetchAiCommentary(cfg, d);
@@ -1526,190 +1472,111 @@ const PRICE_FMT = {
   SPX500USD: {precision:2, minMove:0.01},   BTCUSD:    {precision:2, minMove:0.01},
 };
 
-function renderChart(candles, trades) {
-  const wrap = document.getElementById("top-chart");
-  wrap.innerHTML = "";
-  _candleChart = null;
-  if (!candles || !candles.ts || !candles.ts.length) {
-    wrap.innerHTML = `<div style="padding:20px; color:var(--muted); text-align:center;">No chart data available.</div>`;
-    return;
-  }
+// ── Charts (candlestick + equity subplot) ─────────────────────────────────────
+function renderCharts(data) {
+  const topContainer    = document.getElementById("top-chart");
+  const bottomContainer = document.getElementById("bottom-chart");
+  topContainer.innerHTML    = "";
+  bottomContainer.innerHTML = "";
 
-  const priceFmt = PRICE_FMT[state.instrument] || {precision:5, minMove:0.0005};
+  const { chart_candles, chart_trades = [] } = data;
 
-  wrap.style.position = "relative";
-
-  const chart = LightweightCharts.createChart(wrap, {
-    width:  wrap.clientWidth,
-    height: wrap.clientHeight || Math.round(500 * 0.65),
+  const topChart = LightweightCharts.createChart(topContainer, {
+    height: 350,
     layout: { backgroundColor: "#f5f9f5", textColor: "#1a2e1a" },
-    grid: {
-      vertLines: { color: "rgba(0,0,0,0.05)" },
-      horzLines: { color: "rgba(0,0,0,0.05)" },
-    },
-    crosshair: {
-      mode: LightweightCharts.CrosshairMode.Normal,
-      vertLine: { color: "#4caf50", width: 1, style: 1 },
-      horzLine: { color: "#4caf50", width: 1, style: 1 },
-    },
-    rightPriceScale: { borderColor: "rgba(0,0,0,0.08)", minimumWidth: 80, autoScale: true },
-    timeScale: { borderColor: "rgba(0,0,0,0.08)", visible: false },
-  });
-  _candleChart = chart;
-
-  const series = chart.addCandlestickSeries({
-    upColor: "#4caf50", downColor: "#ef5350",
-    borderUpColor: "#4caf50", borderDownColor: "#ef5350",
-    wickUpColor: "#4caf50", wickDownColor: "#ef5350",
-    priceFormat: { type: "price", precision: priceFmt.precision, minMove: priceFmt.minMove },
+    grid: { vertLines: { color: "rgba(0,0,0,0.05)" }, horzLines: { color: "rgba(0,0,0,0.05)" } },
+    timeScale: { visible: false },
+    rightPriceScale: { minimumWidth: 80, autoScale: true },
   });
 
-  // chart_candles ts: already Unix seconds integers — pass directly
-  const formattedCandles = candles.ts.map((c_ts, i) => ({
-    time: c_ts,
-    open: candles.open[i], high: candles.high[i],
-    low:  candles.low[i],  close: candles.close[i],
+  const fmt = PRICE_FMT[state.instrument] || { precision: 5, minMove: 0.00001 };
+  const candleSeries = topChart.addCandlestickSeries({
+    priceFormat: { type: "price", precision: fmt.precision, minMove: fmt.minMove },
+  });
+
+  const candleData = chart_candles.ts.map((t, i) => ({
+    time:  t,
+    open:  chart_candles.open[i],
+    high:  chart_candles.high[i],
+    low:   chart_candles.low[i],
+    close: chart_candles.close[i],
   }));
-  _validCandleTimes = formattedCandles.map(c => c.time);
-  series.setData(formattedCandles);
-  chart.timeScale().fitContent();
+  candleSeries.setData(candleData);
 
-  _lastCandleTime = _validCandleTimes[_validCandleTimes.length - 1];
+  const validTimes = candleData.map(c => c.time);
 
-  // Tooltip overlay
-  const tooltip = document.createElement("div");
-  tooltip.style.cssText = [
-    "position:absolute", "top:8px", "left:8px", "z-index:10",
-    "background:rgba(255,255,255,0.96)", "border:1px solid var(--border)",
-    "border-radius:6px", "padding:8px 10px", "font-size:12px", "line-height:1.7",
-    "pointer-events:none", "display:none", "min-width:155px",
-    "box-shadow:0 2px 8px rgba(0,0,0,0.10)",
-  ].join(";");
-  wrap.appendChild(tooltip);
-
-  if (trades && trades.length) {
-    const recent      = trades.slice(-20);
-    const markerMap   = new Map();
-    const tradeByTime = new Map();
-
-    recent.forEach(trade => {
-      const exactTradeTime = Math.floor(new Date(trade.ts).getTime() / 1000);
-      const alignedTime    = alignTradeToCandle(exactTradeTime, _validCandleTimes);
-      if (!alignedTime) return;
-      const isLong = trade.signal === 1;
-      markerMap.set(alignedTime, {
-        time:     alignedTime,
-        position: isLong ? "belowBar" : "aboveBar",
-        color:    isLong ? "#2e7d32" : "#ef5350",
-        shape:    isLong ? "arrowUp" : "arrowDown",
-        size:     2,
-      });
-      tradeByTime.set(alignedTime, trade);
+  const markersMap = new Map();
+  chart_trades.forEach(trade => {
+    const tradeTime = Math.floor(new Date(trade.ts).getTime() / 1000);
+    let idx = validTimes.findIndex(t => t >= tradeTime);
+    let alignedTime = validTimes[0];
+    if (idx > 0)                   { alignedTime = validTimes[idx - 1]; }
+    else if (idx === 0)            { alignedTime = validTimes[0]; }
+    else if (validTimes.length > 0){ alignedTime = validTimes[validTimes.length - 1]; }
+    markersMap.set(alignedTime, {
+      time:     alignedTime,
+      position: trade.signal === 1 ? "belowBar" : "aboveBar",
+      color:    trade.signal === 1 ? "#2e7d32"  : "#ef5350",
+      shape:    trade.signal === 1 ? "arrowUp"  : "arrowDown",
+      size:     2,
     });
-
-    const dedupedMarkers = Array.from(markerMap.values()).sort((a, b) => a.time - b.time);
-    series.setMarkers(dedupedMarkers);
-
-    // Crosshair tooltip
-    const INTERVAL_MINS = { "5m": 5, "15m": 15, "1h": 60 };
-    const barSecs = (INTERVAL_MINS[state.interval] || 5) * 60;
-    const dec     = priceFmt.precision;
-
-    chart.subscribeCrosshairMove(param => {
-      if (!param || !param.time) { tooltip.style.display = "none"; return; }
-      let closest = null;
-      let minDist  = Infinity;
-      tradeByTime.forEach((t, ts) => {
-        const d = Math.abs(ts - param.time);
-        if (d < minDist && d <= barSecs * 2) { minDist = d; closest = t; }
-      });
-      if (!closest) { tooltip.style.display = "none"; return; }
-      const isLong   = closest.signal === 1;
-      const resColor = closest.win ? "#2e7d32" : "#ef5350";
-      tooltip.innerHTML =
-        `<div style="font-weight:600;margin-bottom:2px;">${isLong ? "Long ↑" : "Short ↓"} · <span style="color:${resColor}">${closest.win ? "Win" : "Loss"}</span></div>` +
-        `<div>Entry <b>${closest.entry.toFixed(dec)}</b></div>` +
-        `<div>TP <span style="color:#2e7d32">${closest.tp.toFixed(dec)}</span></div>` +
-        `<div>SL <span style="color:#ef5350">${closest.sl.toFixed(dec)}</span></div>`;
-      tooltip.style.display = "block";
-    });
-  }
-}
-
-// ── Equity curve ─────────────────────────────────────────────────────────────
-function renderEquityCurve(trades, slMult, tpMult) {
-  const wrap    = document.getElementById("bottom-chart");
-  const finalEl = document.getElementById("equity-final");
-  wrap.innerHTML = "";
-  finalEl.textContent = "";
-  _equityChart = null;
-  if (!trades || !trades.length) return;
-
-  if (!_validCandleTimes || !_validCandleTimes.length) return;
-
-  let currentEquity = 1000;
-  const equityMap   = new Map();
-  equityMap.set(_validCandleTimes[0], { time: _validCandleTimes[0], value: currentEquity });
-
-  const sorted = [...trades].sort((a, b) => new Date(a.ts) - new Date(b.ts));
-  sorted.forEach(trade => {
-    const exactTradeTime = Math.floor(new Date(trade.ts).getTime() / 1000);
-    const alignedTime    = alignTradeToCandle(exactTradeTime, _validCandleTimes);
-    if (!alignedTime) return;
-    const pnl = trade.win ? 100 * tpMult / slMult : -100;
-    currentEquity += pnl;
-    equityMap.set(alignedTime, { time: alignedTime, value: parseFloat(currentEquity.toFixed(2)) });
   });
+  const markers = Array.from(markersMap.values()).sort((a, b) => a.time - b.time);
+  candleSeries.setMarkers(markers);
 
-  const points = Array.from(equityMap.values()).sort((a, b) => a.time - b.time);
-
-  const finalEquity = points[points.length - 1].value;
-  const gain        = finalEquity - 1000;
-
-  const chart = LightweightCharts.createChart(wrap, {
-    width:  wrap.clientWidth,
-    height: wrap.clientHeight || Math.round(500 * 0.35),
+  const bottomChart = LightweightCharts.createChart(bottomContainer, {
+    height: 180,
     layout: { backgroundColor: "#f5f9f5", textColor: "#1a2e1a" },
-    grid: {
-      vertLines: { color: "rgba(0,0,0,0.05)" },
-      horzLines: { color: "rgba(0,0,0,0.05)" },
-    },
-    crosshair: {
-      mode: LightweightCharts.CrosshairMode.Normal,
-      vertLine: { color: "#4caf50", width: 1, style: 1 },
-      horzLine: { color: "#4caf50", width: 1, style: 1 },
-    },
-    rightPriceScale: {
-      borderColor: "rgba(0,0,0,0.08)",
-      minimumWidth: 80,
-      autoScale: true,
-      scaleMargins: { top: 0.1, bottom: 0.1 },
-    },
-    timeScale: { borderColor: "rgba(0,0,0,0.08)", timeVisible: true, visible: true },
-  });
-  _equityChart = chart;
-
-  const series = chart.addLineSeries({
-    color:            "#2e7d32",
-    lineWidth:        2,
-    priceFormat:      { type: "price", precision: 2, minMove: 0.01 },
-    lastValueVisible: true,
-    priceLineVisible: false,
+    grid: { vertLines: { color: "rgba(0,0,0,0.05)" }, horzLines: { color: "rgba(0,0,0,0.05)" } },
+    timeScale: { visible: true, timeVisible: true },
+    rightPriceScale: { minimumWidth: 80, autoScale: true },
   });
 
-  series.setData(points);
+  const equitySeries = bottomChart.addLineSeries({
+    color: "#4caf50", lineWidth: 2,
+    priceFormat: { type: "price", precision: 2, minMove: 0.01 },
+  });
 
-  // Wire up bi-directional logical-range sync after both charts exist
-  _attachRangeSync();
+  const equityMap = new Map();
+  let currentEquity = 1000;
+  if (validTimes.length > 0) {
+    equityMap.set(validTimes[0], { time: validTimes[0], value: currentEquity });
+  }
 
-  // Set initial visible range: from earliest equity point to last candle + 1h buffer
-  const rangeFrom = points[0].time;
-  const rangeTo   = (_lastCandleTime || points[points.length - 1].time) + 3600;
-  try { _candleChart.timeScale().setVisibleRange({ from: rangeFrom, to: rangeTo }); } catch(e) {}
-  try { _equityChart.timeScale().setVisibleRange({ from: rangeFrom, to: rangeTo }); } catch(e) {}
+  const sortedTrades = [...chart_trades].sort((a, b) => new Date(a.ts) - new Date(b.ts));
+  sortedTrades.forEach(trade => {
+    const tradeTime = Math.floor(new Date(trade.ts).getTime() / 1000);
+    let idx = validTimes.findIndex(t => t >= tradeTime);
+    let alignedTime = validTimes[0];
+    if (idx > 0)                   { alignedTime = validTimes[idx - 1]; }
+    else if (idx === 0)            { alignedTime = validTimes[0]; }
+    else if (validTimes.length > 0){ alignedTime = validTimes[validTimes.length - 1]; }
+    const pnl = trade.win ? 300 : -100;
+    currentEquity += pnl;
+    equityMap.set(alignedTime, { time: alignedTime, value: currentEquity });
+  });
 
+  const equityData = Array.from(equityMap.values()).sort((a, b) => a.time - b.time);
+  if (equityData.length > 0) { equitySeries.setData(equityData); }
+
+  topChart.timeScale().subscribeVisibleLogicalRangeChange(r => {
+    if (r) bottomChart.timeScale().setVisibleLogicalRange(r);
+  });
+  bottomChart.timeScale().subscribeVisibleLogicalRangeChange(r => {
+    if (r) topChart.timeScale().setVisibleLogicalRange(r);
+  });
+
+  if (validTimes.length > 0) {
+    const lastTime = validTimes[validTimes.length - 1];
+    topChart.timeScale().setVisibleRange({ from: lastTime - (14 * 86400), to: lastTime + 3600 });
+  }
+
+  // Update equity-final label
+  const finalEl = document.getElementById("equity-final");
+  const finalEquity = equityData.length ? equityData[equityData.length - 1].value : 1000;
+  const gain = finalEquity - 1000;
   finalEl.style.cssText = `font-size:13px; font-weight:600; padding:6px 0 10px; color:${gain >= 0 ? "var(--accent)" : "var(--red)"};`;
-  finalEl.textContent = `Equity: $${Number(finalEquity).toLocaleString(undefined,{maximumFractionDigits:0})} (${gain >= 0 ? "+" : ""}${gain.toFixed(0)})`;
+  finalEl.textContent = `Equity: $${Number(finalEquity).toLocaleString(undefined, {maximumFractionDigits:0})} (${gain >= 0 ? "+" : ""}${gain.toFixed(0)})`;
 }
 
 // ── Trade log ─────────────────────────────────────────────────────────────────
@@ -1934,9 +1801,7 @@ function useMarketInstead(code) {
     .then(r => r.json())
     .then(d => {
       state.finalResult = d;
-      renderChart(d.chart_candles, d.chart_trades);
-      renderEquityCurve(d.chart_trades, d.sl_multiplier || state.slMult, d.tp_multiplier || state.tpMult);
-      syncChartRange(d.chart_candles);
+      renderCharts(d);
       renderStatsTable(d.chart_trades, state.slMult, state.tpMult);
       renderTradeLog(d.chart_trades);
       document.getElementById("suggestion-card").classList.remove("visible");
