@@ -959,9 +959,22 @@ function safeParseUnixSeconds(timeVal) {
 }
 
 // ── Chart instances ───────────────────────────────────────────────────────────
-let _candleChart    = null;
-let _equityChart    = null;
-let _lastCandleTime = null;
+let _candleChart     = null;
+let _equityChart     = null;
+let _lastCandleTime  = null;
+let _validCandleTimes = null;
+
+function alignTradeToCandle(tradeTimeInSeconds, validTimes) {
+  let alignedTime = validTimes[0];
+  for (let i = 0; i < validTimes.length; i++) {
+    if (validTimes[i] <= tradeTimeInSeconds) {
+      alignedTime = validTimes[i];
+    } else {
+      break;
+    }
+  }
+  return alignedTime;
+}
 
 function syncChartRange(candles) {
   if (!candles || !candles.ts || !candles.ts.length) return;
@@ -1557,23 +1570,11 @@ function renderChart(candles, trades) {
     open: candles.open[i], high: candles.high[i],
     low:  candles.low[i],  close: candles.close[i],
   }));
-  const validCandleTimes = formattedCandles.map(c => c.time);
+  _validCandleTimes = formattedCandles.map(c => c.time);
   series.setData(formattedCandles);
   chart.timeScale().fitContent();
 
-  _lastCandleTime = validCandleTimes[validCandleTimes.length - 1];
-
-  function alignTradeToCandle(tradeTimeInSeconds, validTimes) {
-    let alignedTime = validTimes[0];
-    for (let i = 0; i < validTimes.length; i++) {
-      if (validTimes[i] <= tradeTimeInSeconds) {
-        alignedTime = validTimes[i];
-      } else {
-        break;
-      }
-    }
-    return alignedTime;
-  }
+  _lastCandleTime = _validCandleTimes[_validCandleTimes.length - 1];
 
   // Tooltip overlay
   const tooltip = document.createElement("div");
@@ -1587,32 +1588,25 @@ function renderChart(candles, trades) {
   wrap.appendChild(tooltip);
 
   if (trades && trades.length) {
-    // Limit to 20 most recent trades
-    const recent = trades.slice(-20);
-    const markers     = [];
+    const recent      = trades.slice(-20);
+    const markerMap   = new Map();
     const tradeByTime = new Map();
 
-    recent.forEach(t => {
-      const exactTradeTime = safeParseUnixSeconds(t.ts);
-      const alignedTime    = alignTradeToCandle(exactTradeTime, validCandleTimes);
-      const isLong         = t.signal === 1;
-      const isWin          = t.win;
-      const markerObj = {
+    recent.forEach(trade => {
+      const exactTradeTime = Math.floor(new Date(trade.ts).getTime() / 1000);
+      const alignedTime    = alignTradeToCandle(exactTradeTime, _validCandleTimes);
+      if (!alignedTime) return;
+      const isLong = trade.signal === 1;
+      markerMap.set(alignedTime, {
         time:     alignedTime,
-        position: isLong ? "aboveBar" : "belowBar",
-        color:    isLong
-          ? (isWin ? "#2e7d32" : "rgba(46,125,50,0.35)")
-          : (isWin ? "#ef5350" : "rgba(239,83,80,0.35)"),
+        position: isLong ? "belowBar" : "aboveBar",
+        color:    isLong ? "#2e7d32" : "#ef5350",
         shape:    isLong ? "arrowUp" : "arrowDown",
-        size:     1,
-      };
-      const { text, ...rest } = markerObj;
-      markers.push(rest);
-      tradeByTime.set(alignedTime, t);
+        size:     2,
+      });
+      tradeByTime.set(alignedTime, trade);
     });
 
-    const markerMap = new Map();
-    markers.forEach(m => { if (m.time) markerMap.set(m.time, m); });
     const dedupedMarkers = Array.from(markerMap.values()).sort((a, b) => a.time - b.time);
     series.setMarkers(dedupedMarkers);
 
@@ -1651,42 +1645,23 @@ function renderEquityCurve(trades, slMult, tpMult) {
   _equityChart = null;
   if (!trades || !trades.length) return;
 
-  const RISK   = 100;
-  const reward = RISK * tpMult / slMult;
-  const MS_DAY = 86400000;
+  if (!_validCandleTimes || !_validCandleTimes.length) return;
 
-  const sorted = [...trades].sort((a, b) => safeParseUnixSeconds(a.ts) - safeParseUnixSeconds(b.ts));
+  let currentEquity = 1000;
+  const equityMap   = new Map();
+  equityMap.set(_validCandleTimes[0], { time: _validCandleTimes[0], value: currentEquity });
 
-  const toMidnight = ms => {
-    const d = new Date(ms);
-    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
-  };
-
-  const dailyPnl = {};
-  sorted.forEach(t => {
-    const key = toMidnight(safeParseUnixSeconds(t.ts) * 1000);
-    dailyPnl[key] = (dailyPnl[key] || 0) + (t.win ? reward : -RISK);
+  const sorted = [...trades].sort((a, b) => new Date(a.ts) - new Date(b.ts));
+  sorted.forEach(trade => {
+    const exactTradeTime = Math.floor(new Date(trade.ts).getTime() / 1000);
+    const alignedTime    = alignTradeToCandle(exactTradeTime, _validCandleTimes);
+    if (!alignedTime) return;
+    const pnl = trade.win ? 100 * tpMult / slMult : -100;
+    currentEquity += pnl;
+    equityMap.set(alignedTime, { time: alignedTime, value: parseFloat(currentEquity.toFixed(2)) });
   });
 
-  const startMs = toMidnight(safeParseUnixSeconds(sorted[0].ts) * 1000);
-  const endMs   = toMidnight(safeParseUnixSeconds(sorted[sorted.length - 1].ts) * 1000);
-
-  // equity curve points: ms values are UTC midnight from Date.UTC() — divide directly
-  const rawPoints = [{ time: Math.floor((startMs - MS_DAY) / 1000), value: 1000 }];
-  let equity = 1000;
-  for (let ms = startMs; ms <= endMs; ms += MS_DAY) {
-    equity = parseFloat((equity + (dailyPnl[ms] || 0)).toFixed(2));
-    rawPoints.push({ time: Math.floor(ms / 1000), value: equity });
-  }
-
-  // Deduplicate by time to prevent LWC crash on duplicate timestamps
-  const eqDataMap = new Map();
-  rawPoints.forEach(p => {
-    const timeVal = safeParseUnixSeconds(p.time);
-    if (!timeVal) return;
-    eqDataMap.set(timeVal, { time: timeVal, value: p.value });
-  });
-  const points = Array.from(eqDataMap.values()).sort((a, b) => a.time - b.time);
+  const points = Array.from(equityMap.values()).sort((a, b) => a.time - b.time);
 
   const finalEquity = points[points.length - 1].value;
   const gain        = finalEquity - 1000;
