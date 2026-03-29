@@ -1537,10 +1537,10 @@ function renderCharts(data) {
     priceFormat: { type: "price", precision: 2, minMove: 0.01 },
   });
 
-  const equityMap = new Map();
+  const equityPoints = [];
   let currentEquity = 1000;
   if (validTimes.length > 0) {
-    equityMap.set(validTimes[0], { time: validTimes[0], value: currentEquity });
+    equityPoints.push({ time: validTimes[0], value: currentEquity });
   }
 
   const sortedTrades = [...chart_trades].sort((a, b) => new Date(a.ts) - new Date(b.ts));
@@ -1551,12 +1551,19 @@ function renderCharts(data) {
     if (idx > 0)                   { alignedTime = validTimes[idx - 1]; }
     else if (idx === 0)            { alignedTime = validTimes[0]; }
     else if (validTimes.length > 0){ alignedTime = validTimes[validTimes.length - 1]; }
+    equityPoints.push({ time: alignedTime - 1, value: currentEquity });
     const pnl = trade.win ? 300 : -100;
     currentEquity += pnl;
-    equityMap.set(alignedTime, { time: alignedTime, value: currentEquity });
+    equityPoints.push({ time: alignedTime, value: currentEquity });
   });
 
-  const equityData = Array.from(equityMap.values()).sort((a, b) => a.time - b.time);
+  if (validTimes.length > 0) {
+    equityPoints.push({ time: validTimes[validTimes.length - 1], value: currentEquity });
+  }
+
+  const equityData = equityPoints
+    .sort((a, b) => a.time - b.time)
+    .filter((p, i, arr) => i === 0 || p.time !== arr[i - 1].time);
   if (equityData.length > 0) { equitySeries.setData(equityData); }
 
   // Sync by visible *time* range, not logical bar indices. Candle and line series have
