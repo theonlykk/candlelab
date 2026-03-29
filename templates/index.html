@@ -949,9 +949,9 @@ let _equityChart = null;
 
 function syncChartRange(candles) {
   if (!candles || !candles.ts || !candles.ts.length) return;
-  const toSec = ms => ms > 9999999999 ? Math.floor(ms / 1000) : ms;
-  const from = toSec(Date.parse(candles.ts[0]));
-  const to   = toSec(Date.parse(candles.ts[candles.ts.length - 1]));
+  const tsToSec = s => Math.floor(new Date(s + 'Z').getTime() / 1000);
+  const from = tsToSec(candles.ts[0]);
+  const to   = tsToSec(candles.ts[candles.ts.length - 1]);
   if (_candleChart) try { _candleChart.timeScale().setVisibleRange({ from, to }); } catch(e) {}
   if (_equityChart) try { _equityChart.timeScale().setVisibleRange({ from, to }); } catch(e) {}
 }
@@ -1506,7 +1506,7 @@ function renderChart(candles, trades) {
     return;
   }
 
-  const toSec    = ms => ms > 9999999999 ? Math.floor(ms / 1000) : ms;
+  const tsToSec  = s => Math.floor(new Date(s + 'Z').getTime() / 1000);
   const priceFmt = PRICE_FMT[state.instrument] || {precision:5, minMove:0.0005};
 
   wrap.style.position = "relative";
@@ -1524,7 +1524,7 @@ function renderChart(candles, trades) {
       vertLine: { color: "#4caf50", width: 1, style: 1 },
       horzLine: { color: "#4caf50", width: 1, style: 1 },
     },
-    rightPriceScale: { borderColor: "rgba(0,0,0,0.08)", minimumWidth: 75 },
+    rightPriceScale: { borderColor: "rgba(0,0,0,0.08)", minimumWidth: 80, autoScale: true },
     timeScale: { borderColor: "rgba(0,0,0,0.08)", visible: false },
   });
   _candleChart = chart;
@@ -1537,11 +1537,12 @@ function renderChart(candles, trades) {
   });
 
   const chartData = candles.ts.map((t, i) => ({
-    time: toSec(Date.parse(t)),
+    time: tsToSec(t),
     open: candles.open[i], high: candles.high[i],
     low:  candles.low[i],  close: candles.close[i],
   }));
   series.setData(chartData);
+  chart.timeScale().fitContent();
 
   // Tooltip overlay
   const tooltip = document.createElement("div");
@@ -1561,10 +1562,11 @@ function renderChart(candles, trades) {
     const tradeByTime = new Map();
 
     recent.forEach(t => {
-      const entryTime = toSec(Date.parse(t.ts));
+      const entryTime = tsToSec(t.ts);
       const isLong    = t.signal === 1;
       const isWin     = t.win;
-      markers.push({
+      // build a fresh object then destructure to guarantee no text property
+      const markerObj = {
         time:     entryTime,
         position: isLong ? "aboveBar" : "belowBar",
         color:    isLong
@@ -1572,7 +1574,9 @@ function renderChart(candles, trades) {
           : (isWin ? "#ef5350" : "rgba(239,83,80,0.35)"),
         shape:    isLong ? "arrowUp" : "arrowDown",
         size:     1,
-      });
+      };
+      const { text, ...rest } = markerObj;
+      markers.push(rest);
       tradeByTime.set(entryTime, t);
     });
 
@@ -1618,7 +1622,8 @@ function renderEquityCurve(trades, slMult, tpMult) {
   const reward = RISK * tpMult / slMult;
   const MS_DAY = 86400000;
 
-  const sorted = [...trades].sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
+  const tsMs = s => new Date(s + 'Z').getTime();
+  const sorted = [...trades].sort((a, b) => tsMs(a.ts) - tsMs(b.ts));
 
   const toMidnight = ms => {
     const d = new Date(ms);
@@ -1627,12 +1632,12 @@ function renderEquityCurve(trades, slMult, tpMult) {
 
   const dailyPnl = {};
   sorted.forEach(t => {
-    const key = toMidnight(Date.parse(t.ts));
+    const key = toMidnight(tsMs(t.ts));
     dailyPnl[key] = (dailyPnl[key] || 0) + (t.win ? reward : -RISK);
   });
 
-  const startMs = toMidnight(Date.parse(sorted[0].ts));
-  const endMs   = toMidnight(Date.parse(sorted[sorted.length - 1].ts));
+  const startMs = toMidnight(tsMs(sorted[0].ts));
+  const endMs   = toMidnight(tsMs(sorted[sorted.length - 1].ts));
 
   const points = [{ time: Math.floor((startMs - MS_DAY) / 1000), value: 1000 }];
   let equity = 1000;
@@ -1659,7 +1664,7 @@ function renderEquityCurve(trades, slMult, tpMult) {
     },
     rightPriceScale: {
       borderColor: "rgba(0,0,0,0.08)",
-      minimumWidth: 75,
+      minimumWidth: 80,
       autoScale: true,
       scaleMargins: { top: 0.1, bottom: 0.1 },
     },
