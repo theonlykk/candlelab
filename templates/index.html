@@ -1560,6 +1560,12 @@ function renderChart(candles, trades) {
   series.setData(formattedCandles);
   chart.timeScale().fitContent();
 
+  const lastCandleTime = validCandleTimes[validCandleTimes.length - 1];
+  const defaultFrom    = lastCandleTime - 7 * 24 * 3600;
+  const defaultTo      = lastCandleTime + 3600;
+  chart.timeScale().setVisibleRange({ from: defaultFrom, to: defaultTo });
+  if (_equityChart) try { _equityChart.timeScale().setVisibleRange({ from: defaultFrom, to: defaultTo }); } catch(e) {}
+
   function alignTradeToCandle(tradeTimeInSeconds, validTimes) {
     let alignedTime = validTimes[0];
     for (let i = 0; i < validTimes.length; i++) {
