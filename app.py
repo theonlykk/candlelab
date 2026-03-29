@@ -20,7 +20,7 @@ from cache import cache_set, cache_get
 from scheduler import start_scheduler
 from strategy_store import (
     save_strategy, get_strategies_by_device,
-    init_strategy_tables, load_strategy_trades,
+    init_strategy_tables, load_strategy_trades, delete_strategy,
 )
 from indicators import check_ma_cross, check_rsi_extreme, check_ma_stable
 
@@ -753,15 +753,27 @@ def api_live():
             trades = [t for t in trades if t["ts"] >= live_from]
         total_pnl = round(sum(t.get("pnl_net", 0) for t in trades), 2)
         result.append({
-            "id":        s["id"],
-            "name":      s["name"],
+            "id":         s["id"],
+            "name":       s["name"],
             "instrument": s.get("instrument"),
-            "interval":  s.get("interval"),
-            "win_pct":   s.get("bt_win_pct"),
-            "live_pnl":  total_pnl,
-            "trades":    len(trades),
+            "interval":   s.get("interval"),
+            "created_ts": s.get("created_ts"),
+            "win_pct":    s.get("bt_win_pct"),
+            "live_pnl":   total_pnl,
+            "trades":     len(trades),
         })
     return jsonify(result)
+
+
+@app.route("/api/strategy/<sid>", methods=["DELETE"])
+def api_delete_strategy(sid):
+    device_uuid = request.args.get("device_uuid") or request.headers.get("X-Device-UUID")
+    # Only allow deletion of strategies belonging to this device
+    strategies = get_strategies_by_device(device_uuid) if device_uuid else []
+    if not any(s["id"] == sid for s in strategies):
+        return jsonify({"error": "not found"}), 404
+    delete_strategy(sid)
+    return jsonify({"ok": True})
 
 
 _DISPLAY_TO_CODE = {

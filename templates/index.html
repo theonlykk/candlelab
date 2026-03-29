@@ -734,6 +734,94 @@
   .tweak-reason { font-size:12px; color:var(--muted); margin-bottom:10px; line-height:1.5; }
   .tweak-result { font-size:12px; }
 
+  /* ── My Strategies panel ───────────────────────────────────────────────── */
+  #strategies-overlay {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.35);
+    z-index: 300;
+  }
+  #strategies-overlay.open { display: block; }
+  #strategies-panel {
+    position: fixed;
+    top: 0; right: 0; bottom: 0;
+    width: min(380px, 100vw);
+    background: var(--bg);
+    border-left: 1px solid var(--border);
+    z-index: 301;
+    display: flex;
+    flex-direction: column;
+    transform: translateX(100%);
+    transition: transform 0.28s ease-out;
+    box-shadow: -4px 0 24px rgba(0,0,0,0.12);
+  }
+  #strategies-panel.open { transform: translateX(0); }
+  #strategies-panel-hdr {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 16px 14px;
+    border-bottom: 1px solid var(--border);
+    font-size: 16px; font-weight: 700;
+    flex-shrink: 0;
+  }
+  #strategies-panel-close {
+    background: none; border: none; font-size: 20px;
+    color: var(--muted); cursor: pointer; padding: 4px 8px;
+    line-height: 1;
+  }
+  #strategies-panel-close:hover { color: var(--text); }
+  #strategies-panel-body {
+    flex: 1; overflow-y: auto; padding: 14px 14px 24px;
+  }
+  .strat-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    border-left: 3px solid var(--border);
+    padding: 14px 14px 12px;
+    margin-bottom: 12px;
+    transition: opacity 0.35s, transform 0.35s;
+  }
+  .strat-card.removing { opacity: 0; transform: translateX(30px); }
+  .strat-card-top {
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 8px;
+    margin-bottom: 6px;
+  }
+  .strat-card-name { font-size: 15px; font-weight: 700; }
+  .strat-card-meta { font-size: 11px; color: var(--muted); margin-bottom: 8px; }
+  .strat-card-stats {
+    display: flex; gap: 16px; font-size: 12px; align-items: center;
+    margin-bottom: 10px;
+  }
+  .strat-pnl-pos { color: var(--green); font-weight: 700; }
+  .strat-pnl-neg { color: var(--red);   font-weight: 700; }
+  .strat-pnl-nil { color: var(--muted); font-weight: 600; }
+  .strat-dot {
+    width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: 2px;
+  }
+  .strat-dot-green  { background: #4caf50; }
+  .strat-dot-amber  { background: #f5a623; }
+  .strat-dot-red    { background: #ef5350; }
+  .strat-delete-btn {
+    background: none; border: 1px solid var(--border);
+    border-radius: 5px; color: var(--muted);
+    font-size: 11px; padding: 3px 8px; cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+    white-space: nowrap;
+  }
+  .strat-delete-btn:hover { border-color: var(--red); color: var(--red); }
+  #my-strats-btn {
+    background: transparent;
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    color: var(--accent);
+    font-size: 12px; font-weight: 600;
+    padding: 5px 10px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s;
+  }
+  #my-strats-btn:hover { background: rgba(76,175,80,0.1); }
+
   /* Sticky action bar */
   #step-actions {
     position: fixed;
@@ -902,7 +990,10 @@
 <div id="header" class="wizard-hidden">
   <button id="back-btn" onclick="goBack()">← Back</button>
   <div id="header-logo">CandleLab</div>
-  <div id="step-indicator">1 / 9</div>
+  <div style="display:flex;align-items:center;gap:10px;">
+    <div id="step-indicator">1 / 9</div>
+    <button id="my-strats-btn" onclick="openStrategiesPanel()">My Strategies</button>
+  </div>
 </div>
 
 <div id="main">
@@ -1078,6 +1169,16 @@
   </div>
 
 </div><!-- /main -->
+
+<!-- My Strategies panel -->
+<div id="strategies-overlay" onclick="closeStrategiesPanel()"></div>
+<div id="strategies-panel">
+  <div id="strategies-panel-hdr">
+    <span>My Strategies</span>
+    <button id="strategies-panel-close" onclick="closeStrategiesPanel()">✕</button>
+  </div>
+  <div id="strategies-panel-body"></div>
+</div>
 
 <div id="step-actions"></div>
 <div id="scroll-hint" class="hidden">
@@ -2329,6 +2430,91 @@ function checkScrollHint() {
   hint.classList.toggle("hidden", !scrollable);
 }
 window.addEventListener("scroll", checkScrollHint, { passive: true });
+
+// ── My Strategies panel ───────────────────────────────────────────────────────
+function openStrategiesPanel() {
+  document.getElementById("strategies-overlay").classList.add("open");
+  document.getElementById("strategies-panel").classList.add("open");
+  loadStrategiesPanel();
+}
+
+function closeStrategiesPanel() {
+  document.getElementById("strategies-overlay").classList.remove("open");
+  document.getElementById("strategies-panel").classList.remove("open");
+}
+
+function loadStrategiesPanel() {
+  const body = document.getElementById("strategies-panel-body");
+  body.innerHTML = `<div class="spinner-wrap"><div class="spinner"></div><span>Loading…</span></div>`;
+
+  apiFetch(`/api/live?device_uuid=${encodeURIComponent(state.deviceUuid)}`)
+    .then(r => r.json())
+    .then(strategies => {
+      body.innerHTML = "";
+      if (!strategies || strategies.length === 0) {
+        body.innerHTML = `<div style="padding:24px 8px; text-align:center; color:var(--muted); font-size:14px; line-height:1.65;">You have not gone live with any strategies yet.<br>Complete the wizard to launch your first one.</div>`;
+        return;
+      }
+      strategies.forEach(s => body.appendChild(buildStratCard(s)));
+    })
+    .catch(() => {
+      body.innerHTML = `<div style="padding:20px; color:var(--red); font-size:13px;">Failed to load strategies.</div>`;
+    });
+}
+
+function buildStratCard(s) {
+  const pnl      = s.live_pnl ?? 0;
+  const trades   = s.trades  ?? 0;
+  const pnlClass = pnl > 0 ? "strat-pnl-pos" : pnl < 0 ? "strat-pnl-neg" : "strat-pnl-nil";
+  const pnlText  = pnl > 0 ? `+$${pnl.toFixed(2)}` : pnl < 0 ? `-$${Math.abs(pnl).toFixed(2)}` : "$0.00";
+  const dotClass = pnl > 0 ? "strat-dot-green" : trades === 0 ? "strat-dot-amber" : "strat-dot-red";
+  const created  = s.created_ts ? new Date(s.created_ts).toLocaleDateString(undefined, { day:"numeric", month:"short", year:"numeric" }) : "—";
+  const winPct   = s.win_pct != null ? `${s.win_pct}% win rate` : "";
+
+  const card = document.createElement("div");
+  card.className = "strat-card";
+  card.dataset.id = s.id;
+  card.innerHTML = `
+    <div class="strat-card-top">
+      <div style="display:flex;align-items:flex-start;gap:8px;">
+        <div class="strat-dot ${dotClass}" style="margin-top:5px;"></div>
+        <div class="strat-card-name">${s.name || "Unnamed"}</div>
+      </div>
+      <button class="strat-delete-btn" onclick="deleteStrategy('${s.id}', this)">Delete</button>
+    </div>
+    <div class="strat-card-meta">${s.instrument || ""} · ${s.interval || ""} · Created ${created}</div>
+    <div class="strat-card-stats">
+      <span class="${pnlClass}">Live PnL: ${pnlText}</span>
+      <span style="color:var(--muted);">${trades} signal${trades !== 1 ? "s" : ""}</span>
+      ${winPct ? `<span style="color:var(--muted);">${winPct}</span>` : ""}
+    </div>`;
+  return card;
+}
+
+function deleteStrategy(id, btn) {
+  btn.disabled = true;
+  btn.textContent = "Deleting…";
+  apiFetch(`/api/strategy/${id}?device_uuid=${encodeURIComponent(state.deviceUuid)}`, { method: "DELETE" })
+    .then(r => r.json())
+    .then(() => {
+      const card = document.querySelector(`.strat-card[data-id="${id}"]`);
+      if (card) {
+        card.classList.add("removing");
+        setTimeout(() => card.remove(), 380);
+      }
+      // Show empty state if no cards left
+      setTimeout(() => {
+        const body = document.getElementById("strategies-panel-body");
+        if (body && !body.querySelector(".strat-card")) {
+          body.innerHTML = `<div style="padding:24px 8px; text-align:center; color:var(--muted); font-size:14px; line-height:1.65;">You have not gone live with any strategies yet.<br>Complete the wizard to launch your first one.</div>`;
+        }
+      }, 420);
+    })
+    .catch(() => {
+      btn.disabled = false;
+      btn.textContent = "Delete";
+    });
+}
 
 function typewriter(el, text, msPerChar) {
   el.textContent = "";
