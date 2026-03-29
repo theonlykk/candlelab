@@ -1,0 +1,1305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>CandleLab</title>
+<script src="https://unpkg.com/lightweight-charts@3.8.0/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0d0d0d;
+    --card: #1a1a1a;
+    --border: #2a2a2a;
+    --text: #ffffff;
+    --muted: #888888;
+    --accent: #F5A623;
+    --green: #22c55e;
+    --amber: #F5A623;
+    --red: #ef4444;
+    --radius: 12px;
+    --step-max: 560px;
+  }
+
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Progress bar */
+  #progress-bar {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: var(--border);
+    z-index: 100;
+  }
+  #progress-fill {
+    height: 100%;
+    background: var(--accent);
+    transition: width 0.3s ease;
+  }
+
+  /* Header */
+  #header {
+    position: fixed;
+    top: 3px; left: 0; right: 0;
+    height: 52px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    z-index: 99;
+  }
+  #header-logo {
+    font-size: 17px;
+    font-weight: 700;
+    color: var(--accent);
+    letter-spacing: -0.3px;
+  }
+  #step-indicator {
+    font-size: 13px;
+    color: var(--muted);
+  }
+  #back-btn {
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-size: 14px;
+    cursor: pointer;
+    padding: 8px 0;
+    display: none;
+  }
+  #back-btn:hover { color: var(--text); }
+
+  /* Main content */
+  #main {
+    padding-top: 55px;
+    min-height: 100vh;
+  }
+
+  .step {
+    display: none;
+    padding: 24px 16px 80px;
+    max-width: var(--step-max);
+    margin: 0 auto;
+    animation: fadeUp 0.25s ease;
+  }
+  .step.active { display: block; }
+
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .step-title {
+    font-size: 22px;
+    font-weight: 700;
+    margin-bottom: 6px;
+  }
+  .step-subtitle {
+    font-size: 14px;
+    color: var(--muted);
+    margin-bottom: 24px;
+  }
+
+  /* Cards / buttons */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    margin-bottom: 12px;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+    min-height: 56px;
+    display: flex;
+    align-items: center;
+  }
+  .card:hover { border-color: #444; }
+  .card.selected {
+    border-color: var(--accent);
+    background: rgba(245,166,35,0.08);
+  }
+  .card-main {
+    flex: 1;
+  }
+  .card-name {
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 2px;
+  }
+  .card-desc {
+    font-size: 13px;
+    color: var(--muted);
+  }
+
+  /* Grid */
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .grid-2 .card {
+    flex-direction: column;
+    align-items: flex-start;
+    min-height: 64px;
+  }
+
+  /* Large buttons */
+  .big-btn {
+    width: 100%;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px 16px;
+    text-align: left;
+    cursor: pointer;
+    color: var(--text);
+    margin-bottom: 12px;
+    transition: border-color 0.15s, background 0.15s;
+    min-height: 72px;
+  }
+  .big-btn:hover { border-color: #444; }
+  .big-btn.selected {
+    border-color: var(--accent);
+    background: rgba(245,166,35,0.08);
+  }
+  .big-btn-title {
+    font-size: 16px;
+    font-weight: 600;
+    display: block;
+    margin-bottom: 3px;
+  }
+  .big-btn-sub {
+    font-size: 13px;
+    color: var(--muted);
+    display: block;
+  }
+
+  /* Continue / action button */
+  .cta-btn {
+    width: 100%;
+    background: var(--accent);
+    color: #000;
+    border: none;
+    border-radius: var(--radius);
+    padding: 16px;
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+    margin-top: 20px;
+    min-height: 56px;
+    transition: opacity 0.15s;
+  }
+  .cta-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .cta-btn:hover:not(:disabled) { opacity: 0.88; }
+
+  /* Win rate badge */
+  .badge {
+    display: inline-block;
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .badge-green { background: rgba(34,197,94,0.15); color: var(--green); }
+  .badge-amber { background: rgba(245,166,35,0.15); color: var(--amber); }
+  .badge-red   { background: rgba(239,68,68,0.15);  color: var(--red); }
+
+  /* Pattern card extras */
+  .pattern-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 16px;
+  }
+  .pattern-rates {
+    display: flex;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 4px;
+  }
+  .pattern-rates span { white-space: nowrap; }
+
+  /* AI tip box */
+  #ai-tip-box {
+    background: rgba(245,166,35,0.07);
+    border: 1px solid rgba(245,166,35,0.2);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    font-size: 14px;
+    color: var(--muted);
+    margin-top: 16px;
+    min-height: 48px;
+    display: none;
+  }
+  #ai-tip-box.visible { display: block; }
+
+  /* Spinner */
+  .spinner-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 60px 20px;
+    gap: 16px;
+    color: var(--muted);
+    font-size: 14px;
+  }
+  .spinner {
+    width: 36px; height: 36px;
+    border: 3px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Complement cards */
+  .comp-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    margin-bottom: 12px;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .comp-card.selected {
+    border-color: var(--accent);
+    background: rgba(245,166,35,0.08);
+  }
+  .comp-card-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+  }
+  .comp-delta {
+    color: var(--green);
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .comp-meta {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .connector-sel {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+  }
+  .conn-btn {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--muted);
+    font-size: 12px;
+    padding: 4px 10px;
+    cursor: pointer;
+  }
+  .conn-btn.active {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  /* Toggle cards */
+  .toggle-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    margin-bottom: 12px;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 72px;
+  }
+  .toggle-card.on {
+    border-color: var(--accent);
+    background: rgba(245,166,35,0.08);
+  }
+  .toggle-dot {
+    width: 40px; height: 24px;
+    border-radius: 12px;
+    border: 2px solid var(--border);
+    position: relative;
+    flex-shrink: 0;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .toggle-dot::after {
+    content: "";
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    background: var(--muted);
+    transition: transform 0.15s, background 0.15s;
+  }
+  .toggle-card.on .toggle-dot {
+    border-color: var(--accent);
+    background: rgba(245,166,35,0.2);
+  }
+  .toggle-card.on .toggle-dot::after {
+    transform: translateX(16px);
+    background: var(--accent);
+  }
+  .toggle-delta {
+    font-size: 12px;
+    font-weight: 600;
+    margin-top: 4px;
+    min-height: 16px;
+  }
+  .delta-pos { color: var(--green); }
+  .delta-neg { color: var(--red); }
+  .delta-loading { color: var(--muted); font-size: 11px; }
+
+  /* Session buttons */
+  .session-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .session-grid .big-btn {
+    margin-bottom: 0;
+    min-height: 56px;
+    padding: 14px 12px;
+  }
+  .session-all { grid-column: 1 / -1; }
+
+  /* Sliders */
+  .slider-row {
+    margin-bottom: 24px;
+  }
+  .slider-label {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .slider-label span:first-child {
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .slider-val {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--accent);
+  }
+  input[type=range] {
+    width: 100%;
+    height: 4px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: var(--border);
+    border-radius: 2px;
+    outline: none;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    background: var(--accent);
+    cursor: pointer;
+    box-shadow: 0 0 0 3px rgba(245,166,35,0.2);
+  }
+  input[type=range]::-moz-range-thumb {
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: none;
+    cursor: pointer;
+  }
+
+  /* Live preview box */
+  #live-preview {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    margin-top: 20px;
+    display: flex;
+    gap: 24px;
+  }
+  .preview-stat { text-align: center; }
+  .preview-stat-val {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--accent);
+  }
+  .preview-stat-lbl {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+  #preview-loading {
+    color: var(--muted);
+    font-size: 13px;
+    text-align: center;
+    width: 100%;
+  }
+
+  /* Summary step */
+  .stat-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 14px;
+  }
+  .stat-row:last-child { border-bottom: none; }
+  .stat-label { color: var(--muted); }
+  .stat-value { font-weight: 600; }
+
+  .xf-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 8px;
+    font-size: 13px;
+  }
+  .xf-table th {
+    text-align: left;
+    color: var(--muted);
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--border);
+    font-weight: 500;
+  }
+  .xf-table td {
+    padding: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .xf-table tr:last-child td { border-bottom: none; }
+
+  #name-input {
+    width: 100%;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: 15px;
+    padding: 14px 16px;
+    margin-top: 20px;
+    outline: none;
+  }
+  #name-input:focus { border-color: var(--accent); }
+
+  /* Chart */
+  #chart-wrap {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    margin: 20px 0;
+    height: 260px;
+  }
+
+  /* Post-save CTA */
+  #build-another {
+    margin-top: 20px;
+    text-align: center;
+  }
+  #build-another p {
+    font-size: 14px;
+    color: var(--muted);
+    margin-bottom: 12px;
+  }
+  #build-another button {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: var(--radius);
+    padding: 14px 32px;
+    font-size: 15px;
+    cursor: pointer;
+  }
+  #build-another button:hover { border-color: var(--accent); }
+
+  /* Saved state overlay on step 9 */
+  #saved-state { display: none; }
+  #saved-state.visible { display: block; }
+  #wizard-step9-form { display: block; }
+  #wizard-step9-form.hidden { display: none; }
+</style>
+</head>
+<body>
+
+<div id="progress-bar"><div id="progress-fill"></div></div>
+
+<div id="header">
+  <button id="back-btn" onclick="goBack()">← Back</button>
+  <div id="header-logo">CandleLab</div>
+  <div id="step-indicator">1 / 9</div>
+</div>
+
+<div id="main">
+
+  <!-- Step 1: Market -->
+  <div class="step active" id="step-1">
+    <div class="step-title">Choose a market</div>
+    <div class="step-subtitle">Pick the instrument you want to build a strategy for.</div>
+    <div class="grid-2" id="instrument-grid"></div>
+  </div>
+
+  <!-- Step 2: Timeframe -->
+  <div class="step" id="step-2">
+    <div class="step-title">Choose a timeframe</div>
+    <div class="step-subtitle">How quickly do you want to see results?</div>
+    <button class="big-btn" data-interval="5m" onclick="selectInterval(this)">
+      <span class="big-btn-title">5 minutes</span>
+      <span class="big-btn-sub">See results in hours</span>
+    </button>
+    <button class="big-btn" data-interval="15m" onclick="selectInterval(this)">
+      <span class="big-btn-title">15 minutes</span>
+      <span class="big-btn-sub">See results in a day</span>
+    </button>
+    <button class="big-btn" data-interval="1h" onclick="selectInterval(this)">
+      <span class="big-btn-title">1 hour</span>
+      <span class="big-btn-sub">See results in a week</span>
+    </button>
+  </div>
+
+  <!-- Step 3: Direction -->
+  <div class="step" id="step-3">
+    <div class="step-title">What's your strategy?</div>
+    <div class="step-subtitle">Choose how you want to trade.</div>
+    <button class="big-btn" data-direction="reversal" onclick="selectDirection(this)">
+      <span class="big-btn-title">Buy on a reversal</span>
+      <span class="big-btn-sub">Catch a turning point</span>
+    </button>
+    <button class="big-btn" data-direction="trend" onclick="selectDirection(this)">
+      <span class="big-btn-title">Ride an existing trend</span>
+      <span class="big-btn-sub">Join momentum</span>
+    </button>
+    <button class="big-btn" data-direction="both" onclick="selectDirection(this)">
+      <span class="big-btn-title">Either</span>
+      <span class="big-btn-sub">Test both approaches</span>
+    </button>
+  </div>
+
+  <!-- Step 4: Anchor pattern -->
+  <div class="step" id="step-4">
+    <div class="step-title">Choose your anchor pattern</div>
+    <div class="step-subtitle">This is the main signal that triggers your trade.</div>
+    <div id="pattern-list"></div>
+    <div id="ai-tip-box"></div>
+    <button class="cta-btn" id="btn-anchor-continue" disabled onclick="continueToComplement()">
+      Analyse combinations →
+    </button>
+  </div>
+
+  <!-- Step 5: Complement -->
+  <div class="step" id="step-5">
+    <div class="step-title">Add a confirmation pattern</div>
+    <div class="step-subtitle">A second pattern that fires near your anchor can improve accuracy.</div>
+    <div id="complement-content"></div>
+  </div>
+
+  <!-- Step 6: Indicator confirmation -->
+  <div class="step" id="step-6">
+    <div class="step-title">Add indicator confirmation</div>
+    <div class="step-subtitle">Filter your signals using technical indicators.</div>
+    <div id="indicator-cards"></div>
+    <button class="cta-btn" onclick="goStep(7)">Continue →</button>
+  </div>
+
+  <!-- Step 7: Session filter -->
+  <div class="step" id="step-7">
+    <div class="step-title">Choose a session</div>
+    <div class="step-subtitle">Limit your strategy to when the market is most active.</div>
+    <div class="session-grid">
+      <button class="big-btn" data-session="London" onclick="selectSession(this)">
+        <span class="big-btn-title">London</span>
+        <span class="big-btn-sub">08:00 – 17:00 UTC</span>
+      </button>
+      <button class="big-btn" data-session="New York" onclick="selectSession(this)">
+        <span class="big-btn-title">New York</span>
+        <span class="big-btn-sub">13:00 – 22:00 UTC</span>
+      </button>
+      <button class="big-btn" data-session="Asian" onclick="selectSession(this)">
+        <span class="big-btn-title">Asian</span>
+        <span class="big-btn-sub">00:00 – 09:00 UTC</span>
+      </button>
+      <button class="big-btn" data-session="Overlap" onclick="selectSession(this)">
+        <span class="big-btn-title">Overlap</span>
+        <span class="big-btn-sub">13:00 – 17:00 UTC</span>
+      </button>
+      <button class="big-btn session-all selected" data-session="All" onclick="selectSession(this)">
+        <span class="big-btn-title">All Sessions</span>
+        <span class="big-btn-sub">No filter applied</span>
+      </button>
+    </div>
+    <button class="cta-btn" onclick="goStep(8)">Continue →</button>
+  </div>
+
+  <!-- Step 8: SL / TP -->
+  <div class="step" id="step-8">
+    <div class="step-title">Set your stops & targets</div>
+    <div class="step-subtitle">Based on ATR — the market's natural volatility.</div>
+
+    <div class="slider-row">
+      <div class="slider-label">
+        <span>Stop loss multiplier</span>
+        <span class="slider-val" id="sl-val">1.0×</span>
+      </div>
+      <input type="range" id="sl-slider" min="5" max="30" step="5" value="10"
+             oninput="onSliderChange()">
+    </div>
+
+    <div class="slider-row">
+      <div class="slider-label">
+        <span>Take profit multiplier</span>
+        <span class="slider-val" id="tp-val">3.0×</span>
+      </div>
+      <input type="range" id="tp-slider" min="10" max="60" step="5" value="30"
+             oninput="onSliderChange()">
+    </div>
+
+    <div id="live-preview">
+      <div id="preview-loading">Calculating…</div>
+    </div>
+
+    <button class="cta-btn" onclick="goStep(9)">Finalise strategy →</button>
+  </div>
+
+  <!-- Step 9: Summary -->
+  <div class="step" id="step-9">
+    <div class="step-title">Your strategy</div>
+    <div class="step-subtitle">Here's what the backtest says.</div>
+
+    <div id="wizard-step9-form">
+      <div class="card" style="cursor:default; flex-direction:column; align-items:stretch; padding:0;">
+        <div id="summary-stats"></div>
+      </div>
+
+      <div style="margin-top:20px;">
+        <div style="font-size:13px; color:var(--muted); margin-bottom:8px;">Cross-timeframe comparison</div>
+        <table class="xf-table" id="xf-table">
+          <thead><tr><th>Timeframe</th><th>Win rate</th><th>Signals</th></tr></thead>
+          <tbody id="xf-tbody"></tbody>
+        </table>
+      </div>
+
+      <input type="text" id="name-input" placeholder="Strategy name…">
+
+      <button class="cta-btn" onclick="goLive()">Go Live 🚀</button>
+    </div>
+
+    <div id="saved-state">
+      <div id="chart-wrap"></div>
+      <div id="build-another">
+        <p>Strategy saved and running live.</p>
+        <button onclick="restartWizard()">Build another strategy</button>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /main -->
+
+<script>
+// ── State ────────────────────────────────────────────────────────────────────
+const state = {
+  instrument: null,     // e.g. "EURUSD"
+  interval: null,       // "5m" / "15m" / "1h"
+  direction: null,      // "reversal" / "trend" / "both"
+  anchor: null,         // pattern name
+  anchorTip: "",
+  complement: null,
+  connector: "ordered",
+  indicator: null,
+  session: "All",
+  slMult: 1.0,
+  tpMult: 3.0,
+  patternsData: [],
+  complementData: [],
+  finalResult: null,
+  deviceUuid: null,
+  currentStep: 1,
+};
+
+// ── Device UUID ───────────────────────────────────────────────────────────────
+(function initUuid() {
+  let id = localStorage.getItem("candlelab_uuid");
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem("candlelab_uuid", id);
+  }
+  state.deviceUuid = id;
+})();
+
+// ── Instruments ───────────────────────────────────────────────────────────────
+const INSTRUMENTS = [
+  { code: "EURUSD",    label: "EUR/USD",    desc: "Euro vs dollar" },
+  { code: "GBPUSD",    label: "GBP/USD",    desc: "Pound vs dollar" },
+  { code: "USDJPY",    label: "USD/JPY",    desc: "Dollar vs yen" },
+  { code: "USDCAD",    label: "USD/CAD",    desc: "Dollar vs loonie" },
+  { code: "AUDUSD",    label: "AUD/USD",    desc: "Aussie vs dollar" },
+  { code: "USDCHF",    label: "USD/CHF",    desc: "Dollar vs franc" },
+  { code: "NZDUSD",    label: "NZD/USD",    desc: "Kiwi vs dollar" },
+  { code: "XAUUSD",    label: "Gold",       desc: "XAU/USD" },
+  { code: "XAGUSD",    label: "Silver",     desc: "XAG/USD" },
+  { code: "WTICOUSD",  label: "Crude Oil",  desc: "WTI crude" },
+  { code: "SPX500USD", label: "S&P 500",    desc: "US large caps" },
+  { code: "BTCUSD",    label: "Bitcoin",    desc: "BTC vs dollar" },
+];
+
+(function buildInstrumentGrid() {
+  const grid = document.getElementById("instrument-grid");
+  INSTRUMENTS.forEach(inst => {
+    const card = document.createElement("div");
+    card.className = "card";
+    card.style.flexDirection = "column";
+    card.style.alignItems = "flex-start";
+    card.innerHTML = `<div class="card-name">${inst.label}</div><div class="card-desc">${inst.desc}</div>`;
+    card.onclick = () => selectInstrument(inst.code);
+    grid.appendChild(card);
+  });
+})();
+
+function selectInstrument(code) {
+  state.instrument = code;
+  goStep(2);
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function apiFetch(url, opts) {
+  const headers = Object.assign({ "X-Device-UUID": state.deviceUuid }, opts && opts.headers);
+  return fetch(url, Object.assign({}, opts, { headers }));
+}
+
+function badgeClass(wr) {
+  if (wr >= 55) return "badge-green";
+  if (wr >= 45) return "badge-amber";
+  return "badge-red";
+}
+
+function badgeEl(wr) {
+  return `<span class="badge ${badgeClass(wr)}">${wr}%</span>`;
+}
+
+// ── Step navigation ───────────────────────────────────────────────────────────
+function goStep(n) {
+  document.querySelectorAll(".step").forEach(s => s.classList.remove("active"));
+  document.getElementById("step-" + n).classList.add("active");
+  state.currentStep = n;
+  document.getElementById("step-indicator").textContent = n + " / 9";
+  document.getElementById("progress-fill").style.width = (n / 9 * 100) + "%";
+  document.getElementById("back-btn").style.display = n > 1 ? "block" : "none";
+  window.scrollTo(0, 0);
+}
+
+function goBack() {
+  if (state.currentStep > 1) goStep(state.currentStep - 1);
+}
+
+// ── Step 2: Interval ──────────────────────────────────────────────────────────
+function selectInterval(btn) {
+  state.interval = btn.dataset.interval;
+  goStep(3);
+}
+
+// ── Step 3: Direction → load patterns ────────────────────────────────────────
+function selectDirection(btn) {
+  state.direction = btn.dataset.direction;
+  goStep(4);
+  loadPatterns();
+}
+
+function loadPatterns() {
+  const list = document.getElementById("pattern-list");
+  list.innerHTML = `<div class="spinner-wrap"><div class="spinner"></div><span>Loading patterns…</span></div>`;
+  document.getElementById("btn-anchor-continue").disabled = true;
+
+  const url = `/api/patterns?instrument=${state.instrument}&interval=${state.interval}&direction=${state.direction}`;
+  apiFetch(url)
+    .then(r => r.json())
+    .then(data => {
+      state.patternsData = data;
+      renderPatterns(data);
+    })
+    .catch(() => {
+      list.innerHTML = `<div style="color:var(--red); padding:20px;">Failed to load patterns.</div>`;
+    });
+}
+
+function renderPatterns(data) {
+  const list = document.getElementById("pattern-list");
+  list.innerHTML = "";
+  data.forEach(p => {
+    const card = document.createElement("div");
+    card.className = "card pattern-card";
+    card.dataset.name = p.name;
+    card.innerHTML = `
+      <div class="card-main">
+        <div class="card-name">${p.name} ${badgeEl(p.win_pct_5)}</div>
+        <div class="pattern-rates">
+          <span>5c: ${p.win_pct_5}%</span>
+          <span>10c: ${p.win_pct_10}%</span>
+          <span>20c: ${p.win_pct_20}%</span>
+          <span style="color:var(--border)">·</span>
+          <span>${p.signals} signals</span>
+        </div>
+      </div>`;
+    card.onclick = () => selectAnchor(p.name, p.tip);
+    list.appendChild(card);
+  });
+}
+
+function selectAnchor(name, tip) {
+  state.anchor = name;
+  state.anchorTip = tip;
+  document.querySelectorAll("#pattern-list .card").forEach(c => {
+    c.classList.toggle("selected", c.dataset.name === name);
+  });
+  const tipBox = document.getElementById("ai-tip-box");
+  if (tip) {
+    tipBox.textContent = "💡 " + tip;
+    tipBox.classList.add("visible");
+  } else {
+    tipBox.classList.remove("visible");
+  }
+  document.getElementById("btn-anchor-continue").disabled = false;
+}
+
+// ── Step 5: Complement ────────────────────────────────────────────────────────
+function continueToComplement() {
+  goStep(5);
+  const content = document.getElementById("complement-content");
+  content.innerHTML = `<div class="spinner-wrap"><div class="spinner"></div><span>AI analysing combinations…</span></div>`;
+
+  apiFetch("/api/complement", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      anchor: state.anchor,
+      direction: state.direction,
+      instrument: state.instrument,
+      interval: state.interval,
+    }),
+  })
+    .then(r => r.json())
+    .then(data => {
+      state.complementData = data;
+      renderComplements(data);
+    })
+    .catch(() => {
+      content.innerHTML = `<div style="color:var(--red); padding:20px;">Analysis failed.</div>`;
+    });
+}
+
+function renderComplements(data) {
+  const content = document.getElementById("complement-content");
+  content.innerHTML = "";
+
+  if (!data || data.length === 0) {
+    content.innerHTML = `<div style="color:var(--muted); padding:16px;">No strong combinations found.</div>`;
+  } else {
+    data.forEach((c, i) => {
+      const card = document.createElement("div");
+      card.className = "comp-card";
+      card.dataset.idx = i;
+      card.innerHTML = `
+        <div class="comp-card-top">
+          <span style="font-size:15px; font-weight:600;">${c.complement}</span>
+          <span class="comp-delta">+${c.delta}%</span>
+        </div>
+        <div class="comp-meta">${c.win_pct}% win rate · ${c.signals} signals</div>
+        <div class="connector-sel">
+          ${["ordered","any-order","optional"].map(cn =>
+            `<button class="conn-btn${cn === c.connector ? " active" : ""}"
+               data-card="${i}" data-conn="${cn}"
+               onclick="selectConnector(this)">${cn}</button>`
+          ).join("")}
+        </div>`;
+      card.onclick = e => {
+        if (e.target.classList.contains("conn-btn")) return;
+        selectComplement(i);
+      };
+      content.appendChild(card);
+    });
+  }
+
+  const skipBtn = document.createElement("button");
+  skipBtn.className = "big-btn";
+  skipBtn.style.marginTop = "8px";
+  skipBtn.innerHTML = `<span class="big-btn-title">Skip — use anchor only</span>`;
+  skipBtn.onclick = () => { state.complement = null; buildIndicatorStep(); goStep(6); };
+  content.appendChild(skipBtn);
+
+  if (data && data.length > 0) {
+    const contBtn = document.createElement("button");
+    contBtn.className = "cta-btn";
+    contBtn.id = "comp-continue";
+    contBtn.disabled = true;
+    contBtn.textContent = "Continue →";
+    contBtn.onclick = () => { buildIndicatorStep(); goStep(6); };
+    content.appendChild(contBtn);
+  }
+}
+
+function selectComplement(idx) {
+  state.complement = state.complementData[idx].complement;
+  state.connector = state.complementData[idx].connector || "ordered";
+  document.querySelectorAll(".comp-card").forEach(c => {
+    c.classList.toggle("selected", parseInt(c.dataset.idx) === idx);
+  });
+  const btn = document.getElementById("comp-continue");
+  if (btn) btn.disabled = false;
+}
+
+function selectConnector(btn) {
+  const idx = parseInt(btn.dataset.card);
+  state.complementData[idx].connector = btn.dataset.conn;
+  if (state.complement === state.complementData[idx].complement) {
+    state.connector = btn.dataset.conn;
+  }
+  btn.closest(".connector-sel").querySelectorAll(".conn-btn").forEach(b => {
+    b.classList.toggle("active", b === btn);
+  });
+}
+
+// ── Step 6: Indicators ────────────────────────────────────────────────────────
+function buildIndicatorStep() {
+  const container = document.getElementById("indicator-cards");
+  container.innerHTML = "";
+  state.indicator = null;
+
+  const options = state.direction === "trend"
+    ? [{ key: "ma_stable", title: "MA Stable", desc: "Moving averages aligned with your trade direction for the last 10 candles." }]
+    : [
+        { key: "ma_cross", title: "MA Cross", desc: "5 and 20-period moving averages crossed in your favour in the last 10 candles." },
+        { key: "rsi", title: "RSI Extreme", desc: "RSI was at an extreme level (overbought/oversold) before the signal." },
+      ];
+
+  options.forEach(opt => {
+    const card = document.createElement("div");
+    card.className = "toggle-card";
+    card.dataset.key = opt.key;
+    card.innerHTML = `
+      <div class="card-main">
+        <div class="card-name">${opt.title}</div>
+        <div class="card-desc" style="margin-top:4px;">${opt.desc}</div>
+        <div class="toggle-delta" id="delta-${opt.key}"></div>
+      </div>
+      <div class="toggle-dot"></div>`;
+    card.onclick = () => toggleIndicator(card, opt.key);
+    container.appendChild(card);
+  });
+}
+
+function toggleIndicator(card, key) {
+  const isOn = card.classList.toggle("on");
+  const deltaEl = document.getElementById("delta-" + key);
+
+  if (isOn) {
+    state.indicator = key;
+    deltaEl.className = "toggle-delta delta-loading";
+    deltaEl.textContent = "checking…";
+
+    apiFetch("/api/indicator-check", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        anchor: state.anchor,
+        complement: state.complement,
+        connector: state.connector,
+        direction: state.direction,
+        instrument: state.instrument,
+        interval: state.interval,
+        indicator: key,
+      }),
+    })
+      .then(r => r.json())
+      .then(d => {
+        const sign = d.delta >= 0 ? "+" : "";
+        deltaEl.className = "toggle-delta " + (d.delta >= 0 ? "delta-pos" : "delta-neg");
+        deltaEl.textContent = `${sign}${d.delta}% win rate (${d.filtered_win_pct}% filtered)`;
+      })
+      .catch(() => {
+        deltaEl.textContent = "";
+      });
+  } else {
+    state.indicator = null;
+    deltaEl.textContent = "";
+    // turn off all others
+    document.querySelectorAll(".toggle-card.on").forEach(c => c.classList.remove("on"));
+    card.classList.remove("on");
+  }
+}
+
+// ── Step 7: Session ───────────────────────────────────────────────────────────
+function selectSession(btn) {
+  document.querySelectorAll("#step-7 .big-btn").forEach(b => b.classList.remove("selected"));
+  btn.classList.add("selected");
+  state.session = btn.dataset.session;
+}
+
+// ── Step 8: Sliders ───────────────────────────────────────────────────────────
+let previewTimer = null;
+
+function onSliderChange() {
+  const slRaw = parseInt(document.getElementById("sl-slider").value) / 10;
+  let tpRaw = parseInt(document.getElementById("tp-slider").value) / 10;
+
+  // TP must be at least 0.5 above SL
+  if (tpRaw < slRaw + 0.5) {
+    tpRaw = slRaw + 0.5;
+    document.getElementById("tp-slider").value = Math.round(tpRaw * 10);
+  }
+
+  state.slMult = slRaw;
+  state.tpMult = tpRaw;
+  document.getElementById("sl-val").textContent = slRaw.toFixed(1) + "×";
+  document.getElementById("tp-val").textContent = tpRaw.toFixed(1) + "×";
+
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(fetchPreview, 500);
+}
+
+function fetchPreview() {
+  const preview = document.getElementById("live-preview");
+  preview.innerHTML = `<div id="preview-loading">Calculating…</div>`;
+
+  apiFetch("/api/finalise", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(buildConfig(true)),
+  })
+    .then(r => r.json())
+    .then(d => {
+      if (d.error) { preview.innerHTML = `<div id="preview-loading">${d.error}</div>`; return; }
+      preview.innerHTML = `
+        <div class="preview-stat">
+          <div class="preview-stat-val">${d.win_pct}%</div>
+          <div class="preview-stat-lbl">Win rate</div>
+        </div>
+        <div class="preview-stat">
+          <div class="preview-stat-val">${d.signals}</div>
+          <div class="preview-stat-lbl">Signals</div>
+        </div>`;
+    })
+    .catch(() => {
+      preview.innerHTML = `<div id="preview-loading">—</div>`;
+    });
+}
+
+// ── Step 9: Summary ───────────────────────────────────────────────────────────
+function buildConfig(preview) {
+  const cfg = {
+    instrument: state.instrument,
+    interval: state.interval,
+    direction: state.direction,
+    anchor: state.anchor,
+    complement: state.complement,
+    connector: state.connector,
+    session_filter: state.session !== "All" ? state.session : null,
+    sl_multiplier: state.slMult,
+    tp_multiplier: state.tpMult,
+    device_uuid: state.deviceUuid,
+  };
+  if (state.indicator) {
+    cfg.indicator_filter = state.indicator;
+  }
+  if (preview) cfg.preview = true;
+  return cfg;
+}
+
+// Called when going to step 9 from step 8
+const _origGoStep = goStep;
+function goStep(n) {
+  _origGoStep(n);
+  if (n === 8) {
+    // initialise sliders and trigger first preview
+    document.getElementById("sl-slider").value = 10;
+    document.getElementById("tp-slider").value = 30;
+    onSliderChange();
+  }
+  if (n === 9) {
+    loadSummary();
+  }
+}
+
+function loadSummary() {
+  const statsEl = document.getElementById("summary-stats");
+  const xfEl = document.getElementById("xf-tbody");
+  statsEl.innerHTML = `<div class="spinner-wrap" style="padding:30px;"><div class="spinner"></div></div>`;
+  xfEl.innerHTML = "";
+
+  apiFetch("/api/finalise", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(buildConfig(true)),
+  })
+    .then(r => r.json())
+    .then(d => {
+      state.finalResult = d;
+      statsEl.innerHTML = `
+        <div class="stat-row"><span class="stat-label">Instrument</span><span class="stat-value">${state.instrument}</span></div>
+        <div class="stat-row"><span class="stat-label">Timeframe</span><span class="stat-value">${state.interval}</span></div>
+        <div class="stat-row"><span class="stat-label">Anchor pattern</span><span class="stat-value">${state.anchor}</span></div>
+        ${state.complement ? `<div class="stat-row"><span class="stat-label">Complement</span><span class="stat-value">${state.complement} (${state.connector})</span></div>` : ""}
+        ${state.indicator ? `<div class="stat-row"><span class="stat-label">Indicator</span><span class="stat-value">${state.indicator}</span></div>` : ""}
+        ${state.session !== "All" ? `<div class="stat-row"><span class="stat-label">Session</span><span class="stat-value">${state.session}</span></div>` : ""}
+        <div class="stat-row"><span class="stat-label">SL / TP</span><span class="stat-value">${state.slMult}× / ${state.tpMult}×</span></div>
+        <div class="stat-row"><span class="stat-label">Win rate</span><span class="stat-value" style="color:var(--accent)">${d.win_pct}%</span></div>
+        <div class="stat-row"><span class="stat-label">Signals (30d)</span><span class="stat-value">${d.signals}</span></div>`;
+
+      if (d.cross_timeframe && d.cross_timeframe.length) {
+        // Add current interval row
+        const allRows = [{ interval: state.interval, win_pct: d.win_pct, signals: d.signals }, ...d.cross_timeframe];
+        allRows.forEach(r => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `<td>${r.interval}</td><td>${r.win_pct}%</td><td>${r.signals}</td>`;
+          xfEl.appendChild(tr);
+        });
+      }
+
+      // Pre-fill name
+      document.getElementById("name-input").value = generateName();
+    })
+    .catch(() => {
+      statsEl.innerHTML = `<div style="color:var(--red); padding:16px;">Failed to load summary.</div>`;
+    });
+}
+
+function generateName() {
+  const verbs   = ["Swift","Bold","Keen","Sharp","Quick","Fierce","Bright","Dark","Silent","Wild","Brave","Calm","Iron","Gold","Silver","Stone","Steel","Flame","Storm","Wind"];
+  const colours = ["Crimson","Azure","Jade","Onyx","Amber","Indigo","Coral","Ivory","Ebony","Scarlet","Violet","Cobalt","Slate","Rose","Teal","Ochre","Cyan","Pearl","Maroon","Sage"];
+  const animals = ["Falcon","Wolf","Eagle","Lynx","Raven","Panther","Hawk","Viper","Crane","Tiger","Bear","Fox","Owl","Boar","Stag","Kite","Wren","Drake","Heron","Puma"];
+  const pick = arr => arr[Math.floor(Math.random() * arr.length)];
+  return `${pick(verbs)} ${pick(colours)} ${pick(animals)}`;
+}
+
+function goLive() {
+  const name = document.getElementById("name-input").value.trim() || generateName();
+  const cfg = buildConfig(false);
+  cfg.name = name;
+
+  apiFetch("/api/finalise", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(cfg),
+  })
+    .then(r => r.json())
+    .then(d => {
+      state.finalResult = d;
+      document.getElementById("wizard-step9-form").classList.add("hidden");
+      document.getElementById("saved-state").classList.add("visible");
+      renderChart(d.chart_candles, d.chart_trades);
+    })
+    .catch(() => {
+      alert("Failed to save strategy.");
+    });
+}
+
+// ── Chart ─────────────────────────────────────────────────────────────────────
+function renderChart(candles, trades) {
+  const wrap = document.getElementById("chart-wrap");
+  wrap.innerHTML = "";
+  if (!candles || !candles.ts || !candles.ts.length) {
+    wrap.innerHTML = `<div style="padding:20px; color:var(--muted); text-align:center;">No chart data available.</div>`;
+    return;
+  }
+
+  const chart = LightweightCharts.createChart(wrap, {
+    width: wrap.clientWidth,
+    height: 260,
+    layout: { backgroundColor: "#1a1a1a", textColor: "#888" },
+    grid: { vertLines: { color: "#2a2a2a" }, horzLines: { color: "#2a2a2a" } },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    rightPriceScale: { borderColor: "#2a2a2a" },
+    timeScale: { borderColor: "#2a2a2a", timeVisible: true },
+  });
+
+  const series = chart.addCandlestickSeries({
+    upColor: "#22c55e", downColor: "#ef4444",
+    borderUpColor: "#22c55e", borderDownColor: "#ef4444",
+    wickUpColor: "#22c55e", wickDownColor: "#ef4444",
+  });
+
+  const chartData = candles.ts.map((t, i) => ({
+    time: Math.floor(new Date(t).getTime() / 1000),
+    open: candles.open[i], high: candles.high[i],
+    low: candles.low[i], close: candles.close[i],
+  }));
+  series.setData(chartData);
+
+  if (trades && trades.length) {
+    const markers = trades.map(t => ({
+      time: Math.floor(new Date(t.ts).getTime() / 1000),
+      position: t.signal === 1 ? "belowBar" : "aboveBar",
+      color: t.win ? "#22c55e" : "#ef4444",
+      shape: t.signal === 1 ? "arrowUp" : "arrowDown",
+      text: t.win ? "W" : "L",
+    }));
+    markers.sort((a, b) => a.time - b.time);
+    series.setMarkers(markers);
+  }
+
+  chart.timeScale().fitContent();
+}
+
+// ── Restart ───────────────────────────────────────────────────────────────────
+function restartWizard() {
+  const savedInst = state.instrument;
+  const savedIvl = state.interval;
+  Object.assign(state, {
+    anchor: null, anchorTip: "", complement: null, connector: "ordered",
+    indicator: null, session: "All", slMult: 1.0, tpMult: 3.0,
+    patternsData: [], complementData: [], finalResult: null,
+  });
+  state.instrument = savedInst;
+  state.interval = savedIvl;
+  document.getElementById("saved-state").classList.remove("visible");
+  document.getElementById("wizard-step9-form").classList.remove("hidden");
+  document.getElementById("chart-wrap").innerHTML = "";
+  goStep(3);
+}
+
+// ── Init step 8 on enter ──────────────────────────────────────────────────────
+// Patch goStep to handle step-8 init (we need to override after definition)
+// The above goStep override handles this — but it calls _origGoStep which is the
+// original function reference. Since JS hoists vars but not functions declared
+// with const/let, we need a different approach. Let's use a wrapper instead.
+
+// Actually the code above won't work because of the self-referencing override.
+// Let me use a different pattern: hook into the step transition.
+</script>
+
+<script>
+// Re-implement goStep cleanly (overrides the duplicate above)
+function goStep(n) {
+  document.querySelectorAll(".step").forEach(s => s.classList.remove("active"));
+  document.getElementById("step-" + n).classList.add("active");
+  state.currentStep = n;
+  document.getElementById("step-indicator").textContent = n + " / 9";
+  document.getElementById("progress-fill").style.width = (n / 9 * 100) + "%";
+  document.getElementById("back-btn").style.display = n > 1 ? "block" : "none";
+  window.scrollTo(0, 0);
+
+  if (n === 8) {
+    document.getElementById("sl-slider").value = Math.round(state.slMult * 10);
+    document.getElementById("tp-slider").value = Math.round(state.tpMult * 10);
+    document.getElementById("sl-val").textContent = state.slMult.toFixed(1) + "×";
+    document.getElementById("tp-val").textContent = state.tpMult.toFixed(1) + "×";
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(fetchPreview, 300);
+  }
+  if (n === 9) {
+    loadSummary();
+  }
+}
+</script>
+
+</body>
+</html>

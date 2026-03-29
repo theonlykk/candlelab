@@ -49,7 +49,9 @@ def init_strategy_tables():
         ).fetchall()}
         for col, typedef in [("bt_win_pct","REAL"), ("bt_cum_net","REAL"),
                               ("bt_cum_gross","REAL"), ("bt_signals","INT"),
-                              ("bt_tp_hits","INT"), ("connectors","TEXT")]:
+                              ("bt_tp_hits","INT"), ("connectors","TEXT"),
+                              ("device_uuid","TEXT"), ("indicator_filter","TEXT"),
+                              ("session_filter","TEXT")]:
             if col not in existing:
                 conn.execute(f"ALTER TABLE user_strategies ADD COLUMN {col} {typedef}")
         conn.execute("""
@@ -72,20 +74,21 @@ def init_strategy_tables():
 def save_strategy(config: dict) -> dict:
     init_strategy_tables()
     sid  = str(uuid.uuid4())
-    name = _auto_name()
+    name = config.get("name") or _auto_name()
     now  = datetime.now(timezone.utc).isoformat()
     with get_conn() as conn:
         conn.execute("""
             INSERT INTO user_strategies
               (id, name, patterns, connectors, direction, window, instrument, interval,
                created_ts, live_from_ts, active,
-               bt_win_pct, bt_cum_net, bt_cum_gross, bt_signals, bt_tp_hits)
-            VALUES (?,?,?,?,?,?,?,?,?,?,1,?,?,?,?,?)
+               bt_win_pct, bt_cum_net, bt_cum_gross, bt_signals, bt_tp_hits,
+               device_uuid, indicator_filter, session_filter)
+            VALUES (?,?,?,?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?)
         """, (
             sid, name,
-            json.dumps(config["patterns"]),
+            json.dumps(config.get("patterns", [])),
             json.dumps(config.get("connectors", ["ordered", "ordered"])),
-            str(config["direction"]),
+            str(config.get("direction", "")),
             int(config.get("window", 5)),
             config.get("instrument", "EUR/USD"),
             config.get("interval", "5m"),
@@ -95,6 +98,9 @@ def save_strategy(config: dict) -> dict:
             config.get("bt_cum_gross"),
             config.get("bt_signals"),
             config.get("bt_tp_hits"),
+            config.get("device_uuid"),
+            json.dumps(config["indicator_filter"]) if config.get("indicator_filter") else None,
+            config.get("session_filter"),
         ))
         conn.commit()
     return {"id": sid, "name": name}
@@ -139,6 +145,25 @@ def log_strategy_trade(strategy_id: str, trade: dict):
             trade["outcome"], float(trade["pnl_gross"]), float(trade["pnl_net"]),
         ))
         conn.commit()
+
+
+def get_strategies_by_device(device_uuid: str) -> list:
+    init_strategy_tables()
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM user_strategies WHERE active=1 AND device_uuid=? ORDER BY created_ts DESC",
+            (device_uuid,)
+        ).fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["patterns"] = json.loads(d["patterns"]) if d.get("patterns") else []
+        try:
+            d["connectors"] = json.loads(d.get("connectors") or '["ordered","ordered"]')
+        except Exception:
+            d["connectors"] = ["ordered", "ordered"]
+        result.append(d)
+    return result
 
 
 def load_strategy_trades(strategy_id: str) -> list:
