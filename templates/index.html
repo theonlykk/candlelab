@@ -1566,24 +1566,17 @@ function renderCharts(data) {
     .filter((p, i, arr) => i === 0 || p.time !== arr[i - 1].time);
   if (equityData.length > 0) { equitySeries.setData(equityData); }
 
-  // Sync by visible *time* range, not logical bar indices. Candle and line series have
-  // different point counts; setVisibleLogicalRange on the equity chart used indices from
-  // the candle chart, leaving the line viewport empty and breaking marker visibility via
-  // reciprocal sync.
   let syncingTimeRange = false;
-  function wireTimeSync(fromChart, toChart) {
-    fromChart.timeScale().subscribeVisibleTimeRangeChange((timeRange) => {
-      if (syncingTimeRange || !timeRange) return;
-      syncingTimeRange = true;
-      try {
-        toChart.timeScale().setVisibleRange(timeRange);
-      } finally {
-        syncingTimeRange = false;
-      }
-    });
-  }
-  wireTimeSync(topChart, bottomChart);
-  wireTimeSync(bottomChart, topChart);
+  topChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+    if (syncingTimeRange || !range) return;
+    syncingTimeRange = true;
+    try { bottomChart.timeScale().setVisibleLogicalRange(range); } finally { syncingTimeRange = false; }
+  });
+  bottomChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+    if (syncingTimeRange || !range) return;
+    syncingTimeRange = true;
+    try { topChart.timeScale().setVisibleLogicalRange(range); } finally { syncingTimeRange = false; }
+  });
 
   if (validTimes.length > 0) {
     const lastTime = validTimes[validTimes.length - 1];
