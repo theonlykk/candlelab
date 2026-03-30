@@ -14,6 +14,10 @@ def _range(df):   return df["high"] - df["low"]
 def _bull(df):    return df["close"] > df["open"]
 def _bear(df):    return df["close"] < df["open"]
 
+# The helper functions above deliberately operate on the full DataFrame and return Series.
+# This keeps pattern definitions concise and makes it easy to add new patterns by composing
+# the same building blocks.
+
 
 # ── 1. Doji ───────────────────────────────────────────────────────────────────
 def doji(df: pd.DataFrame) -> pd.Series:

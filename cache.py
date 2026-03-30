@@ -6,17 +6,18 @@ import os, json, logging
 log = logging.getLogger(__name__)
 
 _redis_client = None
-_redis_checked = False
+_redis_url_logged = False
 
 
 def get_redis():
-    global _redis_client, _redis_checked
-    if _redis_checked:
+    global _redis_client, _redis_url_logged
+    if _redis_client is not None:
         return _redis_client
-    _redis_checked = True
     url = os.environ.get("REDIS_URL")
     if not url:
-        log.info("REDIS_URL not set; caching disabled")
+        if not _redis_url_logged:
+            log.info("REDIS_URL not set; caching disabled")
+            _redis_url_logged = True
         return None
     try:
         import redis

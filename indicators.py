@@ -9,6 +9,11 @@ LOOKBACK = 10
 
 
 def _sma(arr: np.ndarray, period: int) -> np.ndarray:
+    """
+    Simple moving average implemented via convolution.
+
+    Returns an array of the same length as `arr` padded with NaNs until `period-1`.
+    """
     result = np.full(len(arr), np.nan)
     if len(arr) < period:
         return result
@@ -19,6 +24,11 @@ def _sma(arr: np.ndarray, period: int) -> np.ndarray:
 
 
 def _rsi(arr: np.ndarray, period: int = 14) -> np.ndarray:
+    """
+    RSI implementation using Wilder-style exponential smoothing.
+
+    Returns an array of the same length as `arr` padded with NaNs until `period`.
+    """
     result = np.full(len(arr), np.nan)
     if len(arr) < period + 1:
         return result

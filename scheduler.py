@@ -39,6 +39,8 @@ def _compute_and_cache(instrument: str, interval: str, days: int):
     from patterns import detect_all
     from cache import cache_set, cache_key
 
+    # This job is designed to run periodically in the background so the UI can load a
+    # precomputed payload quickly (when a matching route consumes it).
     log.info(f"Scheduler: computing {instrument} {interval} {days}d")
     try:
         df = get_ohlc(instrument, days=days, interval=interval)
@@ -154,6 +156,11 @@ def _compute_and_cache(instrument: str, interval: str, days: int):
 
 
 def _get_recent_request():
+    """
+    Return the most recently requested (instrument, interval, days) tuple for the scheduler.
+
+    The scheduler uses this to bias refreshes toward what users are currently exploring.
+    """
     from cache import get_redis
     r = get_redis()
     if r is None:
@@ -169,6 +176,7 @@ def _get_recent_request():
 
 
 def update_recent_request(instrument: str, interval: str, days: int):
+    """Persist the latest requested tuple so scheduled refreshes target it."""
     from cache import get_redis
     r = get_redis()
     if r is None:
@@ -182,13 +190,20 @@ def update_recent_request(instrument: str, interval: str, days: int):
 
 
 def _scheduled_refresh():
+    """APScheduler callback: refresh the cached payload for the most recent request."""
     instrument, interval, days = _get_recent_request()
     _compute_and_cache(instrument, interval, days)
 
 
 def start_scheduler():
+    """
+    Start the background scheduler once per process.
+
+    - Kicks off an initial computation in a daemon thread so app startup isn't blocked.
+    - Then refreshes every 5 minutes using APScheduler.
+    """
     global _scheduler
-    if _scheduler is not None:
+    if _scheduler is not None and _scheduler.running:
         return
 
     # Pre-compute default on startup without blocking Flask startup

@@ -30,6 +30,11 @@ OUTCOME_R = {
 
 
 def compute_atr(df: pd.DataFrame, period: int = ATR_PERIOD) -> pd.Series:
+    """
+    Compute ATR (Average True Range) using an EMA/Wilder-style smoothing.
+
+    Returns a pandas Series aligned to `df.index`.
+    """
     hi, lo, cl = df["high"], df["low"], df["close"]
     prev_cl = cl.shift(1)
     tr = pd.concat([
@@ -43,6 +48,11 @@ def compute_atr(df: pd.DataFrame, period: int = ATR_PERIOD) -> pd.Series:
 def _simulate_trade(entry: float, direction: int, atr: float,
                     future_high: np.ndarray, future_low: np.ndarray,
                     future_close: np.ndarray) -> str:
+    """
+    Simulate the outcome of a single trade given the next `TIMEOUT` candles.
+
+    Returns one of: "win", "loss", "timeout_win", "timeout_loss".
+    """
     tp = entry + direction * TP_MULT * atr
     sl = entry - direction * SL_MULT * atr
 
@@ -86,6 +96,7 @@ def run_backtest(df: pd.DataFrame, pip: float = 0.0001, timeout: int = TIMEOUT) 
     timeout: number of candles before forced exit
     Returns dict: pattern_name -> {signals, wins, losses, win_pct, pnl_gross, pnl_net, trades}
     """
+    # ATR and signals are computed once and reused across all patterns for speed.
     atr     = compute_atr(df)
     signals = detect_all(df)
     results = {}
@@ -99,6 +110,7 @@ def run_backtest(df: pd.DataFrame, pip: float = 0.0001, timeout: int = TIMEOUT) 
             if sig == 0:
                 continue
 
+            # Entry is the open of the next candle after the signal candle.
             entry_bar = df.iloc[i + 1]
             entry     = entry_bar["open"]
             trade_atr = atr.iloc[i]

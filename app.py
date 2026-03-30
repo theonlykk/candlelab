@@ -65,6 +65,16 @@ _INSTRUMENT_DISPLAY = {
 
 
 def _norm_instrument(s: str) -> str:
+    """
+    Normalize user-facing instrument strings to the canonical keys used by `data.INSTRUMENTS`.
+
+    The UI and API sometimes supply either:
+    - canonical names (e.g. "EUR/USD", "Gold"), or
+    - compact codes (e.g. "EURUSD", "XAUUSD"), or
+    - mixed-case variants.
+
+    This helper keeps the API tolerant without changing internal naming.
+    """
     s = s.strip()
     if s in INSTRUMENTS:
         return s
@@ -95,6 +105,13 @@ ALL_PATTERN_NAMES = list(PATTERNS.keys())
 
 
 def _patterns_for_direction(direction: str) -> list:
+    """
+    Return the subset of pattern names appropriate for the selected strategy direction.
+
+    - "reversal" → patterns that are typically interpreted as reversals
+    - "trend"    → continuation/trend patterns
+    - anything else (including "both") → all patterns
+    """
     if direction == "reversal":
         return [p for p in ALL_PATTERN_NAMES if p in _REVERSAL_PATTERNS]
     if direction == "trend":
@@ -113,6 +130,14 @@ _SESSION_HOURS = {
 
 
 def _session_mask(index: pd.DatetimeIndex, session: str) -> np.ndarray:
+    """
+    Build a boolean mask selecting bars inside a named trading session window.
+
+    Notes:
+    - Input index is assumed to be timezone-aware UTC (as returned by `data.get_ohlc`).
+    - Sessions are configured as UTC hour ranges in `_SESSION_HOURS`.
+    - For ranges that wrap midnight (not currently used), the mask is OR-ed.
+    """
     if not session or session in ("All", "All Sessions"):
         return np.ones(len(index), dtype=bool)
     hours = _SESSION_HOURS.get(session)
@@ -133,6 +158,13 @@ ATR_PERIOD   = 14
 
 
 def _spread_cost(atr_val: float, pip: float, sl_mult: float) -> float:
+    """
+    Transaction cost model used by the custom backtest engine.
+
+    We approximate spread cost as a fixed `SPREAD_PIPS` measured relative to the
+    stop distance (in pips), scaled by `RISK_DOLLARS`:
+      spread_pips / (SL distance in pips) × RISK_DOLLARS
+    """
     sl_pips = (sl_mult * atr_val) / pip if pip > 0 else 1.0
     if sl_pips <= 0:
         return 0.0
@@ -156,6 +188,7 @@ def _simulate_trades(
     direction_val: 0=both, 1=longs only, -1=shorts only.
     indicator_fn: callable(df, signal_idx, direction_str) -> bool
     """
+    # Session filtering is applied at signal time (not entry time) to keep the rule simple.
     sess_mask = _session_mask(df.index, session)
     trades = []
     n = len(df)
@@ -252,6 +285,15 @@ def _backtest_pattern(
     sl_mult: float = 1.0,
     tp_mult: float = 3.0,
 ) -> dict:
+    """
+    Backtest a single pattern using the local engine.
+
+    This is the core engine used by the API today (separate from `backtest.run_backtest`,
+    which evaluates all patterns at once). It exists mainly so endpoints can:
+    - apply session filters,
+    - apply an optional indicator confirmation function,
+    - parameterize SL/TP multipliers and timeouts.
+    """
     atr = compute_atr(df)
     signals_df = detect_all(df)
     if pattern_name not in signals_df.columns:
@@ -305,6 +347,13 @@ def _backtest_pattern_multi_timeout(
 
 
 def _task_pattern_multi_timeout(args):
+    """
+    ProcessPool entry point wrapper.
+
+    Notes:
+    - Must be top-level for Windows "spawn" semantics.
+    - Takes a single tuple argument to simplify `executor.submit` calls.
+    """
     df, pip, pattern_name, session, sl_mult, tp_mult = args
     r = _backtest_pattern_multi_timeout(df, pip, pattern_name, session, sl_mult, tp_mult)
     return pattern_name, r
@@ -315,6 +364,10 @@ def _complement_task(args):
      df, signals_df, anchor_indices, atr, anchor_signals, anchor_win_pct) = args
 
     WINDOW = 5
+    # Connector semantics:
+    # - ordered: complement must occur in the *next* WINDOW candles after anchor
+    # - any-order: complement within ±WINDOW candles
+    # - optional: wider window (±2×WINDOW)
     if comp_name not in signals_df.columns:
         return None
     comp_signals = signals_df[comp_name].to_numpy()
@@ -448,6 +501,13 @@ def index():
 
 @app.route("/api/patterns")
 def api_patterns():
+    """
+    Return ranked patterns for the selected market/timeframe.
+
+    Implementation notes:
+    - Uses a ProcessPool so each pattern's multi-timeout backtest runs in parallel.
+    - Uses Redis to cache the resulting JSON for a short TTL.
+    """
     instrument_raw = request.args.get("instrument", "EUR/USD")
     interval = request.args.get("interval", "5m")
     direction = request.args.get("direction", "both")
@@ -476,6 +536,8 @@ def api_patterns():
 
     tasks = [(df, pip, name, None, 1.0, 3.0) for name in pattern_names]
 
+    # ProcessPool is used to parallelize per-pattern simulations. On Windows this uses
+    # "spawn", so the task payload must be picklable and entrypoints must be top-level.
     with concurrent.futures.ProcessPoolExecutor(max_workers=4, mp_context=ctx) as executor:
         futures = {executor.submit(_task_pattern_multi_timeout, t): t[2] for t in tasks}
         raw = {}
@@ -507,6 +569,12 @@ def api_patterns():
 
 @app.route("/api/complement", methods=["POST"])
 def api_complement():
+    """
+    Suggest complement patterns/connectors that improve win rate vs the anchor alone.
+
+    This endpoint evaluates many candidate pairs in parallel and returns the top 3
+    by win-rate delta (minimum signal count threshold is enforced).
+    """
     body = request.get_json(force=True)
     anchor = body.get("anchor")
     direction = body.get("direction", "both")
@@ -550,6 +618,7 @@ def api_complement():
     ]
 
     results = []
+    # Parallel evaluation of complement candidates.
     with concurrent.futures.ProcessPoolExecutor(max_workers=4, mp_context=ctx) as executor:
         futures = [executor.submit(_complement_task, t) for t in combo_tasks]
         for fut in concurrent.futures.as_completed(futures):

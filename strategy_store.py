@@ -19,10 +19,18 @@ ANIMALS = ["Falcon","Wolf","Eagle","Lynx","Raven","Panther","Hawk",
 
 
 def _auto_name() -> str:
+    """Generate a human-readable strategy name for users who skip naming."""
     return f"{random.choice(VERBS)} {random.choice(COLOURS)} {random.choice(ANIMALS)}"
 
 
 def init_strategy_tables():
+    """
+    Create (and lightly migrate) the SQLite tables used to persist strategies and trades.
+
+    This function is safe to call repeatedly; it:
+    - creates base tables if missing
+    - checks for missing columns and adds them via ALTER TABLE
+    """
     with get_conn() as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS user_strategies (
@@ -72,6 +80,12 @@ def init_strategy_tables():
 
 
 def save_strategy(config: dict) -> dict:
+    """
+    Persist a new strategy and return `{id, name}`.
+
+    `config` is the JSON payload produced by the wizard. Some nested fields are stored as
+    JSON text (patterns/connectors/indicator_filter) to keep schema stable as the UI evolves.
+    """
     init_strategy_tables()
     sid  = str(uuid.uuid4())
     name = config.get("name") or _auto_name()
@@ -107,6 +121,7 @@ def save_strategy(config: dict) -> dict:
 
 
 def load_strategies() -> list:
+    """Load all active strategies (legacy/global view)."""
     init_strategy_tables()
     with get_conn() as conn:
         rows = conn.execute(
@@ -125,6 +140,7 @@ def load_strategies() -> list:
 
 
 def delete_strategy(sid: str):
+    """Soft-delete a strategy (keeps history, hides from active lists)."""
     init_strategy_tables()
     with get_conn() as conn:
         conn.execute("UPDATE user_strategies SET active=0 WHERE id=?", (sid,))
@@ -132,6 +148,12 @@ def delete_strategy(sid: str):
 
 
 def log_strategy_trade(strategy_id: str, trade: dict):
+    """
+    Record a live trade outcome for a strategy.
+
+    Uses INSERT OR IGNORE on (strategy_id, ts) to prevent accidental duplicates if a
+    polling loop replays the same trade.
+    """
     init_strategy_tables()
     ts = trade["ts"].isoformat() if hasattr(trade["ts"], "isoformat") else str(trade["ts"])
     with get_conn() as conn:
@@ -148,6 +170,7 @@ def log_strategy_trade(strategy_id: str, trade: dict):
 
 
 def get_strategies_by_device(device_uuid: str) -> list:
+    """Load active strategies scoped to a single device UUID (the primary UI view)."""
     init_strategy_tables()
     with get_conn() as conn:
         rows = conn.execute(
@@ -167,6 +190,7 @@ def get_strategies_by_device(device_uuid: str) -> list:
 
 
 def load_strategy_trades(strategy_id: str) -> list:
+    """Load recorded trades for a strategy, newest first."""
     init_strategy_tables()
     with get_conn() as conn:
         rows = conn.execute(
