@@ -1212,6 +1212,14 @@ function safeParseUnixSeconds(timeVal) {
 
 
 // ── State ────────────────────────────────────────────────────────────────────
+// Wizard state machine overview:
+// - This file implements a 9-step "wizard" as a single-page UI. Each step is a `.step`
+//   section in the DOM and exactly one step is `.active` at any time.
+// - The `state` object below is the single source of truth for selections across steps.
+//   Steps write into `state` when the user clicks a card/toggle/slider; later steps
+//   read from `state` to build API payloads and to render the summary.
+// - Navigation is managed by `goStep(n)` and `goBack()`. `state.currentStep` is updated
+//   on every transition and drives the header (progress bar, back button, indicator).
 const state = {
   instrument: null,     // e.g. "EURUSD"
   interval: null,       // "5m" / "15m" / "1h"
@@ -1232,6 +1240,13 @@ const state = {
 };
 
 // ── Device UUID ───────────────────────────────────────────────────────────────
+// CandleLab uses a per-device UUID as a lightweight identity for "My Strategies".
+// - Stored in `localStorage` so it persists across reloads.
+// - Sent on every API call via `X-Device-UUID` header (see `apiFetch` below).
+// - Also included in some query strings for convenience/back-compat with endpoints.
+//
+// This is *not* authentication; it is a UX identifier to keep a user's saved strategies
+// together on the same browser/device.
 (function initUuid() {
   let id = localStorage.getItem("candlelab_uuid");
   if (!id) {
@@ -1277,6 +1292,8 @@ function selectInstrument(code) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function apiFetch(url, opts) {
+  // Wrapper around `fetch` that always attaches the device UUID header so the backend
+  // can associate saved strategies with this browser/device.
   const headers = Object.assign({ "X-Device-UUID": state.deviceUuid }, opts && opts.headers);
   return fetch(url, Object.assign({}, opts, { headers }));
 }
@@ -1293,6 +1310,10 @@ function badgeEl(wr) {
 
 // ── Step navigation ───────────────────────────────────────────────────────────
 function goStep(n) {
+  // Core wizard transition:
+  // - Hide all steps, show `#step-n`
+  // - Update `state.currentStep` and the header UI
+  // - Scroll to top so the user lands at the step title
   document.querySelectorAll(".step").forEach(s => s.classList.remove("active"));
   document.getElementById("step-" + n).classList.add("active");
   state.currentStep = n;
@@ -1303,23 +1324,32 @@ function goStep(n) {
 }
 
 function goBack() {
+  // Back navigation is purely UI-level: the `state` object retains selections so the
+  // user can review/adjust earlier choices without losing progress.
   if (state.currentStep > 1) goStep(state.currentStep - 1);
 }
 
 // ── Step 2: Interval ──────────────────────────────────────────────────────────
 function selectInterval(btn) {
+  // Step 2 selection → advances immediately to Step 3.
   state.interval = btn.dataset.interval;
   goStep(3);
 }
 
 // ── Step 3: Direction → load patterns ────────────────────────────────────────
 function selectDirection(btn) {
+  // Step 3 selection → advances to Step 4 and triggers the patterns API call.
   state.direction = btn.dataset.direction;
   goStep(4);
   loadPatterns();
 }
 
 function loadPatterns() {
+  // API chain (Step 3 → Step 4):
+  // - Trigger: user selects a direction in Step 3
+  // - Request: GET `/api/patterns` (instrument, interval, direction)
+  // - Response: array of patterns with win rates / signal counts (+ optional AI tip)
+  // - Effect: updates `state.patternsData` and renders the anchor pattern list (Step 4)
   const list = document.getElementById("pattern-list");
   list.innerHTML = `<div class="spinner-wrap"><div class="spinner"></div><span>Loading patterns…</span></div>`;
   document.getElementById("btn-anchor-continue").disabled = true;
@@ -1361,6 +1391,9 @@ function renderPatterns(data) {
 }
 
 function selectAnchor(name, tip) {
+  // Step 4 selection:
+  // - Sets the anchor pattern used by the strategy.
+  // - Enables the "Analyse combinations" CTA, which begins Step 5.
   state.anchor = name;
   state.anchorTip = tip;
   document.querySelectorAll("#pattern-list .card").forEach(c => {
@@ -1378,6 +1411,11 @@ function selectAnchor(name, tip) {
 
 // ── Step 5: Complement ────────────────────────────────────────────────────────
 function continueToComplement() {
+  // API chain (Step 4 → Step 5):
+  // - Trigger: user clicks "Analyse combinations" on Step 4 after selecting an anchor.
+  // - Request: POST `/api/complement` (anchor + current instrument/interval/direction)
+  // - Response: top complement suggestions (pattern + connector + win-rate delta)
+  // - Effect: updates `state.complementData` and renders complement choice UI.
   goStep(5);
   const content = document.getElementById("complement-content");
   content.innerHTML = `<div class="spinner-wrap"><div class="spinner"></div><span>AI analysing combinations…</span></div>`;
@@ -1622,6 +1660,10 @@ function fetchPreview() {
 
 // ── Step 9: Summary ───────────────────────────────────────────────────────────
 function buildConfig(preview) {
+  // Consolidate the current wizard state into the backend config payload expected by
+  // `/api/finalise`. This function is used in two modes:
+  // - preview=true: light-weight response to update the live preview on the sliders step
+  // - preview=false: full response used when saving "Go Live" / rendering charts
   const cfg = {
     instrument: state.instrument,
     interval: state.interval,
@@ -1644,6 +1686,10 @@ function buildConfig(preview) {
 // Called when going to step 9 from step 8
 const _origGoStep = goStep;
 function goStep(n) {
+  // Hook the step transition to run side effects when the user reaches specific steps.
+  // Note: there is a second "clean" `goStep` implementation later in the file which
+  // overrides this one. Both versions preserve the idea: step transitions can trigger
+  // preview fetches (step 8) and summary fetch (step 9).
   _origGoStep(n);
   if (n === 8) {
     // initialise sliders and trigger first preview
@@ -1657,6 +1703,11 @@ function goStep(n) {
 }
 
 function loadSummary() {
+  // API chain (Step 8 → Step 9):
+  // - Trigger: entering Step 9 (either via CTA or step transition hook)
+  // - Request: POST `/api/finalise` with preview=true
+  // - Response: {win_pct, signals, cross_timeframe, ...}
+  // - Effect: updates `state.finalResult` and renders the summary stats table.
   const statsEl = document.getElementById("summary-stats");
   const xfEl = document.getElementById("xf-tbody");
   statsEl.innerHTML = `<div class="spinner-wrap" style="padding:30px;"><div class="spinner"></div></div>`;
@@ -1708,6 +1759,12 @@ function generateName() {
 }
 
 function goLive() {
+  // API chain (Step 9 "Go Live"):
+  // - Trigger: user clicks "Go live" after reviewing the summary
+  // - Request: POST `/api/finalise` with preview=false and a strategy name
+  // - Response: includes chart payloads (candles + last trades) for rendering the final view
+  // - Effect: saves strategy on backend, swaps UI into the "saved" state, renders charts,
+  //   and kicks off AI commentary + tweak suggestions.
   const name = document.getElementById("name-input").value.trim() || generateName();
   const cfg = buildConfig(false);
   cfg.name = name;
@@ -1734,6 +1791,14 @@ function goLive() {
 }
 
 // ── Chart ─────────────────────────────────────────────────────────────────────
+// Chart rendering notes:
+// - Uses TradingView Lightweight Charts v3.8.0.
+// - Backend returns `chart_candles` as parallel arrays and `chart_trades` as a list of the
+//   most recent simulated trades. `renderCharts` transforms these into series data for
+//   Lightweight Charts.
+// - The top (candlestick) and bottom (equity) charts are intentionally independent:
+//   there is no time-scale synchronization. Each chart calls `fitContent()` so the full
+//   data range is visible by default, and users can pan/zoom each chart on its own.
 const PRICE_FMT = {
   EURUSD:    {precision:5, minMove:0.0005}, GBPUSD:    {precision:5, minMove:0.0005},
   USDJPY:    {precision:3, minMove:0.001},  USDCAD:    {precision:5, minMove:0.0005},
@@ -1745,6 +1810,7 @@ const PRICE_FMT = {
 
 // ── Charts (candlestick + equity subplot) ─────────────────────────────────────
 function renderCharts(data) {
+  // The chart containers are cleared on each render to avoid stale chart instances.
   const topContainer    = document.getElementById("top-chart");
   const bottomContainer = document.getElementById("bottom-chart");
   topContainer.innerHTML    = "";
@@ -1766,6 +1832,8 @@ function renderCharts(data) {
     priceFormat: { type: "price", precision: fmt.precision, minMove: fmt.minMove },
   });
 
+  // Candles: backend provides Unix seconds in `chart_candles.ts` plus OHLC arrays.
+  // Lightweight Charts accepts `{ time, open, high, low, close }` with `time` in seconds.
   const candleData = chart_candles.ts.map((t, i) => ({
     time:  t,
     open:  chart_candles.open[i],
@@ -1777,6 +1845,10 @@ function renderCharts(data) {
 
   const validTimes = candleData.map(c => c.time);
 
+  // Trade markers:
+  // - Trades are timestamped as ISO strings (`trade.ts`). We align each trade onto the
+  //   nearest candle time so markers attach to an existing bar.
+  // - `markersMap` de-duplicates markers when multiple trades align to the same bar.
   const markersMap = new Map();
   chart_trades.forEach(trade => {
     const tradeTime = Math.floor(new Date(trade.ts).getTime() / 1000);
@@ -1810,6 +1882,10 @@ function renderCharts(data) {
     priceFormat: { type: "price", precision: 2, minMove: 0.01 },
   });
 
+  // Equity curve:
+  // - We start at $1000 and apply a fixed PnL per trade outcome (win/loss).
+  // - We write two points around each aligned trade time (alignedTime-1, alignedTime)
+  //   to create visible step changes on the line series.
   const equityPoints = [];
   let currentEquity = 1000;
   if (validTimes.length > 0) {
@@ -1839,94 +1915,9 @@ function renderCharts(data) {
     .filter((p, i, arr) => i === 0 || p.time !== arr[i - 1].time);
   if (equityData.length > 0) { equitySeries.setData(equityData); }
 
-  let syncingTimeRange = false;
-  function wireTimeSync(fromChart, toChart) {
-    fromChart.timeScale().subscribeVisibleTimeRangeChange((timeRange) => {
-      if (syncingTimeRange || !timeRange) return;
-      syncingTimeRange = true;
-      try {
-        toChart.timeScale().setVisibleRange(timeRange);
-      } finally {
-        syncingTimeRange = false;
-      }
-    });
-  }
-  wireTimeSync(topChart, bottomChart);
-
-  // Apply bottom chart's visible *time* window to the price chart. Do not compare to top's
-  // previous range (that equality check could skip real updates). Rely on syncingTimeRange
-  // so programmatic top→bottom updates do not loop.
-  function applyBottomVisibleRangeToTop(timeRange) {
-    if (syncingTimeRange || !timeRange) return;
-    syncingTimeRange = true;
-    try {
-      topChart.timeScale().setVisibleRange(timeRange);
-    } finally {
-      syncingTimeRange = false;
-    }
-  }
-
-  bottomChart.timeScale().subscribeVisibleTimeRangeChange((timeRange) => {
-    applyBottomVisibleRangeToTop(timeRange);
-  });
-
-  bottomChart.timeScale().subscribeVisibleLogicalRangeChange(() => {
-    if (syncingTimeRange) return;
-    requestAnimationFrame(() => {
-      if (syncingTimeRange) return;
-      const tr = bottomChart.timeScale().getVisibleRange();
-      if (tr) applyBottomVisibleRangeToTop(tr);
-    });
-  });
-
-  // v3 line series can omit time-range notifications for wheel / drag; sync from the
-  // container after input so the candlestick pane always follows the equity pane.
-  let bottomSyncRaf = null;
-  function scheduleApplyBottomRangeToTop() {
-    if (syncingTimeRange) return;
-    if (bottomSyncRaf != null) return;
-    bottomSyncRaf = requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        bottomSyncRaf = null;
-        if (syncingTimeRange) return;
-        const tr = bottomChart.timeScale().getVisibleRange();
-        if (tr) applyBottomVisibleRangeToTop(tr);
-      });
-    });
-  }
-  bottomContainer.addEventListener("wheel", scheduleApplyBottomRangeToTop, { passive: true });
-  let bottomPanListeners = null;
-  bottomContainer.addEventListener("pointerdown", () => {
-    if (bottomPanListeners) {
-      window.removeEventListener("pointermove", bottomPanListeners.move);
-      window.removeEventListener("pointerup", bottomPanListeners.up);
-      window.removeEventListener("pointercancel", bottomPanListeners.up);
-      bottomPanListeners = null;
-    }
-    const onMove = () => scheduleApplyBottomRangeToTop();
-    const onUp = () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onUp);
-      bottomPanListeners = null;
-    };
-    bottomPanListeners = { move: onMove, up: onUp };
-    window.addEventListener("pointermove", onMove, { passive: true });
-    window.addEventListener("pointerup", onUp);
-    window.addEventListener("pointercancel", onUp);
-  });
-
-  if (validTimes.length > 0) {
-    const lastTime = validTimes[validTimes.length - 1];
-    const initialRange = { from: validTimes[0], to: lastTime + 3600 };
-    syncingTimeRange = true;
-    try {
-      topChart.timeScale().setVisibleRange(initialRange);
-      bottomChart.timeScale().setVisibleRange(initialRange);
-    } finally {
-      syncingTimeRange = false;
-    }
-  }
+  // Default viewport: show the full series range for both charts.
+  topChart.timeScale().fitContent();
+  bottomChart.timeScale().fitContent();
 
   // Update equity-final label
   const finalEl = document.getElementById("equity-final");
@@ -2371,6 +2362,10 @@ function restartWizard() {
 <script>
 // Re-implement goStep cleanly (overrides the duplicate above)
 function goStep(n) {
+  // Wizard state machine (final implementation):
+  // - Adds a "slide-back" animation class when navigating backwards.
+  // - Calls `updateStepActions(n)` to control the CTA row (bottom fixed actions).
+  // - Triggers preview fetch (step 8) and summary fetch (step 9).
   const goingBack = n < state.currentStep;
   document.querySelectorAll(".step").forEach(s => s.classList.remove("active", "slide-back"));
   const nextEl = document.getElementById("step-" + n);
@@ -2397,6 +2392,11 @@ function goStep(n) {
 }
 
 function updateStepActions(n) {
+  // Bottom CTA row that changes per step:
+  // - Step 4: "Analyse combinations" (disabled until an anchor is selected)
+  // - Step 5: populated by `renderComplements` once suggestions are loaded
+  // - Steps 6–8: simple "Continue" buttons
+  // - Step 8→9: "Finalise strategy" which triggers the summary call
   const el   = document.getElementById("step-actions");
   const hint = document.getElementById("scroll-hint");
   hint.classList.add("hidden");
@@ -2433,6 +2433,9 @@ window.addEventListener("scroll", checkScrollHint, { passive: true });
 
 // ── My Strategies panel ───────────────────────────────────────────────────────
 function openStrategiesPanel() {
+  // My Strategies overlay:
+  // - Lightweight “account” view keyed by device UUID (see initUuid).
+  // - Loads current live PnL and trade counts from the backend and renders cards.
   document.getElementById("strategies-overlay").classList.add("open");
   document.getElementById("strategies-panel").classList.add("open");
   loadStrategiesPanel();
@@ -2444,6 +2447,11 @@ function closeStrategiesPanel() {
 }
 
 function loadStrategiesPanel() {
+  // API chain (My Strategies):
+  // - Trigger: user clicks "My Strategies" in the header
+  // - Request: GET `/api/live` scoped by device UUID
+  // - Response: list of strategies with live_pnl, trade count, and metadata
+  // - Effect: render a list of cards (or an empty state)
   const body = document.getElementById("strategies-panel-body");
   body.innerHTML = `<div class="spinner-wrap"><div class="spinner"></div><span>Loading…</span></div>`;
 
@@ -2463,6 +2471,9 @@ function loadStrategiesPanel() {
 }
 
 function buildStratCard(s) {
+  // Render a single strategy "card" row inside the overlay. Visual status is derived from:
+  // - `live_pnl` (green/red/neutral)
+  // - `trades` count (amber dot for zero trades)
   const pnl      = s.live_pnl ?? 0;
   const trades   = s.trades  ?? 0;
   const pnlClass = pnl > 0 ? "strat-pnl-pos" : pnl < 0 ? "strat-pnl-neg" : "strat-pnl-nil";
@@ -2492,6 +2503,10 @@ function buildStratCard(s) {
 }
 
 function deleteStrategy(id, btn) {
+  // API chain (Delete strategy):
+  // - Trigger: user clicks "Delete" on a strategy card
+  // - Request: DELETE `/api/strategy/<id>` scoped by device UUID
+  // - Effect: animate card removal and show empty state if the list is now empty
   btn.disabled = true;
   btn.textContent = "Deleting…";
   apiFetch(`/api/strategy/${id}?device_uuid=${encodeURIComponent(state.deviceUuid)}`, { method: "DELETE" })
