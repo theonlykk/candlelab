@@ -128,24 +128,46 @@ Other:
 
 ## Known issues / deferred work
 
-High-signal items for collaborators:
+### UX and frontend
 
-- **Two backtest engines (important)**:
-  - `app.py` contains a **custom single-pattern engine** (`_simulate_trades`, `_backtest_pattern`, etc.) and the API endpoints currently use it.
-  - `backtest.py` contains a **separate “all-patterns in one pass” engine** (`run_backtest`) used by the scheduler payload builder.
-  - This duplication is intentional history, not ideal: changes to trading rules can drift between engines. If you plan to evolve the backtest logic, decide which engine is canonical and migrate callers.
+- **Decouple price chart and equity chart**: remove all sync code; each chart uses `fitContent` independently. Price chart shows full 30 days, equity chart shows full range always. Bidirectional scroll sync is currently broken and causes one chart to freeze.
+- **Welcome screen**: larger headline with pulse animation on Start button, more striking financial background illustration.
+- **Step transitions**: slide-up animation when advancing steps, slide-down when going back, 250 ms ease-out.
+- **Step 4 AI tip**: typewriter effect so characters appear one by one over 1 second, making it feel like the AI is responding live.
+- **Go Live button**: change to amber/gold `#F5A623` to differentiate it as the final commitment action.
+- **Sticky header**: show step number like `4/9` on all steps, not just some.
+- **Instrument sparklines**: show a tiny price sparkline on each instrument card in step 1 so users can see recent price action before choosing.
+- **My Strategies page**: full tracking overlay showing live PnL per strategy since going live, signal count, coloured status dot, and delete button.
 
-- **Scheduler payload may be unused**:
-  - `scheduler.py` describes caching an “`/api/all` payload”, but no `/api/all` route exists. The scheduled precompute may be legacy or incomplete.
+### Product features
 
-- **On-demand backfill on request path**:
-  - `data.get_ohlc()` triggers backfill before serving reads. Under load, this can cause latency spikes (network fetches + SQLite writes).
+- **Smart market suggestions**: replace hardcoded Gold recommendations in `/api/analyse` with data-driven suggestions based on which instruments have the most signals for the current pattern type over the last 30 days.
+- **tryOnMarket fix**: ensure the Try on Gold button passes the complete strategy config unchanged, only swapping the instrument.
+- **Progressive identity**: after going live, show a prompt asking for email to enable cross-device strategy access. Implement magic-link auth. Upgrade device UUID to a proper user account in PostgreSQL when email is provided.
+- **n_bars increase**: bump `tvdatafeed` fetch from 12 000 to 50 000 bars to get 6+ months of history for more statistically meaningful backtests.
+- **Out-of-sample testing**: option to train on first 60 days and test on next 30 days to check if edge persists.
+- **Honesty disclaimer**: AI commentary should always flag when signal count is below 30 as statistically insufficient, and warn that 60 %+ win rates on short backtests often reflect overfitting.
+- **Full CSV export**: download should include every candle in the backtest period with columns: `timestamp`, `open`, `high`, `low`, `close`, `volume`, `5-period SMA`, `20-period SMA`, `ATR(14)`, `RSI(14)`, pattern signal value for the anchor pattern, complement pattern signal, indicator filter pass/fail, whether a trade was active on that candle, trade entry price, trade TP level, trade SL level, MTM PnL on that candle, cumulative equity. This allows independent recreation and verification of backtest results in Excel or Python.
+- **Session analysis**: after going live, show which sessions the strategy fired most in, to guide session filter choice on a second iteration.
+- **OANDA integration**: port strategy to OANDA REST API for live auto-execution. $1 activation fee. Adapter pattern so other brokers (IBKR, MT5, Alpaca) can be added later.
+- **Live signal detector**: APScheduler background worker that watches incoming candles for the user's live strategies and fires OANDA orders when patterns trigger.
 
-- **ProcessPool in request handlers**:
-  - `/api/patterns` and `/api/complement` use `ProcessPoolExecutor` and pass large objects (pandas DataFrames) to workers. This is convenient but can be expensive (pickling overhead) and can become a bottleneck.
+### Technical debt (from code audit)
 
-- **Repo hygiene**:
-  - `venv/` is excluded via `.gitignore` and should never be committed. If you see it tracked, run `git rm -r --cached venv` to remove it.
+- **Two backtest engines**: `app.py` contains a custom single-pattern engine used by all API routes; `backtest.py` contains a separate all-patterns engine used by the scheduler. Decide which is canonical and migrate all callers. Changes to trading rules currently need to be made in two places.
+- **Scheduler payload unused**: `scheduler.py` precomputes and caches a payload describing an `/api/all` response, but no `/api/all` route exists. Either add the route or rewrite the scheduler to precompute `/api/patterns` for common instrument/interval/direction combinations, which are actually consumed.
+- **Backfill on request path**: `data.get_ohlc()` triggers a TradingView fetch before serving reads, which can cause latency spikes. Move backfill to a background job only; serve reads from SQLite cache always.
+- **ProcessPool overhead**: `/api/patterns` and `/api/complement` pass large pandas DataFrames into subprocesses via pickling. Consider converting to NumPy arrays before pickling or using shared memory.
+- **Exception swallowing**: multiple bare `except Exception` blocks hide systemic failures. Add structured logging with error context so production issues are diagnosable.
+- **Redis fail-once** (fixed in `refactor/cleanup`): caching now retries on every call if Redis was temporarily unavailable at startup.
+
+### Future vision
+
+- **Social comparison**: show how many other users are running similar strategies and their aggregate win rates.
+- **Strategy marketplace**: users can publish strategies for others to clone and test.
+- **Multi-timeframe confirmation**: require the signal to appear on both 5 m and 15 m before firing.
+- **Walk-forward testing**: automated rolling-window backtest to check if edge persists over time.
+- **Broker integration beyond OANDA**: Interactive Brokers via `ib_insync`, MetaTrader 5 via the `mt5` Python library, Alpaca for US equities.
 
 ## Collaboration notes
 
