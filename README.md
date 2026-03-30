@@ -145,7 +145,7 @@ High-signal items for collaborators:
   - `/api/patterns` and `/api/complement` use `ProcessPoolExecutor` and pass large objects (pandas DataFrames) to workers. This is convenient but can be expensive (pickling overhead) and can become a bottleneck.
 
 - **Repo hygiene**:
-  - A `venv/` directory exists in the repository. For collaboration, consider removing it from version control and using a standard `.gitignore` (this README doesn’t change repo tracking; it just documents).
+  - `venv/` is excluded via `.gitignore` and should never be committed. If you see it tracked, run `git rm -r --cached venv` to remove it.
 
 ## Collaboration notes
 
