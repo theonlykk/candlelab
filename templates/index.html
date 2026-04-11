@@ -1121,6 +1121,7 @@
       <span>SL: <strong id="sl-pips-display">—</strong></span>
       <span>TP: <strong id="tp-pips-display">—</strong></span>
     </div>
+    <div id="sl-floor-note" style="font-size:11px; color:var(--muted); text-align:center; margin-top:4px; min-height:16px;"></div>
 
     <div id="live-preview">
       <div id="preview-loading">Calculating…</div>
@@ -1637,15 +1638,20 @@ function updateSlTpPipDisplay() {
   const pipVal = PIP_VALUES_JS[state.instrument] || 10.0;
   const atr    = state.atr;
   if (atr && pip) {
-    const slDist = Math.max(state.slMult * atr, MIN_SL_PIPS_JS * pip);
-    const tpDist = state.tpMult * atr;
-    const slPips = Math.round(slDist / pip);
-    const tpPips = Math.round(tpDist / pip);
-    const lotSize = 100 / (slPips * pipVal);
+    const slDistPrice = Math.max(state.slMult * atr, MIN_SL_PIPS_JS * pip);
+    const slPips      = Math.round(slDistPrice / pip);
+    const tpPips      = Math.round(slPips * (state.tpMult / state.slMult));
+    const lotSize     = 100 / (slPips * pipVal);
+    const tpDollars   = Math.round(tpPips * pipVal * lotSize);
+    const floored     = slDistPrice > state.slMult * atr;
     const slEl = document.getElementById("sl-pips-display");
     const tpEl = document.getElementById("tp-pips-display");
-    if (slEl) slEl.textContent = `${slPips} pips  (~$100 risk)`;
-    if (tpEl) tpEl.textContent = `${tpPips} pips  (~$${Math.round(tpPips * pipVal * lotSize)})`;
+    if (slEl) slEl.textContent = `${slPips} pips (~$100 risk)${floored ? " ⌊min floor⌋" : ""}`;
+    if (tpEl) tpEl.textContent = `${tpPips} pips (~$${tpDollars})${floored ? " ⌊scaled⌋" : ""}`;
+    const noteEl = document.getElementById("sl-floor-note");
+    if (noteEl) noteEl.textContent = floored
+      ? `SL floored at ${MIN_SL_PIPS_JS} pips (ATR too small) — TP scaled to maintain ${state.tpMult / state.slMult}:1 ratio`
+      : "";
   }
 }
 
