@@ -260,8 +260,9 @@ def _simulate_trades(
                     nx         = float(future_op_next[j]) if np.isfinite(future_op_next[j]) else float(future_cl[j])
                     outcome    = "loss"
                     exit_price = nx
-                    exit_pips  = direction * (nx - entry) / pip
-                    pnl_gross  = round(exit_pips * pip_val * lot_size, 2)
+                    sl_pips_actual = sl_pips  # already floored
+                    slip_pips = direction * (float(nx) - float(sl)) / pip  # extra beyond SL level, negative = worse
+                    pnl_gross = round((-RISK_DOLLARS) + (slip_pips * pip_val * lot_size), 2)
                     break
             else:
                 if future_lo[j] <= tp:
@@ -273,8 +274,9 @@ def _simulate_trades(
                     nx         = float(future_op_next[j]) if np.isfinite(future_op_next[j]) else float(future_cl[j])
                     outcome    = "loss"
                     exit_price = nx
-                    exit_pips  = direction * (nx - entry) / pip
-                    pnl_gross  = round(exit_pips * pip_val * lot_size, 2)
+                    sl_pips_actual = sl_pips  # already floored
+                    slip_pips = direction * (float(nx) - float(sl)) / pip  # extra beyond SL level, negative = worse
+                    pnl_gross = round((-RISK_DOLLARS) + (slip_pips * pip_val * lot_size), 2)
                     break
         else:
             exit_pips = direction * (exit_price - entry) / pip
