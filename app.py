@@ -228,8 +228,9 @@ def _simulate_trades(
         pip_val  = PIP_VALUES.get(instrument, 10.0)
         sl_dist  = _sl_distance_price(trade_atr, pip)
         sl_pips  = sl_dist / pip if pip > 0 else 0.0
-        tp_pips  = (tp_mult * trade_atr) / pip if pip > 0 else 0.0
+        tp_pips  = sl_pips * (tp_mult / sl_mult)
         lot_size = (RISK_DOLLARS / (sl_pips * pip_val)) if sl_pips > 0 and pip_val > 0 else 0.0
+        spread_cost_fixed = round(SPREAD_PIPS * pip_val * lot_size, 2)
 
         entry = float(df["open"].iloc[i + 1])
         tp = entry + direction * tp_mult * trade_atr
@@ -283,8 +284,7 @@ def _simulate_trades(
             pnl_gross = round(exit_pips * pip_val * lot_size, 2)
             outcome   = "timeout_win" if exit_pips > 0 else "timeout_loss"
 
-        spread_cost = round(_spread_cost(trade_atr, pip, sl_mult), 2)
-        pnl_net = round(pnl_gross - spread_cost, 2)
+        pnl_net = round(pnl_gross - spread_cost_fixed, 2)
         is_win = outcome in ("win", "timeout_win")
 
         trades.append({
@@ -299,7 +299,7 @@ def _simulate_trades(
             "outcome":   outcome,
             "win":       is_win,
             "pnl_gross": round(pnl_gross, 2),
-            "spread_cost": spread_cost,
+            "spread_cost": spread_cost_fixed,
             "pnl_net":   pnl_net,
         })
 
