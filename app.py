@@ -154,18 +154,30 @@ def _session_mask(index: pd.DatetimeIndex, session: str) -> np.ndarray:
 
 RISK_DOLLARS = 100.0
 SPREAD_PIPS  = 1.0
+PIP_VALUES = {
+    "EUR/USD": 10.0, "GBP/USD": 10.0, "GBP/JPY": 9.30,
+    "USD/JPY": 9.30, "USD/CAD": 7.70, "AUD/USD": 10.0,
+    "USD/CHF": 10.0, "NZD/USD": 10.0, "EUR/GBP": 10.0,
+    "EUR/JPY": 9.30, "Gold": 1.0, "Silver": 1.0,
+    "Oil": 1.0, "S&P 500": 1.0, "Bitcoin": 1.0,
+}
+MIN_SL_PIPS = 5.0
 ATR_PERIOD   = 14
+
+
+def _sl_distance_price(atr: float, pip: float) -> float:
+    """Price distance for SL: max(ATR, MIN_SL_PIPS × pip)."""
+    base = float(atr) if np.isfinite(atr) else 0.0
+    return max(base, MIN_SL_PIPS * pip) if pip > 0 else base
 
 
 def _spread_cost(atr_val: float, pip: float, sl_mult: float) -> float:
     """
-    Transaction cost model used by the custom backtest engine.
-
-    We approximate spread cost as a fixed `SPREAD_PIPS` measured relative to the
-    stop distance (in pips), scaled by `RISK_DOLLARS`:
-      spread_pips / (SL distance in pips) × RISK_DOLLARS
+    Transaction cost model: spread_pips / SL_pips × RISK_DOLLARS.
+    SL distance uses _sl_distance_price so it is consistent with lot sizing.
     """
-    sl_pips = (sl_mult * atr_val) / pip if pip > 0 else 1.0
+    sl_dist = _sl_distance_price(atr_val, pip)
+    sl_pips = sl_dist / pip if pip > 0 else 1.0
     if sl_pips <= 0:
         return 0.0
     return (SPREAD_PIPS / sl_pips) * RISK_DOLLARS
@@ -182,6 +194,7 @@ def _simulate_trades(
     session: str = None,
     indicator_fn=None,
     direction_val: int = 0,
+    instrument: str = "EUR/USD",
 ) -> list:
     """
     Simulate all trades for a single pattern.
@@ -212,46 +225,61 @@ def _simulate_trades(
         if trade_atr == 0 or np.isnan(trade_atr):
             continue
 
+        pip_val  = PIP_VALUES.get(instrument, 10.0)
+        sl_dist  = _sl_distance_price(trade_atr, pip)
+        sl_pips  = sl_dist / pip if pip > 0 else 0.0
+        tp_pips  = (tp_mult * trade_atr) / pip if pip > 0 else 0.0
+        lot_size = (RISK_DOLLARS / (sl_pips * pip_val)) if sl_pips > 0 and pip_val > 0 else 0.0
+
         entry = float(df["open"].iloc[i + 1])
         tp = entry + direction * tp_mult * trade_atr
-        sl = entry - direction * sl_mult * trade_atr
+        sl = entry - direction * _sl_distance_price(trade_atr, pip)
 
-        future_hi = df["high"].iloc[i + 1: i + 1 + timeout].to_numpy()
-        future_lo = df["low"].iloc[i + 1: i + 1 + timeout].to_numpy()
-        future_cl = df["close"].iloc[i + 1: i + 1 + timeout].to_numpy()
+        future_hi      = df["high"].iloc[i + 1: i + 1 + timeout].to_numpy()
+        future_lo      = df["low"].iloc[i + 1: i + 1 + timeout].to_numpy()
+        future_cl      = df["close"].iloc[i + 1: i + 1 + timeout].to_numpy()
+        future_op_next = df["open"].iloc[i + 2: i + 2 + timeout].to_numpy()
+        if len(future_op_next) < len(future_cl):
+            future_op_next = np.append(future_op_next, future_cl[-1])
 
         if len(future_hi) == 0:
             continue
 
-        if direction == 1:
-            tp_hits = np.where(future_hi >= tp)[0]
-            sl_hits = np.where(future_lo <= sl)[0]
-        else:
-            tp_hits = np.where(future_lo <= tp)[0]
-            sl_hits = np.where(future_hi >= sl)[0]
+        outcome    = "timeout_loss"
+        exit_price = float(future_cl[-1])
+        pnl_gross  = 0.0
 
-        nf = len(future_hi)
-        tp_idx = int(tp_hits[0]) if len(tp_hits) else nf
-        sl_idx = int(sl_hits[0]) if len(sl_hits) else nf
-
-        if tp_idx <= sl_idx and tp_idx < nf:
-            outcome = "win"
-        elif sl_idx < tp_idx and sl_idx < nf:
-            outcome = "loss"
+        for j in range(len(future_hi)):
+            if direction == 1:
+                if future_hi[j] >= tp:
+                    outcome    = "win"
+                    exit_price = float(tp)
+                    pnl_gross  = round(tp_pips * pip_val * lot_size, 2)
+                    break
+                if future_cl[j] <= sl:
+                    nx         = float(future_op_next[j]) if np.isfinite(future_op_next[j]) else float(future_cl[j])
+                    outcome    = "loss"
+                    exit_price = nx
+                    exit_pips  = direction * (nx - entry) / pip
+                    pnl_gross  = round(exit_pips * pip_val * lot_size, 2)
+                    break
+            else:
+                if future_lo[j] <= tp:
+                    outcome    = "win"
+                    exit_price = float(tp)
+                    pnl_gross  = round(tp_pips * pip_val * lot_size, 2)
+                    break
+                if future_cl[j] >= sl:
+                    nx         = float(future_op_next[j]) if np.isfinite(future_op_next[j]) else float(future_cl[j])
+                    outcome    = "loss"
+                    exit_price = nx
+                    exit_pips  = direction * (nx - entry) / pip
+                    pnl_gross  = round(exit_pips * pip_val * lot_size, 2)
+                    break
         else:
-            exit_price = future_cl[-1]
-            pnl_dir = direction * (exit_price - entry)
-            outcome = "timeout_win" if pnl_dir > 0 else "timeout_loss"
-
-        if outcome == "win":
-            pnl_gross = tp_mult * RISK_DOLLARS
-        elif outcome == "loss":
-            pnl_gross = -sl_mult * RISK_DOLLARS
-        else:
-            exit_price = future_cl[-1]
-            move = direction * (exit_price - entry)
-            sl_distance = sl_mult * trade_atr
-            pnl_gross = round((move / sl_distance) * RISK_DOLLARS, 2) if sl_distance > 0 else 0.0
+            exit_pips = direction * (exit_price - entry) / pip
+            pnl_gross = round(exit_pips * pip_val * lot_size, 2)
+            outcome   = "timeout_win" if exit_pips > 0 else "timeout_loss"
 
         spread_cost = round(_spread_cost(trade_atr, pip, sl_mult), 2)
         pnl_net = round(pnl_gross - spread_cost, 2)
@@ -264,6 +292,8 @@ def _simulate_trades(
             "atr":       trade_atr,
             "tp":        tp,
             "sl":        sl,
+            "exit_price":  round(exit_price, 5),
+            "lot_size":    round(lot_size, 2),
             "outcome":   outcome,
             "win":       is_win,
             "pnl_gross": round(pnl_gross, 2),
@@ -284,6 +314,7 @@ def _backtest_pattern(
     direction_val: int = 0,
     sl_mult: float = 1.0,
     tp_mult: float = 3.0,
+    instrument: str = "EUR/USD",
 ) -> dict:
     """
     Backtest a single pattern using the local engine.
@@ -302,6 +333,7 @@ def _backtest_pattern(
     trades = _simulate_trades(
         df, signals_df[pattern_name], atr, pip,
         sl_mult, tp_mult, timeout, session, indicator_fn, direction_val,
+        instrument=instrument,
     )
 
     total = len(trades)
@@ -324,6 +356,7 @@ def _backtest_pattern_multi_timeout(
     session: str = None,
     sl_mult: float = 1.0,
     tp_mult: float = 3.0,
+    instrument: str = "EUR/USD",
 ) -> dict:
     """Run a single pattern at timeouts 5, 10, 20 and return combined results."""
     atr = compute_atr(df)
@@ -337,7 +370,10 @@ def _backtest_pattern_multi_timeout(
 
     results = {}
     for timeout in (5, 10, 20):
-        trades = _simulate_trades(df, sig_series, atr, pip, sl_mult, tp_mult, timeout, session)
+        trades = _simulate_trades(
+            df, sig_series, atr, pip, sl_mult, tp_mult, timeout, session,
+            instrument=instrument,
+        )
         total = len(trades)
         wins = sum(1 for t in trades if t["win"])
         results[f"win_pct_{timeout}"] = round(wins / total * 100, 1) if total else 0.0
@@ -354,8 +390,10 @@ def _task_pattern_multi_timeout(args):
     - Must be top-level for Windows "spawn" semantics.
     - Takes a single tuple argument to simplify `executor.submit` calls.
     """
-    df, pip, pattern_name, session, sl_mult, tp_mult = args
-    r = _backtest_pattern_multi_timeout(df, pip, pattern_name, session, sl_mult, tp_mult)
+    df, pip, pattern_name, session, sl_mult, tp_mult, instrument = args
+    r = _backtest_pattern_multi_timeout(
+        df, pip, pattern_name, session, sl_mult, tp_mult, instrument,
+    )
     return pattern_name, r
 
 
@@ -534,7 +572,7 @@ def api_patterns():
 
     pattern_names = _patterns_for_direction(direction)
 
-    tasks = [(df, pip, name, None, 1.0, 3.0) for name in pattern_names]
+    tasks = [(df, pip, name, None, 1.0, 3.0, instrument) for name in pattern_names]
 
     # ProcessPool is used to parallelize per-pattern simulations. On Windows this uses
     # "spawn", so the task payload must be picklable and entrypoints must be top-level.
@@ -605,7 +643,7 @@ def api_complement():
     anchor_signals = signals_df[anchor]
     anchor_indices = np.where(anchor_signals.to_numpy() != 0)[0]
 
-    anchor_r = _backtest_pattern(df, pip, anchor, timeout=5)
+    anchor_r = _backtest_pattern(df, pip, anchor, timeout=5, instrument=instrument)
     anchor_win_pct = anchor_r["win_pct"]
 
     CONNECTORS = ["ordered", "any-order", "optional"]
@@ -663,8 +701,10 @@ def api_indicator_check():
     }
     indicator_fn = indicator_map.get(indicator)
 
-    base_r = _backtest_pattern(df, pip, anchor, timeout=5)
-    filtered_r = _backtest_pattern(df, pip, anchor, timeout=5, indicator_fn=indicator_fn)
+    base_r = _backtest_pattern(df, pip, anchor, timeout=5, instrument=instrument)
+    filtered_r = _backtest_pattern(
+        df, pip, anchor, timeout=5, indicator_fn=indicator_fn, instrument=instrument,
+    )
 
     return jsonify({
         "unfiltered_win_pct": base_r["win_pct"],
@@ -723,6 +763,7 @@ def api_finalise():
             session=session_filter,
             indicator_fn=indicator_fn,
             sl_mult=sl_mult, tp_mult=tp_mult,
+            instrument=instrument,
         )
         return r
 
