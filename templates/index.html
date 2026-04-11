@@ -1990,9 +1990,13 @@ function renderTradeLog(trades, slMult, tpMult) {
     const resColor  = t.win ? "var(--green)" : "var(--red)";
     const res       = t.win ? "Win" : "Loss";
     const exitColor = t.exit_type === "TP" ? "var(--green)" : "var(--red)";
-    const pnl       = t.win ? `+$${pnlWin}` : `-$100`;
+    const pnlVal = t.pnl_net !== undefined
+      ? (t.pnl_net >= 0 ? `+$${Math.round(t.pnl_net)}` : `-$${Math.abs(Math.round(t.pnl_net))}`)
+      : (t.win ? `+$${pnlWin}` : `-$100`);
     const pnlColor  = t.win ? "var(--green)" : "var(--red)";
-    const slipPips = (t.outcome === "loss" && t.exit_price && t.entry && pip)
+    const slipEligible = (t.outcome === "loss" || t.exit_type === "SL")
+      && t.exit_price != null && t.entry != null && t.sl != null && pip;
+    const slipPips = slipEligible
       ? Math.round(Math.abs(t.exit_price - t.entry) / pip - Math.round(Math.abs(t.sl - t.entry) / pip))
       : null;
     const slipCell = slipPips !== null
@@ -2006,7 +2010,7 @@ function renderTradeLog(trades, slMult, tpMult) {
       ${slipCell}
       <td style="padding:6px 10px; color:${exitColor}; font-weight:600;">${t.exit_type ?? "—"}</td>
       <td style="padding:6px 10px; color:${resColor}; font-weight:600;">${res}</td>
-      <td style="padding:6px 10px; color:${pnlColor}; font-weight:600;">${pnl}</td>
+      <td style="padding:6px 10px; color:${pnlColor}; font-weight:600;">${pnlVal}</td>
     </tr>`;
   }).join("");
 
@@ -2016,7 +2020,9 @@ function renderTradeLog(trades, slMult, tpMult) {
       const d = new Date(t.ts);
       const date = d.toISOString().slice(0, 16).replace("T", " ");
       const dir  = t.signal === 1 ? "Long" : "Short";
-      const pnl  = t.win ? pnlWin : -100;
+      const pnl  = t.pnl_net !== undefined
+        ? Math.round(t.pnl_net)
+        : (t.win ? pnlWin : -100);
       return [date, dir, t.entry, t.exit_price ?? "", t.exit_type ?? "", t.win ? "Win" : "Loss", pnl].join(",");
     })
   ].join("\n");
