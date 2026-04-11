@@ -1117,6 +1117,11 @@
              oninput="onSliderChange()">
     </div>
 
+    <div id="sl-tp-pip-display" style="margin:12px 0 4px; padding:10px 14px; background:var(--bg); border-radius:8px; font-size:13px; color:var(--muted); display:flex; justify-content:space-between;">
+      <span>SL: <strong id="sl-pips-display">—</strong></span>
+      <span>TP: <strong id="tp-pips-display">—</strong></span>
+    </div>
+
     <div id="live-preview">
       <div id="preview-loading">Calculating…</div>
     </div>
@@ -1235,6 +1240,7 @@ const state = {
   patternsData: [],
   complementData: [],
   finalResult: null,
+  atr: null,
   deviceUuid: null,
   currentStep: 1,
 };
@@ -1271,6 +1277,20 @@ const INSTRUMENTS = [
   { code: "SPX500USD", label: "S&P 500",    desc: "US large caps" },
   { code: "BTCUSD",    label: "Bitcoin",    desc: "BTC vs dollar" },
 ];
+
+const PIP_SIZES = {
+  "EURUSD": 0.0001, "GBPUSD": 0.0001, "USDJPY": 0.01,
+  "USDCAD": 0.0001, "AUDUSD": 0.0001, "USDCHF": 0.0001,
+  "NZDUSD": 0.0001, "XAUUSD": 0.1,   "XAGUSD": 0.001,
+  "WTICOUSD": 0.01, "SPX500USD": 0.25, "BTCUSD": 1.0,
+};
+const PIP_VALUES_JS = {
+  "EURUSD": 10.0, "GBPUSD": 10.0, "USDJPY": 9.30,
+  "USDCAD": 7.70, "AUDUSD": 10.0, "USDCHF": 10.0,
+  "NZDUSD": 10.0, "XAUUSD": 1.0,  "XAGUSD": 1.0,
+  "WTICOUSD": 1.0, "SPX500USD": 1.0, "BTCUSD": 1.0,
+};
+const MIN_SL_PIPS_JS = 5.0;
 
 (function buildInstrumentGrid() {
   const grid = document.getElementById("instrument-grid");
@@ -1612,6 +1632,23 @@ function selectSession(btn) {
 // ── Step 8: Sliders ───────────────────────────────────────────────────────────
 let previewTimer = null;
 
+function updateSlTpPipDisplay() {
+  const pip    = PIP_SIZES[state.instrument] || 0.0001;
+  const pipVal = PIP_VALUES_JS[state.instrument] || 10.0;
+  const atr    = state.atr;
+  if (atr && pip) {
+    const slDist = Math.max(state.slMult * atr, MIN_SL_PIPS_JS * pip);
+    const tpDist = state.tpMult * atr;
+    const slPips = Math.round(slDist / pip);
+    const tpPips = Math.round(tpDist / pip);
+    const lotSize = 100 / (slPips * pipVal);
+    const slEl = document.getElementById("sl-pips-display");
+    const tpEl = document.getElementById("tp-pips-display");
+    if (slEl) slEl.textContent = `${slPips} pips  (~$100 risk)`;
+    if (tpEl) tpEl.textContent = `${tpPips} pips  (~$${Math.round(tpPips * pipVal * lotSize)})`;
+  }
+}
+
 function onSliderChange() {
   const slRaw = parseInt(document.getElementById("sl-slider").value) / 10;
   let tpRaw = parseInt(document.getElementById("tp-slider").value) / 10;
@@ -1626,6 +1663,8 @@ function onSliderChange() {
   state.tpMult = tpRaw;
   document.getElementById("sl-val").textContent = slRaw.toFixed(1) + "×";
   document.getElementById("tp-val").textContent = tpRaw.toFixed(1) + "×";
+
+  updateSlTpPipDisplay();
 
   clearTimeout(previewTimer);
   previewTimer = setTimeout(fetchPreview, 500);
@@ -1643,6 +1682,7 @@ function fetchPreview() {
     .then(r => r.json())
     .then(d => {
       if (d.error) { preview.innerHTML = `<div id="preview-loading">${d.error}</div>`; return; }
+      if (d.atr !== undefined) state.atr = d.atr;
       preview.innerHTML = `
         <div class="preview-stat">
           <div class="preview-stat-val">${d.win_pct}%</div>
@@ -1652,6 +1692,7 @@ function fetchPreview() {
           <div class="preview-stat-val">${d.signals}</div>
           <div class="preview-stat-lbl">Signals</div>
         </div>`;
+      updateSlTpPipDisplay();
     })
     .catch(() => {
       preview.innerHTML = `<div id="preview-loading">—</div>`;
@@ -1933,6 +1974,7 @@ function renderTradeLog(trades, slMult, tpMult) {
   wrap.innerHTML = "";
   if (!trades || !trades.length) return;
 
+  const pip = PIP_SIZES[state.instrument] || 0.0001;
   const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   const pnlWin  = +(100 * tpMult / slMult).toFixed(0);
 
@@ -1950,11 +1992,18 @@ function renderTradeLog(trades, slMult, tpMult) {
     const exitColor = t.exit_type === "TP" ? "var(--green)" : "var(--red)";
     const pnl       = t.win ? `+$${pnlWin}` : `-$100`;
     const pnlColor  = t.win ? "var(--green)" : "var(--red)";
+    const slipPips = (t.outcome === "loss" && t.exit_price && t.entry && pip)
+      ? Math.round(Math.abs(t.exit_price - t.entry) / pip - Math.round(Math.abs(t.sl - t.entry) / pip))
+      : null;
+    const slipCell = slipPips !== null
+      ? `<td style="padding:6px 10px; color:var(--red); font-size:12px;">${slipPips > 0 ? "+" : ""}${slipPips}p</td>`
+      : `<td style="padding:6px 10px; color:var(--muted); font-size:12px;">—</td>`;
     return `<tr style="background:${bg};">
       <td style="padding:6px 10px;">${date}</td>
       <td style="padding:6px 10px;">${dir}</td>
       <td style="padding:6px 10px;">${t.entry}</td>
       <td style="padding:6px 10px; color:${exitColor}; font-weight:600;">${t.exit_price ?? "—"}</td>
+      ${slipCell}
       <td style="padding:6px 10px; color:${exitColor}; font-weight:600;">${t.exit_type ?? "—"}</td>
       <td style="padding:6px 10px; color:${resColor}; font-weight:600;">${res}</td>
       <td style="padding:6px 10px; color:${pnlColor}; font-weight:600;">${pnl}</td>
@@ -1985,6 +2034,7 @@ function renderTradeLog(trades, slMult, tpMult) {
             <th style="padding:7px 10px; text-align:left; font-weight:500;">Dir</th>
             <th style="padding:7px 10px; text-align:left; font-weight:500;">Entry</th>
             <th style="padding:7px 10px; text-align:left; font-weight:500;">Exit</th>
+            <th style="padding:7px 10px; text-align:left; font-weight:500;">Slip</th>
             <th style="padding:7px 10px; text-align:left; font-weight:500;">Type</th>
             <th style="padding:7px 10px; text-align:left; font-weight:500;">Result</th>
             <th style="padding:7px 10px; text-align:left; font-weight:500;">PnL</th>
@@ -2192,7 +2242,7 @@ function quickTryTimeframe(ivl) {
     instrument: savedInst, interval: ivl,
     anchor: null, anchorTip: "", complement: null, connector: "ordered",
     indicator: null, session: "All", slMult: 1.0, tpMult: 3.0,
-    patternsData: [], complementData: [], finalResult: null,
+    patternsData: [], complementData: [], finalResult: null, atr: null,
   });
   _clearSavedState();
   goStep(3);
@@ -2343,7 +2393,7 @@ function restartWizard() {
     instrument: savedInst, interval: savedIvl,
     anchor: null, anchorTip: "", complement: null, connector: "ordered",
     indicator: null, session: "All", slMult: 1.0, tpMult: 3.0,
-    patternsData: [], complementData: [], finalResult: null,
+    patternsData: [], complementData: [], finalResult: null, atr: null,
   });
   _clearSavedState();
   goStep(3);
@@ -2544,6 +2594,10 @@ function showRealTradeResponse() {
   document.getElementById("real-trade-response").classList.add("visible");
 }
 </script>
+
+<div id="version-stamp" style="text-align:center; font-size:11px; color:#ccc; padding:8px; margin-top:40px;">
+  Hello Paulie 👋 — v2.1 pnl-improvements
+</div>
 
 </body>
 </html>

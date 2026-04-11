@@ -784,25 +784,27 @@ def api_finalise():
             })
 
     if preview:
+        atr_val = float(main_r["trades"][-1]["atr"]) if main_r.get("trades") else None
         return jsonify({
             "win_pct":          main_r["win_pct"],
             "signals":          main_r["signals"],
             "cross_timeframe":  cross_tf,
+            "atr":              atr_val,
         })
 
     chart_trades = []
     for t in main_r["trades"][-50:]:
-        is_win     = t["win"]
-        exit_price = round(t["tp"] if is_win else t["sl"], meta["decimals"])
         chart_trades.append({
             "ts":         (pd.Timestamp(t["ts"]).tz_localize("UTC") if pd.Timestamp(t["ts"]).tzinfo is None else pd.Timestamp(t["ts"])).isoformat(),
             "signal":     t["signal"],
             "entry":      round(t["entry"], meta["decimals"]),
             "tp":         round(t["tp"], meta["decimals"]),
             "sl":         round(t["sl"], meta["decimals"]),
-            "win":        is_win,
-            "exit_price": exit_price,
-            "exit_type":  "TP" if is_win else "SL",
+            "win":        t["win"],
+            "exit_price": round(t["exit_price"], meta["decimals"]),
+            "exit_type":  "TP" if t["outcome"] == "win" else ("SL" if t["outcome"] == "loss" else "TO"),
+            "outcome":    t["outcome"],
+            "pnl_net":    t["pnl_net"],
         })
 
     try:
