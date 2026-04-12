@@ -2,8 +2,8 @@ flask>=3.0.0
 gunicorn>=21.2.0
 pandas>=2.1.0
 numpy>=1.26.0
-tvdatafeed-enhanced>=2.2.1
-websocket-client
+requests>=2.31.0
 redis>=4.0.0
 apscheduler>=3.10.0
 anthropic>=0.25.0
+matplotlib>=3.8.0

@@ -1,7 +1,7 @@
 """
-data.py — TradingView (tvdatafeed-enhanced) OHLC fetcher + SQLite persistence
+data.py — OANDA REST OHLC fetcher + SQLite persistence
 Multi-instrument: FX majors + commodities + indices + crypto
-No API key required. Uses OANDA/BINANCE feeds via TradingView.
+Uses OANDA v3 candles API (Bearer token). Local cache: fx_ohlc.db
 """
 
 import os
@@ -10,34 +10,15 @@ import sqlite3
 import logging
 import threading
 import pandas as pd
-from tvDatafeed import TvDatafeed, Interval
+import requests
 from datetime import datetime, timezone, timedelta
 
 log = logging.getLogger(__name__)
 DB_PATH = os.environ.get("DB_PATH", "fx_ohlc.db")
 
-# Lazy-init — only create connection when first needed
-_tv = None
-_tv_lock = threading.Lock()
-
 # Tracks which (instrument, interval) pairs are currently being backfilled
 _backfill_in_progress: set = set()
 _backfill_lock = threading.Lock()
-
-def _get_tv():
-    """
-    Lazily construct a single TvDatafeed client instance.
-
-    TvDatafeed internally handles auth/cookies; constructing it repeatedly is slow and can
-    create unnecessary network churn. The lock ensures a single instance in multi-thread
-    scenarios (Gunicorn threads).
-    """
-    global _tv
-    if _tv is None:
-        with _tv_lock:
-            if _tv is None:
-                _tv = TvDatafeed()
-    return _tv
 
 # ── Instrument registry ───────────────────────────────────────────────────────
 INSTRUMENTS = {
@@ -52,19 +33,33 @@ INSTRUMENTS = {
     "Silver":   {"symbol": "XAGUSD",   "exchange": "OANDA",   "pip": 0.001,  "pip_name": "cents", "decimals": 4},
     "Oil":      {"symbol": "WTICOUSD", "exchange": "OANDA",   "pip": 0.01,   "pip_name": "cents", "decimals": 3},
     "S&P 500":  {"symbol": "SPX500USD","exchange": "OANDA",   "pip": 0.25,   "pip_name": "pts",   "decimals": 2},
-    "Bitcoin":  {"symbol": "BTCUSD",   "exchange": "BINANCE", "pip": 1.0,    "pip_name": "pts",   "decimals": 2},
+    "Bitcoin":  {"symbol": "BTCUSD",   "exchange": "OANDA",   "pip": 1.0,    "pip_name": "pts",   "decimals": 2},
 }
 
 DEFAULT_INSTRUMENT = "EUR/USD"
 
+# CandleLab interval key -> OANDA v3 granularity string
 INTERVAL_MAP = {
-    "5m":  Interval.in_5_minute,
-    "15m": Interval.in_15_minute,
-    "1h":  Interval.in_1_hour,
+    "5m":  "M5",
+    "15m": "M15",
+    "1h":  "H1",
 }
 DEFAULT_INTERVAL  = "5m"
 _INITIAL_BARS     = {"5m": 12000, "15m": 4000, "1h": 1000}
 _MINS_PER_BAR     = {"5m": 5,     "15m": 15,   "1h": 60}
+
+
+def _oanda_instrument_id(instrument: str) -> str:
+    """
+    Map a CandleLab INSTRUMENTS key (e.g. "EUR/USD") to an OANDA instrument name (e.g. EUR_USD).
+    Uses the compact `symbol` field (e.g. EURUSD, WTICOUSD) and inserts an underscore before USD.
+    """
+    sym = INSTRUMENTS[instrument]["symbol"]
+    if sym.endswith("USD") and len(sym) > 6:
+        return f"{sym[:-3]}_{sym[-3:]}"
+    if len(sym) == 6:
+        return f"{sym[:3]}_{sym[3:]}"
+    return f"{sym[:3]}_{sym[3:]}"
 
 
 def _table(instrument: str, interval: str = "5m") -> str:
@@ -169,58 +164,123 @@ def load_bars(instrument: str, days: int = 62, interval: str = "5m") -> pd.DataF
     return df
 
 
-# ── TradingView fetch ─────────────────────────────────────────────────────────
+# ── OANDA REST fetch ───────────────────────────────────────────────────────────
 
-def _fetch_tv(symbol: str, exchange: str, n_bars: int, interval: str = "5m") -> pd.DataFrame:
-    """
-    Fetch n_bars of OHLC from TradingView for the given interval.
-    Max 5000 bars per call — for larger requests we make multiple calls.
-    """
-    # tvdatafeed's `n_bars` returns the most recent N bars. For large backfills we
-    # make multiple calls and de-duplicate by timestamp when windows overlap.
-    MAX_PER_CALL = 4900
-    tv_interval  = INTERVAL_MAP.get(interval, Interval.in_5_minute)
-    all_frames = []
-    remaining  = n_bars
-
-    while remaining > 0:
-        batch = min(remaining, MAX_PER_CALL)
+def _candles_to_df(candles: list) -> pd.DataFrame:
+    """Parse OANDA `candles` JSON list into a DataFrame (UTC index, OHLCV)."""
+    rows = []
+    for c in candles:
+        if not c.get("complete", True):
+            continue
+        mid = c.get("mid") or {}
         try:
-            df = _get_tv().get_hist(
-                symbol=symbol,
-                exchange=exchange,
-                interval=tv_interval,
-                n_bars=batch,
-            )
-        except Exception as e:
-            log.error(f"TradingView fetch failed for {symbol}: {e}")
-            break
+            o = float(mid["o"])
+            h = float(mid["h"])
+            l = float(mid["l"])
+            cl = float(mid["c"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        vol = int(c.get("volume", 0) or 0)
+        t = pd.Timestamp(c["time"])
+        rows.append((t, o, h, l, cl, vol))
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(rows, columns=["ts", "open", "high", "low", "close", "volume"])
+    df = df.set_index("ts").sort_index()
+    if df.index.tzinfo is None:
+        df.index = df.index.tz_localize("UTC")
+    else:
+        df.index = df.index.tz_convert("UTC")
+    df.index.name = "ts"
+    return df
 
-        if df is None or df.empty:
-            break
 
-        df = df[["open", "high", "low", "close"]].copy()
-        df.index.name = "ts"
+def _fetch_oanda(symbol: str, granularity: str, n_bars: int) -> pd.DataFrame:
+    """
+    Fetch up to `n_bars` of mid OHLC candles from OANDA v3 REST.
 
-        if df.index.tzinfo is None:
-            df.index = df.index.tz_localize("UTC")
-        else:
-            df.index = df.index.tz_convert("UTC")
+    - GET {OANDA_BASE_URL}/v3/instruments/{symbol}/candles
+    - Query: count, price=M, granularity
+    - Authorization: Bearer {OANDA_API_TOKEN}
+    - If n_bars > 5000, paginate backwards using the `to` parameter (exclusive end time).
 
-        all_frames.append(df.dropna())
-        remaining -= len(df)
-
-        # If we got fewer bars than requested, no point asking for more
-        if len(df) < batch:
-            break
-
-        time.sleep(0.5)
-
-    if not all_frames:
+    `symbol` must be an OANDA instrument id (e.g. EUR_USD), not a CandleLab label.
+    Returns a DataFrame with UTC datetime index and columns open, high, low, close, volume.
+    """
+    token = (os.environ.get("OANDA_API_TOKEN") or "").strip()
+    base = (os.environ.get("OANDA_BASE_URL") or "").strip().rstrip("/")
+    if not token or not base:
+        log.error("OANDA_API_TOKEN and OANDA_BASE_URL must be set for OHLC fetch")
         return pd.DataFrame()
 
-    combined = pd.concat(all_frames).sort_index()
-    combined = combined[~combined.index.duplicated(keep='last')]
+    url = f"{base}/v3/instruments/{symbol}/candles"
+    headers = {"Authorization": f"Bearer {token}"}
+
+    chunks: list[pd.DataFrame] = []
+    remaining = int(n_bars)
+    to_exclusive: str | None = None
+
+    while remaining > 0:
+        batch = min(5000, remaining)
+        params: dict[str, str] = {
+            "price": "M",
+            "granularity": granularity,
+            "count": str(batch),
+        }
+        if to_exclusive is not None:
+            params["to"] = to_exclusive
+
+        try:
+            r = requests.get(url, headers=headers, params=params, timeout=60)
+        except Exception as e:
+            log.error("OANDA request failed for %s: %s", symbol, e)
+            break
+
+        if r.status_code != 200:
+            log.error(
+                "OANDA candles HTTP %s for %s: %s",
+                r.status_code,
+                symbol,
+                (r.text or "")[:500],
+            )
+            break
+
+        try:
+            payload = r.json()
+        except Exception as e:
+            log.error("OANDA JSON decode failed for %s: %s", symbol, e)
+            break
+
+        if "errorMessage" in payload:
+            log.error("OANDA API error for %s: %s", symbol, payload.get("errorMessage"))
+            break
+
+        candles = payload.get("candles") or []
+        if not candles:
+            break
+
+        # Next page ends strictly before the oldest candle in this response (chronological order).
+        to_exclusive = candles[0]["time"]
+
+        df_piece = _candles_to_df(candles)
+        if df_piece.empty:
+            break
+
+        chunks.insert(0, df_piece)
+        remaining -= len(df_piece)
+
+        if len(candles) < batch:
+            break
+
+        time.sleep(0.2)
+
+    if not chunks:
+        return pd.DataFrame()
+
+    combined = pd.concat(chunks).sort_index()
+    combined = combined[~combined.index.duplicated(keep="last")]
+    if len(combined) > n_bars:
+        combined = combined.iloc[-n_bars:]
     return combined
 
 
@@ -240,22 +300,25 @@ def backfill_instrument(instrument: str, interval: str = "5m"):
         _backfill_in_progress.add(key)
 
     try:
-        meta      = INSTRUMENTS[instrument]
-        symbol    = meta["symbol"]
-        exchange  = meta["exchange"]
-        since     = latest_ts(instrument, interval)
-        now       = datetime.now(timezone.utc)
-        mins_bar  = _MINS_PER_BAR.get(interval, 5)
+        meta         = INSTRUMENTS[instrument]
+        oanda_symbol = _oanda_instrument_id(instrument)
+        granularity  = INTERVAL_MAP.get(interval, "M5")
+        since        = latest_ts(instrument, interval)
+        now          = datetime.now(timezone.utc)
+        mins_bar     = _MINS_PER_BAR.get(interval, 5)
 
         if since is None:
             log.info(f"Initial backfill: {instrument} @ {interval}...")
             n_bars = _INITIAL_BARS.get(interval, 12000)
-            df = _fetch_tv(symbol, exchange, n_bars=n_bars, interval=interval)
+            df = _fetch_oanda(oanda_symbol, granularity, n_bars=n_bars)
             if not df.empty:
                 insert_bars(instrument, df, interval)
                 log.info(f"{instrument} @ {interval}: inserted {len(df)} bars")
             else:
-                log.error(f"{instrument} @ {interval}: backfill returned empty — symbol={symbol} exchange={exchange}; using cached data")
+                log.error(
+                    f"{instrument} @ {interval}: backfill returned empty — "
+                    f"OANDA instrument={oanda_symbol}; using cached data"
+                )
             return
 
         gap = (now - since).total_seconds() / 60
@@ -264,14 +327,17 @@ def backfill_instrument(instrument: str, interval: str = "5m"):
 
         log.info(f"Backfilling {instrument} @ {interval} ({gap:.0f} min gap)...")
         bars_needed = int(gap / mins_bar) + 50
-        df = _fetch_tv(symbol, exchange, n_bars=bars_needed, interval=interval)
+        df = _fetch_oanda(oanda_symbol, granularity, n_bars=bars_needed)
 
         if not df.empty:
             new_bars = df[df.index > since]
             insert_bars(instrument, new_bars, interval)
             log.info(f"{instrument} @ {interval}: inserted {len(new_bars)} new bars")
         else:
-            log.error(f"{instrument} @ {interval}: incremental fetch returned empty — symbol={symbol} exchange={exchange}")
+            log.error(
+                f"{instrument} @ {interval}: incremental fetch returned empty — "
+                f"OANDA instrument={oanda_symbol}"
+            )
     finally:
         with _backfill_lock:
             _backfill_in_progress.discard(key)
@@ -290,7 +356,6 @@ def _backfill_all_worker():
 def backfill_all():
     """Kick off backfill in background thread so Flask starts immediately."""
     init_db()
-    import threading
     t = threading.Thread(target=_backfill_all_worker, daemon=True)
     t.start()
     log.info("Background backfill started for all instruments.")

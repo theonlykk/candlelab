@@ -5,6 +5,7 @@ Gunicorn: 1 worker, 4 threads. PORT env var, default 7860.
 import os
 import json
 import logging
+import traceback
 import multiprocessing
 import concurrent.futures
 import numpy as np
@@ -798,17 +799,89 @@ def api_finalise():
             "pnl_net":    t["pnl_net"],
         })
 
+    df_main = pd.DataFrame()
+    chart_image = ""
+    equity_image = ""
     try:
         df_main = get_ohlc(instrument, days=30, interval=interval)
-        chart_candles = {
-            "ts":    [int(pd.Timestamp(t).timestamp()) for t in df_main.index],
-            "open":  df_main["open"].tolist(),
-            "high":  df_main["high"].tolist(),
-            "low":   df_main["low"].tolist(),
-            "close": df_main["close"].tolist(),
-        }
+        if not df_main.empty:
+            chart_candles = {
+                "ts":    [int(pd.Timestamp(t).timestamp()) for t in df_main.index],
+                "open":  df_main["open"].tolist(),
+                "high":  df_main["high"].tolist(),
+                "low":   df_main["low"].tolist(),
+                "close": df_main["close"].tolist(),
+            }
+        else:
+            chart_candles = {}
     except Exception:
         chart_candles = {}
+
+    if not df_main.empty:
+        try:
+            from chart_renderer import render_chart, render_equity_chart
+
+            n = len(df_main)
+            idx = df_main.index
+
+            def _chart_ts_bar(ts_raw):
+                t = pd.Timestamp(ts_raw)
+                if t.tzinfo is None:
+                    t = t.tz_localize("UTC")
+                else:
+                    t = t.tz_convert("UTC")
+                li = int(idx.get_indexer([t], method="nearest")[0])
+                return max(0, min(li, n - 1))
+
+            sig = np.zeros(n, dtype=np.int8)
+            for t in chart_trades:
+                sig[_chart_ts_bar(t["ts"])] = int(t["signal"])
+
+            equity_usd = np.zeros(n, dtype=float)
+            cum = 0.0
+            all_trades = main_r.get("trades") or []
+            for trade in sorted(all_trades, key=lambda x: pd.Timestamp(x["ts"])):
+                bi = _chart_ts_bar(trade["ts"])
+                cum += float(trade["pnl_net"])
+                equity_usd[bi:] = cum
+
+            equity_x = np.arange(n, dtype=float)
+            equity_y_pips = np.zeros(n, dtype=float)
+
+            last50 = all_trades[-50:] if all_trades else []
+            if last50:
+                locs = [_chart_ts_bar(t["ts"]) for t in last50]
+                ws, we = min(locs), max(locs) + 1
+            else:
+                ws, we = 0, n
+
+            chart_b64, _ = render_chart(
+                df_main,
+                [],
+                [],
+                window_start=ws,
+                window_end=we,
+                full_len=n,
+                show_volume=False,
+                signals=sig,
+                pip=pip,
+            )
+            chart_image = chart_b64
+            equity_image = render_equity_chart(
+                df_main,
+                equity_x,
+                equity_y_pips,
+                equity_usd,
+                idx,
+                window_start=ws,
+                window_end=we,
+                notional=int(RISK_DOLLARS),
+                instrument=instrument,
+                signals=sig,
+            )
+        except Exception as e:
+            traceback.print_exc()
+            log.warning("chart render failed: %s", e, exc_info=True)
 
     saved = save_strategy({
         "name":             name,
@@ -838,6 +911,8 @@ def api_finalise():
         "cross_timeframe":  cross_tf,
         "chart_candles":    chart_candles,
         "chart_trades":     chart_trades,
+        "chart_image":      chart_image,
+        "equity_image":     equity_image,
     })
 
 

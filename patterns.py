@@ -335,6 +335,9 @@ PATTERNS = {
     "Upside/Downside Tasuki Gap":      upside_downside_tasuki_gap,
 }
 
+# Display labels for server-side chart annotations (`chart_renderer`).
+PATTERN_LABELS = {name: name for name in PATTERNS}
+
 
 def detect_all(df: pd.DataFrame) -> pd.DataFrame:
     """Return DataFrame with one column per pattern: values in {-1, 0, +1}."""
