@@ -881,23 +881,27 @@ def api_finalise():
         except Exception as e:
             log.warning("chart render failed: %s", e, exc_info=True)
 
-    saved = save_strategy({
-        "name":             name,
-        "patterns":         [anchor] + ([complement] if complement else []),
-        "connectors":       [connector, connector],
-        "direction":        body.get("direction", ""),
-        "window_days":      5,
-        "instrument":       instrument,
-        "interval":         interval,
-        "bt_win_pct":       main_r["win_pct"],
-        "bt_cum_net":       main_r["cum_net"],
-        "bt_cum_gross":     None,
-        "bt_signals":       main_r["signals"],
-        "bt_tp_hits":       None,
-        "device_uuid":      device_uuid,
-        "indicator_filter": indicator_filter,
-        "session_filter":   session_filter,
-    })
+    try:
+        saved = save_strategy({
+            "name":             name,
+            "patterns":         [anchor] + ([complement] if complement else []),
+            "connectors":       [connector, connector],
+            "direction":        body.get("direction", ""),
+            "window_days":      5,
+            "instrument":       instrument,
+            "interval":         interval,
+            "bt_win_pct":       main_r["win_pct"],
+            "bt_cum_net":       main_r["cum_net"],
+            "bt_cum_gross":     None,
+            "bt_signals":       main_r["signals"],
+            "bt_tp_hits":       None,
+            "device_uuid":      device_uuid,
+            "indicator_filter": indicator_filter,
+            "session_filter":   session_filter,
+        })
+    except Exception:
+        log.exception("save_strategy failed")
+        return jsonify({"error": "Failed to save strategy"}), 500
 
     return jsonify({
         "id":               saved["id"],
