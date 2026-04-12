@@ -1,20 +1,22 @@
 """
-data.py — OANDA REST OHLC fetcher + SQLite persistence
+data.py — OANDA REST OHLC fetcher + PostgreSQL persistence
 Multi-instrument: FX majors + commodities + indices + crypto
-Uses OANDA v3 candles API (Bearer token). Local cache: fx_ohlc.db
+Uses OANDA v3 candles API (Bearer token). OHLC tables in PostgreSQL (DATABASE_URL).
 """
 
 import os
 import time
-import sqlite3
 import logging
 import threading
 import pandas as pd
+import psycopg2
+import psycopg2.extras
 import requests
+from psycopg2.extensions import connection as PGConnection
 from datetime import datetime, timezone, timedelta
 
 log = logging.getLogger(__name__)
-DB_PATH = os.environ.get("DB_PATH", "fx_ohlc.db")
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
 # Tracks which (instrument, interval) pairs are currently being backfilled
 _backfill_in_progress: set = set()
@@ -64,7 +66,7 @@ def _oanda_instrument_id(instrument: str) -> str:
 
 def _table(instrument: str, interval: str = "5m") -> str:
     """
-    Derive a per-instrument, per-interval SQLite table name.
+    Derive a per-instrument, per-interval PostgreSQL table name.
 
     Note: table names are created dynamically at init time for each configured instrument
     and interval. Instrument strings are normalized to a restricted character set here.
@@ -76,31 +78,29 @@ def _table(instrument: str, interval: str = "5m") -> str:
 
 # ── DB helpers ────────────────────────────────────────────────────────────────
 
-def get_conn() -> sqlite3.Connection:
-    """
-    Return a short-lived SQLite connection configured for concurrent reads/writes.
-
-    WAL journal mode improves read/write concurrency for this workload. Callers generally
-    use context managers (`with get_conn() as conn:`) to ensure timely close/commit.
-    """
-    conn = sqlite3.connect(DB_PATH, timeout=20.0)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
+def get_conn() -> PGConnection:
+    conn = psycopg2.connect(DATABASE_URL)
     return conn
 
 
 def init_db():
     """Create OHLC tables for all instruments/intervals if missing."""
     with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         for inst in INSTRUMENTS:
             for ivl in INTERVAL_MAP:
                 tbl = _table(inst, ivl)
-                conn.execute(f"""
+                cur.execute(
+                    f"""
                     CREATE TABLE IF NOT EXISTS {tbl} (
                         ts TEXT PRIMARY KEY,
-                        open REAL, high REAL, low REAL, close REAL
+                        open DOUBLE PRECISION,
+                        high DOUBLE PRECISION,
+                        low DOUBLE PRECISION,
+                        close DOUBLE PRECISION
                     )
-                """)
+                    """
+                )
         conn.commit()
 
 
@@ -108,7 +108,9 @@ def latest_ts(instrument: str, interval: str = "5m") -> datetime | None:
     """Return the latest stored UTC timestamp for an instrument/interval, if any."""
     tbl = _table(instrument, interval)
     with get_conn() as conn:
-        row = conn.execute(f"SELECT MAX(ts) as m FROM {tbl}").fetchone()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(f"SELECT MAX(ts) AS m FROM {tbl}")
+        row = cur.fetchone()
         if row and row["m"]:
             return datetime.fromisoformat(row["m"]).replace(tzinfo=timezone.utc)
     return None
@@ -116,10 +118,10 @@ def latest_ts(instrument: str, interval: str = "5m") -> datetime | None:
 
 def insert_bars(instrument: str, df: pd.DataFrame, interval: str = "5m"):
     """
-    Insert OHLC rows into SQLite.
+    Insert OHLC rows into PostgreSQL.
 
     - Timestamps are stored as ISO-8601 strings in UTC.
-    - Uses INSERT OR IGNORE so re-fetching overlapping windows is safe.
+    - Uses ON CONFLICT DO NOTHING so re-fetching overlapping windows is safe.
     """
     if df.empty:
         return
@@ -137,16 +139,21 @@ def insert_bars(instrument: str, df: pd.DataFrame, interval: str = "5m"):
         df["close"].tolist(),
     ))
     with get_conn() as conn:
-        conn.executemany(
-            f"INSERT OR IGNORE INTO {tbl} (ts,open,high,low,close) VALUES (?,?,?,?,?)",
-            rows
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.executemany(
+            f"""
+            INSERT INTO {tbl} (ts, open, high, low, close)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (ts) DO NOTHING
+            """,
+            rows,
         )
         conn.commit()
 
 
 def load_bars(instrument: str, days: int = 62, interval: str = "5m") -> pd.DataFrame:
     """
-    Load the most recent `days` of bars from SQLite for an instrument/interval.
+    Load the most recent `days` of bars from PostgreSQL for an instrument/interval.
 
     Returned index is tz-aware UTC.
     """
@@ -154,8 +161,11 @@ def load_bars(instrument: str, days: int = 62, interval: str = "5m") -> pd.DataF
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     with get_conn() as conn:
         df = pd.read_sql(
-            f"SELECT * FROM {tbl} WHERE ts >= ? ORDER BY ts",
-            conn, params=(cutoff,), parse_dates=["ts"], index_col="ts"
+            f"SELECT * FROM {tbl} WHERE ts >= %s ORDER BY ts",
+            conn,
+            params=(cutoff,),
+            parse_dates=["ts"],
+            index_col="ts",
         )
     if df.empty:
         return df
@@ -288,7 +298,7 @@ def _fetch_oanda(symbol: str, granularity: str, n_bars: int) -> pd.DataFrame:
 
 def backfill_instrument(instrument: str, interval: str = "5m"):
     """
-    Ensure SQLite has up-to-date bars for a single instrument/interval.
+    Ensure PostgreSQL has up-to-date bars for a single instrument/interval.
 
     This function is intentionally idempotent and guarded by `_backfill_in_progress`
     to avoid concurrent duplicate fetches for the same pair.

@@ -13,7 +13,6 @@ COPY --chown=user:user . .
 
 RUN mkdir -p /home/user/data && chown -R user:user /home/user/data
 
-ENV DB_PATH=/home/user/data/fx_ohlc.db
 ENV PORT=7860
 
 EXPOSE 7860

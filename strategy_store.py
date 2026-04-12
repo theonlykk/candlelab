@@ -1,10 +1,13 @@
 """
-strategy_store.py — SQLite persistence for user strategies
+strategy_store.py — PostgreSQL persistence for user strategies
 """
 import json
 import uuid
 import random
 from datetime import datetime, timezone
+
+import psycopg2.extras
+
 from data import get_conn
 
 VERBS   = ["Swift","Bold","Keen","Sharp","Quick","Fierce","Bright","Dark",
@@ -25,54 +28,67 @@ def _auto_name() -> str:
 
 def init_strategy_tables():
     """
-    Create (and lightly migrate) the SQLite tables used to persist strategies and trades.
+    Create (and lightly migrate) the PostgreSQL tables used to persist strategies and trades.
 
     This function is safe to call repeatedly; it:
     - creates base tables if missing
     - checks for missing columns and adds them via ALTER TABLE
     """
     with get_conn() as conn:
-        conn.execute("""
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS user_strategies (
                 id           TEXT PRIMARY KEY,
                 name         TEXT,
                 patterns     TEXT,
                 direction    TEXT,
-                window       INT,
+                window       INTEGER,
                 instrument   TEXT,
                 interval     TEXT,
                 created_ts   TEXT,
                 live_from_ts TEXT,
-                active       INT DEFAULT 1,
-                bt_win_pct   REAL,
-                bt_cum_net   REAL,
-                bt_cum_gross REAL,
-                bt_signals   INT,
-                bt_tp_hits   INT
+                active       INTEGER DEFAULT 1,
+                bt_win_pct   DOUBLE PRECISION,
+                bt_cum_net   DOUBLE PRECISION,
+                bt_cum_gross DOUBLE PRECISION,
+                bt_signals   INTEGER,
+                bt_tp_hits   INTEGER
             )
         """)
-        # Migration: add bt_ columns to existing tables if missing
-        existing = {r[1] for r in conn.execute(
-            "PRAGMA table_info(user_strategies)"
-        ).fetchall()}
-        for col, typedef in [("bt_win_pct","REAL"), ("bt_cum_net","REAL"),
-                              ("bt_cum_gross","REAL"), ("bt_signals","INT"),
-                              ("bt_tp_hits","INT"), ("connectors","TEXT"),
-                              ("device_uuid","TEXT"), ("indicator_filter","TEXT"),
-                              ("session_filter","TEXT")]:
+        cur.execute(
+            """
+            SELECT column_name FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = %s
+            """,
+            ("user_strategies",),
+        )
+        existing = {r["column_name"] for r in cur.fetchall()}
+        for col, typedef in [
+            ("bt_win_pct", "DOUBLE PRECISION"),
+            ("bt_cum_net", "DOUBLE PRECISION"),
+            ("bt_cum_gross", "DOUBLE PRECISION"),
+            ("bt_signals", "INTEGER"),
+            ("bt_tp_hits", "INTEGER"),
+            ("connectors", "TEXT"),
+            ("device_uuid", "TEXT"),
+            ("indicator_filter", "TEXT"),
+            ("session_filter", "TEXT"),
+        ]:
             if col not in existing:
-                conn.execute(f"ALTER TABLE user_strategies ADD COLUMN {col} {typedef}")
-        conn.execute("""
+                cur.execute(
+                    f"ALTER TABLE user_strategies ADD COLUMN {col} {typedef}"
+                )
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS strategy_trades (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                id           SERIAL PRIMARY KEY,
                 strategy_id  TEXT,
                 ts           TEXT,
-                entry        REAL,
-                tp           REAL,
-                sl           REAL,
+                entry        DOUBLE PRECISION,
+                tp           DOUBLE PRECISION,
+                sl           DOUBLE PRECISION,
                 outcome      TEXT,
-                pnl_gross    REAL,
-                pnl_net      REAL,
+                pnl_gross    DOUBLE PRECISION,
+                pnl_net      DOUBLE PRECISION,
                 UNIQUE(strategy_id, ts)
             )
         """)
@@ -91,31 +107,37 @@ def save_strategy(config: dict) -> dict:
     name = config.get("name") or _auto_name()
     now  = datetime.now(timezone.utc).isoformat()
     with get_conn() as conn:
-        conn.execute("""
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(
+            """
             INSERT INTO user_strategies
               (id, name, patterns, connectors, direction, window, instrument, interval,
                created_ts, live_from_ts, active,
                bt_win_pct, bt_cum_net, bt_cum_gross, bt_signals, bt_tp_hits,
                device_uuid, indicator_filter, session_filter)
-            VALUES (?,?,?,?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?)
-        """, (
-            sid, name,
-            json.dumps(config.get("patterns", [])),
-            json.dumps(config.get("connectors", ["ordered", "ordered"])),
-            str(config.get("direction", "")),
-            int(config.get("window", 5)),
-            config.get("instrument", "EUR/USD"),
-            config.get("interval", "5m"),
-            now, now,
-            config.get("bt_win_pct"),
-            config.get("bt_cum_net"),
-            config.get("bt_cum_gross"),
-            config.get("bt_signals"),
-            config.get("bt_tp_hits"),
-            config.get("device_uuid"),
-            json.dumps(config["indicator_filter"]) if config.get("indicator_filter") else None,
-            config.get("session_filter"),
-        ))
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,1,%s,%s,%s,%s,%s,%s,%s,%s)
+            """,
+            (
+                sid,
+                name,
+                json.dumps(config.get("patterns", [])),
+                json.dumps(config.get("connectors", ["ordered", "ordered"])),
+                str(config.get("direction", "")),
+                int(config.get("window", 5)),
+                config.get("instrument", "EUR/USD"),
+                config.get("interval", "5m"),
+                now,
+                now,
+                config.get("bt_win_pct"),
+                config.get("bt_cum_net"),
+                config.get("bt_cum_gross"),
+                config.get("bt_signals"),
+                config.get("bt_tp_hits"),
+                config.get("device_uuid"),
+                json.dumps(config["indicator_filter"]) if config.get("indicator_filter") else None,
+                config.get("session_filter"),
+            ),
+        )
         conn.commit()
     return {"id": sid, "name": name}
 
@@ -124,9 +146,11 @@ def load_strategies() -> list:
     """Load all active strategies (legacy/global view)."""
     init_strategy_tables()
     with get_conn() as conn:
-        rows = conn.execute(
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(
             "SELECT * FROM user_strategies WHERE active=1 ORDER BY created_ts DESC"
-        ).fetchall()
+        )
+        rows = cur.fetchall()
     result = []
     for r in rows:
         d = dict(r)
@@ -143,7 +167,8 @@ def delete_strategy(sid: str):
     """Soft-delete a strategy (keeps history, hides from active lists)."""
     init_strategy_tables()
     with get_conn() as conn:
-        conn.execute("UPDATE user_strategies SET active=0 WHERE id=?", (sid,))
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("UPDATE user_strategies SET active=0 WHERE id=%s", (sid,))
         conn.commit()
 
 
@@ -151,21 +176,31 @@ def log_strategy_trade(strategy_id: str, trade: dict):
     """
     Record a live trade outcome for a strategy.
 
-    Uses INSERT OR IGNORE on (strategy_id, ts) to prevent accidental duplicates if a
+    Uses ON CONFLICT DO NOTHING on (strategy_id, ts) to prevent accidental duplicates if a
     polling loop replays the same trade.
     """
     init_strategy_tables()
     ts = trade["ts"].isoformat() if hasattr(trade["ts"], "isoformat") else str(trade["ts"])
     with get_conn() as conn:
-        conn.execute("""
-            INSERT OR IGNORE INTO strategy_trades
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(
+            """
+            INSERT INTO strategy_trades
               (strategy_id, ts, entry, tp, sl, outcome, pnl_gross, pnl_net)
-            VALUES (?,?,?,?,?,?,?,?)
-        """, (
-            strategy_id, ts,
-            float(trade["entry"]), float(trade["tp"]), float(trade["sl"]),
-            trade["outcome"], float(trade["pnl_gross"]), float(trade["pnl_net"]),
-        ))
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+            ON CONFLICT (strategy_id, ts) DO NOTHING
+            """,
+            (
+                strategy_id,
+                ts,
+                float(trade["entry"]),
+                float(trade["tp"]),
+                float(trade["sl"]),
+                trade["outcome"],
+                float(trade["pnl_gross"]),
+                float(trade["pnl_net"]),
+            ),
+        )
         conn.commit()
 
 
@@ -173,10 +208,12 @@ def get_strategies_by_device(device_uuid: str) -> list:
     """Load active strategies scoped to a single device UUID (the primary UI view)."""
     init_strategy_tables()
     with get_conn() as conn:
-        rows = conn.execute(
-            "SELECT * FROM user_strategies WHERE active=1 AND device_uuid=? ORDER BY created_ts DESC",
-            (device_uuid,)
-        ).fetchall()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(
+            "SELECT * FROM user_strategies WHERE active=1 AND device_uuid=%s ORDER BY created_ts DESC",
+            (device_uuid,),
+        )
+        rows = cur.fetchall()
     result = []
     for r in rows:
         d = dict(r)
@@ -193,8 +230,10 @@ def load_strategy_trades(strategy_id: str) -> list:
     """Load recorded trades for a strategy, newest first."""
     init_strategy_tables()
     with get_conn() as conn:
-        rows = conn.execute(
-            "SELECT * FROM strategy_trades WHERE strategy_id=? ORDER BY ts DESC",
-            (strategy_id,)
-        ).fetchall()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(
+            "SELECT * FROM strategy_trades WHERE strategy_id=%s ORDER BY ts DESC",
+            (strategy_id,),
+        )
+        rows = cur.fetchall()
     return [dict(r) for r in rows]
