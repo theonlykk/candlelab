@@ -2020,17 +2020,39 @@ function renderTradeLog(trades, slMult, tpMult) {
     </tr>`;
   }).join("");
 
+  const csvEsc = (v) => {
+    const s = v === null || v === undefined ? "" : String(v);
+    if (/[",\r\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+    return s;
+  };
   const csvRows = [
-    "date,direction,entry,exit,type,result,pnl",
+    "Date,Dir,Entry,SL dist,Exit,Slip,Type,Result,PnL",
     ...trades.map(t => {
       const d = new Date(t.ts);
-      const date = d.toISOString().slice(0, 16).replace("T", " ");
-      const dir  = t.signal === 1 ? "Long" : "Short";
-      const pnl  = t.pnl_net !== undefined
-        ? Math.round(t.pnl_net)
-        : (t.win ? pnlWin : -100);
-      return [date, dir, t.entry, t.exit_price ?? "", t.exit_type ?? "", t.win ? "Win" : "Loss", pnl].join(",");
-    })
+      const day = String(d.getUTCDate()).padStart(2, "0");
+      const mon = MONTHS[d.getUTCMonth()];
+      const hh  = String(d.getUTCHours()).padStart(2, "0");
+      const mm  = String(d.getUTCMinutes()).padStart(2, "0");
+      const dateStr = `${day} ${mon} ${hh}:${mm}`;
+      const dir = t.signal === 1 ? "Long" : "Short";
+      const slDistStr = t.sl && t.entry
+        ? Math.max(Math.abs(t.entry - t.sl) / pip, MIN_SL_PIPS_JS).toFixed(1) + "p"
+        : "—";
+      const exitStr = t.exit_price != null && t.exit_price !== "" ? String(t.exit_price) : "";
+      const dirVal = t.signal;
+      const slipPipsCsv = (t.outcome === "loss" || t.exit_type === "SL") && t.exit_price != null && t.sl != null && pip
+        ? parseFloat((dirVal * (t.exit_price - t.sl) / pip).toFixed(1))
+        : null;
+      const slipStr = slipPipsCsv !== null
+        ? (slipPipsCsv > 0 ? "+" : "") + slipPipsCsv + "p"
+        : "—";
+      const typeStr = t.exit_type ?? "";
+      const resStr = t.win ? "Win" : "Loss";
+      const pnlStr = t.pnl_net !== undefined
+        ? (t.pnl_net >= 0 ? `+$${Math.round(t.pnl_net)}` : `-$${Math.abs(Math.round(t.pnl_net))}`)
+        : (t.win ? `+$${pnlWin}` : `-$100`);
+      return [dateStr, dir, t.entry, slDistStr, exitStr, slipStr, typeStr, resStr, pnlStr].map(csvEsc).join(",");
+    }),
   ].join("\n");
 
   wrap.innerHTML = `
