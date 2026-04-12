@@ -2,13 +2,15 @@
 strategy_store.py — PostgreSQL persistence for user strategies
 """
 import json
-import uuid
+import logging
 import random
 from datetime import datetime, timezone
 
 import psycopg2.extras
 
 from data import get_conn
+
+log = logging.getLogger(__name__)
 
 VERBS   = ["Swift","Bold","Keen","Sharp","Quick","Fierce","Bright","Dark",
            "Silent","Wild","Brave","Calm","Iron","Gold","Silver","Stone",
@@ -38,7 +40,7 @@ def init_strategy_tables():
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS user_strategies (
-                id           TEXT PRIMARY KEY,
+                id           SERIAL PRIMARY KEY,
                 name         TEXT,
                 patterns     TEXT,
                 direction    TEXT,
@@ -63,6 +65,34 @@ def init_strategy_tables():
             ("user_strategies",),
         )
         existing = {r["column_name"] for r in cur.fetchall()}
+        cur.execute(
+            """
+            SELECT data_type FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = %s AND column_name = 'id'
+            """,
+            ("user_strategies",),
+        )
+        id_type = cur.fetchone()
+        if id_type and id_type.get("data_type") == "text":
+            try:
+                cur.execute("ALTER TABLE user_strategies DROP COLUMN id")
+                cur.execute(
+                    "ALTER TABLE user_strategies ADD COLUMN id SERIAL PRIMARY KEY"
+                )
+                conn.commit()
+                cur.execute(
+                    """
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = %s
+                    """,
+                    ("user_strategies",),
+                )
+                existing = {r["column_name"] for r in cur.fetchall()}
+            except Exception:
+                log.exception(
+                    "user_strategies.id migration from TEXT to SERIAL failed"
+                )
+                conn.rollback()
         if "window" in existing and "window_days" not in existing:
             cur.execute(
                 "ALTER TABLE user_strategies RENAME COLUMN window TO window_days"
@@ -125,7 +155,6 @@ def save_strategy(config: dict) -> dict:
     JSON text (patterns/connectors/indicator_filter) to keep schema stable as the UI evolves.
     """
     init_strategy_tables()
-    sid  = str(uuid.uuid4())
     name = config.get("name") or _auto_name()
     now  = datetime.now(timezone.utc).isoformat()
     with get_conn() as conn:
@@ -133,14 +162,14 @@ def save_strategy(config: dict) -> dict:
         cur.execute(
             """
             INSERT INTO user_strategies
-              (id, name, patterns, connectors, direction, window_days, instrument, interval,
+              (name, patterns, connectors, direction, window_days, instrument, interval,
                created_ts, live_from_ts, active,
                bt_win_pct, bt_cum_net, bt_cum_gross, bt_signals, bt_tp_hits,
                device_uuid, indicator_filter, session_filter)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,1,%s,%s,%s,%s,%s,%s,%s,%s)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            RETURNING id
             """,
             (
-                sid,
                 name,
                 json.dumps(config.get("patterns", [])),
                 json.dumps(config.get("connectors", ["ordered", "ordered"])),
@@ -150,6 +179,7 @@ def save_strategy(config: dict) -> dict:
                 config.get("interval", "5m"),
                 now,
                 now,
+                1,
                 config.get("bt_win_pct"),
                 config.get("bt_cum_net"),
                 config.get("bt_cum_gross"),
@@ -160,8 +190,10 @@ def save_strategy(config: dict) -> dict:
                 config.get("session_filter"),
             ),
         )
+        row = cur.fetchone()
+        saved_id = str(row["id"])
         conn.commit()
-    return {"id": sid, "name": name}
+    return {"id": saved_id, "name": name}
 
 
 def load_strategies() -> list:

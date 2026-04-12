@@ -950,7 +950,7 @@ def api_delete_strategy(sid):
     device_uuid = request.args.get("device_uuid") or request.headers.get("X-Device-UUID")
     # Only allow deletion of strategies belonging to this device
     strategies = get_strategies_by_device(device_uuid) if device_uuid else []
-    if not any(s["id"] == sid for s in strategies):
+    if not any(str(s["id"]) == str(sid) for s in strategies):
         return jsonify({"error": "not found"}), 404
     delete_strategy(sid)
     return jsonify({"ok": True})
