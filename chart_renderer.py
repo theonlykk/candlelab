@@ -558,6 +558,7 @@ def render_equity_chart(
     pos_ylim = None
 
     fig, ax_eq = plt.subplots(1, 1, figsize=(FIG_W, FIG_H_EQUITY), facecolor=C_BG)
+    fig.patch.set_facecolor("#ffffff")
     ax_px = ax_eq.twinx()
     ax_pos = ax_eq.twinx() if signals is not None else None
     if ax_pos is not None:
@@ -573,7 +574,7 @@ def render_equity_chart(
     vc = np.isfinite(closes)
     if vc.any():
         ax_px.plot(
-            x_full[vc], closes[vc], color="#B0BEC5",
+            x_full[vc], closes[vc], color="#cccccc",
             linewidth=0.8, alpha=0.5, zorder=0,
         )
     ax_px.set_ylabel("")
@@ -581,7 +582,10 @@ def render_equity_chart(
     for s in ax_px.spines.values():
         s.set_visible(False)
 
-    ax_eq.set_facecolor(C_BG)
+    ax_eq.set_facecolor("#ffffff")
+    ax_px.set_facecolor("#ffffff")
+    if ax_pos is not None:
+        ax_pos.set_facecolor("#ffffff")
     for s in ax_eq.spines.values():
         s.set_visible(False)
     ax_eq.grid(axis="y", color=C_GRID, linewidth=0.5, zorder=0)
@@ -654,7 +658,6 @@ def render_equity_chart(
     )
     ax_eq.set_xlim(-0.8, max(n - 1, 0) + 0.2)
     _apply_equity_sparse_date_axis_index(ax_eq, idx, n)
-    ax_eq.patch.set_visible(False)
 
     if np.all(np.isfinite(ed)) and np.allclose(ed, 0.0, rtol=0.0, atol=1e-6):
         ax_eq.text(
@@ -675,7 +678,7 @@ def render_equity_chart(
     fig.subplots_adjust(bottom=0.2)
     if pos_ylim is not None and ax_pos is not None:
         ax_pos.set_ylim(pos_ylim)
-    fig.savefig(buf, format="png", dpi=EXPORT_DPI, facecolor=C_BG)
+    fig.savefig(buf, format="png", dpi=EXPORT_DPI, facecolor=fig.get_facecolor())
     buf.seek(0)
     image_b64 = base64.b64encode(buf.read()).decode("utf-8")
     plt.close(fig)
