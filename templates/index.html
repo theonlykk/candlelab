@@ -1145,11 +1145,11 @@
         <span style="font-size:13px; color:var(--muted);">How long before forcing an exit?</span>
       </div>
       <div id="timeout-options" style="display:flex; gap:8px; flex-wrap:wrap;">
-        <button class="timeout-btn" data-val="5" onclick="onTimeoutChange(5)">25 min</button>
-        <button class="timeout-btn" data-val="10" onclick="onTimeoutChange(10)">50 min</button>
-        <button class="timeout-btn" data-val="20" onclick="onTimeoutChange(20)">100 min</button>
-        <button class="timeout-btn" data-val="50" onclick="onTimeoutChange(50)">4 hrs</button>
-        <button class="timeout-btn" data-val="100" onclick="onTimeoutChange(100)">8 hrs</button>
+        <button class="timeout-btn" data-val="5" onclick="onTimeoutChange(5)">5c</button>
+        <button class="timeout-btn" data-val="10" onclick="onTimeoutChange(10)">10c</button>
+        <button class="timeout-btn" data-val="20" onclick="onTimeoutChange(20)">20c</button>
+        <button class="timeout-btn" data-val="50" onclick="onTimeoutChange(50)">50c</button>
+        <button class="timeout-btn" data-val="100" onclick="onTimeoutChange(100)">100c</button>
         <button class="timeout-btn active" data-val="1000" onclick="onTimeoutChange(1000)">No limit</button>
       </div>
     </div>
@@ -1386,6 +1386,7 @@ function goBack() {
 function selectInterval(btn) {
   // Step 2 selection → advances immediately to Step 3.
   state.interval = btn.dataset.interval;
+  updateTimeoutLabels();
   goStep(3);
 }
 
@@ -1708,6 +1709,25 @@ function onSliderChange() {
   previewTimer = setTimeout(fetchPreview, 500);
 }
 
+function timeoutLabel(candles) {
+  if (candles >= 1000) return "No limit";
+  const minsPerCandle = state.interval === "1h" ? 60 : state.interval === "15m" ? 15 : 5;
+  const totalMins = candles * minsPerCandle;
+  const timeStr = totalMins < 60
+    ? `${totalMins} min`
+    : totalMins % 60 === 0
+      ? `${totalMins / 60} hr${totalMins / 60 > 1 ? "s" : ""}`
+      : `${(totalMins / 60).toFixed(1)} hrs`;
+  return `${candles} candles (${timeStr})`;
+}
+
+function updateTimeoutLabels() {
+  document.querySelectorAll('.timeout-btn').forEach(b => {
+    const val = parseInt(b.dataset.val, 10);
+    b.textContent = timeoutLabel(val);
+  });
+}
+
 function onTimeoutChange(val) {
   state.timeout = val;
   document.querySelectorAll('.timeout-btn').forEach(b => {
@@ -1715,6 +1735,7 @@ function onTimeoutChange(val) {
   });
   clearTimeout(previewTimer);
   previewTimer = setTimeout(fetchPreview, 300);
+  updateTimeoutLabels();
 }
 
 function fetchPreview() {
@@ -2318,6 +2339,7 @@ function quickTryTimeframe(ivl) {
     indicator: null, session: "All", slMult: 1.0, tpMult: 3.0,
     patternsData: [], complementData: [], finalResult: null, atr: null,
   });
+  updateTimeoutLabels();
   _clearSavedState();
   goStep(3);
 }
@@ -2469,6 +2491,7 @@ function restartWizard() {
     indicator: null, session: "All", slMult: 1.0, tpMult: 3.0,
     patternsData: [], complementData: [], finalResult: null, atr: null,
   });
+  updateTimeoutLabels();
   _clearSavedState();
   goStep(3);
 }
@@ -2503,6 +2526,7 @@ function goStep(n) {
   updateStepActions(n);
 
   if (n === 8) {
+    updateTimeoutLabels();
     document.getElementById("sl-slider").value = Math.round(state.slMult * 10);
     document.getElementById("tp-slider").value = Math.round(state.tpMult * 10);
     document.getElementById("sl-val").textContent = state.slMult.toFixed(1) + "×";
