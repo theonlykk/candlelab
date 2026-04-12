@@ -886,7 +886,7 @@ def api_finalise():
         "patterns":         [anchor] + ([complement] if complement else []),
         "connectors":       [connector, connector],
         "direction":        body.get("direction", ""),
-        "window":           5,
+        "window_days":      5,
         "instrument":       instrument,
         "interval":         interval,
         "bt_win_pct":       main_r["win_pct"],

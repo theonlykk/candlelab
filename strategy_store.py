@@ -42,7 +42,7 @@ def init_strategy_tables():
                 name         TEXT,
                 patterns     TEXT,
                 direction    TEXT,
-                window       INTEGER,
+                window_days  INTEGER,
                 instrument   TEXT,
                 interval     TEXT,
                 created_ts   TEXT,
@@ -63,6 +63,19 @@ def init_strategy_tables():
             ("user_strategies",),
         )
         existing = {r["column_name"] for r in cur.fetchall()}
+        if "window" in existing and "window_days" not in existing:
+            cur.execute(
+                "ALTER TABLE user_strategies RENAME COLUMN window TO window_days"
+            )
+            conn.commit()
+            cur.execute(
+                """
+                SELECT column_name FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = %s
+                """,
+                ("user_strategies",),
+            )
+            existing = {r["column_name"] for r in cur.fetchall()}
         for col, typedef in [
             ("bt_win_pct", "DOUBLE PRECISION"),
             ("bt_cum_net", "DOUBLE PRECISION"),
@@ -111,7 +124,7 @@ def save_strategy(config: dict) -> dict:
         cur.execute(
             """
             INSERT INTO user_strategies
-              (id, name, patterns, connectors, direction, window, instrument, interval,
+              (id, name, patterns, connectors, direction, window_days, instrument, interval,
                created_ts, live_from_ts, active,
                bt_win_pct, bt_cum_net, bt_cum_gross, bt_signals, bt_tp_hits,
                device_uuid, indicator_filter, session_filter)
@@ -123,7 +136,7 @@ def save_strategy(config: dict) -> dict:
                 json.dumps(config.get("patterns", [])),
                 json.dumps(config.get("connectors", ["ordered", "ordered"])),
                 str(config.get("direction", "")),
-                int(config.get("window", 5)),
+                int(config.get("window_days", config.get("window", 5))),
                 config.get("instrument", "EUR/USD"),
                 config.get("interval", "5m"),
                 now,
