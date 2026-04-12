@@ -39,7 +39,7 @@ def init_strategy_tables():
     with get_conn() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS user_strategies (
+            CREATE TABLE IF NOT EXISTS candlelab_strategies (
                 id           SERIAL PRIMARY KEY,
                 name         TEXT,
                 patterns     TEXT,
@@ -62,7 +62,7 @@ def init_strategy_tables():
             SELECT column_name FROM information_schema.columns
             WHERE table_schema = 'public' AND table_name = %s
             """,
-            ("user_strategies",),
+            ("candlelab_strategies",),
         )
         existing = {r["column_name"] for r in cur.fetchall()}
         cur.execute(
@@ -70,14 +70,14 @@ def init_strategy_tables():
             SELECT data_type FROM information_schema.columns
             WHERE table_schema = 'public' AND table_name = %s AND column_name = 'id'
             """,
-            ("user_strategies",),
+            ("candlelab_strategies",),
         )
         id_type = cur.fetchone()
         if id_type and id_type.get("data_type") == "text":
             try:
-                cur.execute("ALTER TABLE user_strategies DROP COLUMN id")
+                cur.execute("ALTER TABLE candlelab_strategies DROP COLUMN id")
                 cur.execute(
-                    "ALTER TABLE user_strategies ADD COLUMN id SERIAL PRIMARY KEY"
+                    "ALTER TABLE candlelab_strategies ADD COLUMN id SERIAL PRIMARY KEY"
                 )
                 conn.commit()
                 cur.execute(
@@ -85,17 +85,17 @@ def init_strategy_tables():
                     SELECT column_name FROM information_schema.columns
                     WHERE table_schema = 'public' AND table_name = %s
                     """,
-                    ("user_strategies",),
+                    ("candlelab_strategies",),
                 )
                 existing = {r["column_name"] for r in cur.fetchall()}
             except Exception:
                 log.exception(
-                    "user_strategies.id migration from TEXT to SERIAL failed"
+                    "candlelab_strategies.id migration from TEXT to SERIAL failed"
                 )
                 conn.rollback()
         if "window" in existing and "window_days" not in existing:
             cur.execute(
-                "ALTER TABLE user_strategies RENAME COLUMN window TO window_days"
+                "ALTER TABLE candlelab_strategies RENAME COLUMN window TO window_days"
             )
             conn.commit()
             cur.execute(
@@ -103,7 +103,7 @@ def init_strategy_tables():
                 SELECT column_name FROM information_schema.columns
                 WHERE table_schema = 'public' AND table_name = %s
                 """,
-                ("user_strategies",),
+                ("candlelab_strategies",),
             )
             existing = {r["column_name"] for r in cur.fetchall()}
         for col, typedef in [
@@ -128,10 +128,10 @@ def init_strategy_tables():
         ]:
             if col not in existing:
                 cur.execute(
-                    f"ALTER TABLE user_strategies ADD COLUMN {col} {typedef}"
+                    f"ALTER TABLE candlelab_strategies ADD COLUMN {col} {typedef}"
                 )
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS strategy_trades (
+            CREATE TABLE IF NOT EXISTS candlelab_trades (
                 id           SERIAL PRIMARY KEY,
                 strategy_id  TEXT,
                 ts           TEXT,
@@ -161,7 +161,7 @@ def save_strategy(config: dict) -> dict:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute(
             """
-            INSERT INTO user_strategies
+            INSERT INTO candlelab_strategies
               (name, patterns, connectors, direction, window_days, instrument, interval,
                created_ts, live_from_ts, active,
                bt_win_pct, bt_cum_net, bt_cum_gross, bt_signals, bt_tp_hits,
@@ -202,7 +202,7 @@ def load_strategies() -> list:
     with get_conn() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute(
-            "SELECT * FROM user_strategies WHERE active=1 ORDER BY created_ts DESC"
+            "SELECT * FROM candlelab_strategies WHERE active=1 ORDER BY created_ts DESC"
         )
         rows = cur.fetchall()
     result = []
@@ -222,7 +222,7 @@ def delete_strategy(sid: str):
     init_strategy_tables()
     with get_conn() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        cur.execute("UPDATE user_strategies SET active=0 WHERE id=%s", (sid,))
+        cur.execute("UPDATE candlelab_strategies SET active=0 WHERE id=%s", (sid,))
         conn.commit()
 
 
@@ -239,7 +239,7 @@ def log_strategy_trade(strategy_id: str, trade: dict):
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute(
             """
-            INSERT INTO strategy_trades
+            INSERT INTO candlelab_trades
               (strategy_id, ts, entry, tp, sl, outcome, pnl_gross, pnl_net)
             VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
             ON CONFLICT (strategy_id, ts) DO NOTHING
@@ -264,7 +264,7 @@ def get_strategies_by_device(device_uuid: str) -> list:
     with get_conn() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute(
-            "SELECT * FROM user_strategies WHERE active=1 AND device_uuid=%s ORDER BY created_ts DESC",
+            "SELECT * FROM candlelab_strategies WHERE active=1 AND device_uuid=%s ORDER BY created_ts DESC",
             (device_uuid,),
         )
         rows = cur.fetchall()
@@ -286,7 +286,7 @@ def load_strategy_trades(strategy_id: str) -> list:
     with get_conn() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute(
-            "SELECT * FROM strategy_trades WHERE strategy_id=%s ORDER BY ts DESC",
+            "SELECT * FROM candlelab_trades WHERE strategy_id=%s ORDER BY ts DESC",
             (strategy_id,),
         )
         rows = cur.fetchall()
