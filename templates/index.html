@@ -2690,7 +2690,7 @@ function loadStrategiesPanel() {
       // Show username at top
       const hdr = document.createElement("div");
       hdr.style.cssText = "padding:8px 12px 4px; font-size:12px; color:var(--muted);";
-      hdr.textContent = `Logged in as ${creds.username}`;
+      hdr.innerHTML = `Logged in as <strong>${creds.username}</strong> <span style="color:var(--accent); cursor:pointer; font-size:11px;" onclick="editUsername()">edit</span>`;
       body.appendChild(hdr);
 
       strategies.forEach(s => {
@@ -2755,7 +2755,10 @@ function buildStratCard(s) {
     <div class="strat-card-top">
       <div style="display:flex;align-items:flex-start;gap:8px;">
         <div class="strat-dot strat-dot-amber" style="margin-top:5px;"></div>
-        <div class="strat-card-name">${s.strategy_name || "Unnamed"}</div>
+        <div class="strat-card-name" contenteditable="true"
+             onblur="saveStratName(${s.id}, this)"
+             style="outline:none; border-bottom:1px dashed var(--border); min-width:80px;"
+             title="Click to edit name">${s.strategy_name || "Unnamed"}</div>
       </div>
     </div>
     <div class="strat-card-meta">${s.instrument || ""} · ${s.interval || ""} · ${s.anchor || ""} · Saved ${created}</div>
@@ -2764,6 +2767,37 @@ function buildStratCard(s) {
       <span class="strat-sigs" style="color:var(--muted);">—</span>
     </div>`;
   return card;
+}
+
+function saveStratName(id, el) {
+  const newName = el.textContent.trim();
+  if (!newName) { el.textContent = "Unnamed"; return; }
+  fetch(`${TRADELOG_URL}/api/rename-strategy`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id, strategy_name: newName, ...loadUserCreds() }),
+  }).catch(() => {});
+}
+
+function editUsername() {
+  const creds = loadUserCreds();
+  const newName = prompt("Enter new username:", creds.username);
+  if (!newName || !newName.trim() || newName.trim() === creds.username) return;
+  fetch(`${TRADELOG_URL}/api/rename-user`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: creds.username, pin: creds.pin, new_username: newName.trim() }),
+  })
+    .then(r => r.json())
+    .then(res => {
+      if (res.username) {
+        saveUserCreds(res.username, creds.pin);
+        loadStrategiesPanel();
+      } else {
+        alert(res.error || "Rename failed");
+      }
+    })
+    .catch(() => alert("Rename failed"));
 }
 
 function deleteStrategy(id, btn) {
