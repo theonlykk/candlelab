@@ -5,7 +5,6 @@ Gunicorn: 1 worker, 4 threads. PORT env var, default 7860.
 import os
 import json
 import logging
-import traceback
 import multiprocessing
 import concurrent.futures
 import numpy as np
@@ -880,7 +879,6 @@ def api_finalise():
                 signals=sig,
             )
         except Exception as e:
-            traceback.print_exc()
             log.warning("chart render failed: %s", e, exc_info=True)
 
     saved = save_strategy({
@@ -1006,10 +1004,14 @@ def api_analyse():
     indicator    = body.get("indicator_filter")
     sl_mult      = body.get("sl_multiplier", 1.0)
     tp_mult      = body.get("tp_multiplier", 3.0)
-    win_pct      = body.get("win_pct", 0.0)
-    signals      = body.get("signals", 0)
-    cross_tf     = body.get("cross_timeframe", [])
-    final_equity = body.get("final_equity", 1000)
+    win_pct       = body.get("win_pct", 0.0)
+    signals       = body.get("signals", 0)
+    cross_tf      = body.get("cross_timeframe", [])
+    final_equity  = body.get("final_equity", 1000)
+    biggest_win   = body.get("biggest_win", 0.0)
+    biggest_loss  = body.get("biggest_loss", 0.0)
+    trades_won    = body.get("trades_won", 0)
+    trades_lost   = body.get("trades_lost", 0)
 
     cross_lines = ""
     if cross_tf:
@@ -1037,8 +1039,9 @@ def api_analyse():
         f"  Anchor pattern: {anchor}"
         f"{filter_line}\n"
         f"  SL: {sl_mult}×, TP: {tp_mult}×\n"
-        f"  Backtest: {win_pct}% win rate, {signals} signals over 30 days\n"
-        f"  Equity curve result: ${final_equity} (started at $1000)"
+        f"  Backtest: {signals} signals, {trades_won}W / {trades_lost}L, {win_pct}% win rate\n"
+        f"  Biggest win: +${biggest_win}, Biggest loss: -${biggest_loss}\n"
+        f"  Equity: started $1,000 → ended ${final_equity}\n"
         f"{cross_lines}"
     )
 

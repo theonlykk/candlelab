@@ -2216,22 +2216,52 @@ function renderTradeLog(trades, slMult, tpMult) {
 }
 
 // ── Stats table ───────────────────────────────────────────────────────────────
+/** Same PnL / win-loss / equity logic as the strategy statistics cards (used by AI payload). */
+function computeStrategySummaryStats(trades, slMult, tpMult) {
+  const RISK = 100;
+  const reward = RISK * tpMult / slMult;
+  if (!trades || !trades.length) {
+    return {
+      trades_won: 0,
+      trades_lost: 0,
+      biggest_win: 0,
+      biggest_loss: 0,
+      final_equity: 1000,
+      returns: [],
+    };
+  }
+  const returns = trades.map(t => t.pnl_net !== undefined ? t.pnl_net : (t.win ? reward : -RISK));
+  const n = returns.length;
+  const won = returns.filter(r => r > 0).length;
+  const lost = n - won;
+  const biggestWin  = Math.max(...returns.filter(r => r > 0), 0);
+  const biggestLoss = Math.min(...returns.filter(r => r < 0), 0);
+  let equity = 1000;
+  returns.forEach(r => { equity += r; });
+  return {
+    trades_won: won,
+    trades_lost: lost,
+    biggest_win: biggestWin,
+    biggest_loss: Math.abs(biggestLoss),
+    final_equity: Math.round(equity),
+    returns,
+  };
+}
+
 function renderStatsTable(trades, slMult, tpMult) {
   const wrap = document.getElementById("stats-table-wrap");
   wrap.innerHTML = "";
   if (!trades || !trades.length) return;
 
-  const RISK = 100;
-  const reward = RISK * tpMult / slMult;
-  const returns = trades.map(t => t.pnl_net !== undefined ? t.pnl_net : (t.win ? reward : -RISK));
+  const s = computeStrategySummaryStats(trades, slMult, tpMult);
+  const returns = s.returns;
   const n = returns.length;
-  const won = returns.filter(r => r > 0).length;
-  const lost = n - won;
+  const won = s.trades_won;
+  const lost = s.trades_lost;
   const winRate = n ? (won / n * 100).toFixed(1) : "0.0";
-  const biggestWin  = Math.max(...returns.filter(r => r > 0), 0);
-  const biggestLoss = Math.min(...returns.filter(r => r < 0), 0);
-  let equity = 1000;
-  returns.forEach(r => { equity += r; });
+  const biggestWin  = s.biggest_win;
+  const biggestLoss = -s.biggest_loss;
+  const equity = s.final_equity;
   const endEquity = equity.toFixed(0);
   const equityGain = equity - 1000;
 
@@ -2416,9 +2446,9 @@ function fetchAiCommentary(cfg, result) {
   el.style.color = "var(--muted)";
 
   const trades = result.chart_trades || [];
-  let equity = 1000;
-  const reward = 100 * (cfg.tp_multiplier || state.tpMult) / (cfg.sl_multiplier || state.slMult);
-  trades.forEach(t => { equity += t.win ? reward : -100; });
+  const slM = cfg.sl_multiplier || state.slMult;
+  const tpM = cfg.tp_multiplier || state.tpMult;
+  const summaryStats = computeStrategySummaryStats(trades, slM, tpM);
 
   const payload = {
     instrument: cfg.instrument,
@@ -2433,7 +2463,11 @@ function fetchAiCommentary(cfg, result) {
     win_pct: result.win_pct,
     signals: result.signals,
     cross_timeframe: result.cross_timeframe || [],
-    final_equity: Math.round(equity),
+    biggest_win: summaryStats.biggest_win,
+    biggest_loss: summaryStats.biggest_loss,
+    trades_won: summaryStats.trades_won,
+    trades_lost: summaryStats.trades_lost,
+    final_equity: summaryStats.final_equity,
   };
 
   apiFetch("/api/analyse", {
