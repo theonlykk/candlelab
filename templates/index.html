@@ -1868,17 +1868,54 @@ function generateName() {
   return `${pick(verbs)} ${pick(colours)} ${pick(animals)}`;
 }
 
+const TRADELOG_URL = "https://tradelog.theonlykhalid.com";
+
+function generatePin() {
+  return String(Math.floor(100 + Math.random() * 900));
+}
+
+function loadUserCreds() {
+  try {
+    const raw = localStorage.getItem("candlelab_user");
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+function saveUserCreds(username, pin) {
+  localStorage.setItem("candlelab_user", JSON.stringify({ username, pin }));
+}
+
+function showCredentialScreen(username, pin, isNew) {
+  const wrap = document.getElementById("saved-state");
+  const existingCred = document.getElementById("cred-screen");
+  if (existingCred) existingCred.remove();
+
+  const div = document.createElement("div");
+  div.id = "cred-screen";
+  div.style.cssText = "background:var(--card);border-radius:12px;padding:24px;margin-bottom:20px;text-align:center;border:2px solid var(--accent);";
+  div.innerHTML = `
+    <div style="font-size:22px;margin-bottom:4px;">🎉 Strategy Live!</div>
+    ${isNew ? `<div style="font-size:13px;color:var(--muted);margin-bottom:16px;">Your login details — <strong>screenshot this now!</strong></div>` : `<div style="font-size:13px;color:var(--muted);margin-bottom:16px;">Strategy added to your account.</div>`}
+    <div style="font-size:28px;font-weight:700;color:var(--accent);letter-spacing:2px;margin-bottom:8px;">${username}</div>
+    <div style="font-size:36px;font-weight:800;letter-spacing:8px;margin-bottom:16px;">${pin}</div>
+    ${isNew ? `<div style="font-size:12px;color:var(--muted);">Username · PIN — use these to view your strategies on any device</div>` : ""}
+  `;
+  wrap.prepend(div);
+}
+
 function goLive() {
-  // API chain (Step 9 "Go Live"):
-  // - Trigger: user clicks "Go live" after reviewing the summary
-  // - Request: POST `/api/finalise` with preview=false and a strategy name
-  // - Response: includes chart payloads (candles + last trades) for rendering the final view
-  // - Effect: saves strategy on backend, swaps UI into the "saved" state, renders charts,
-  //   and kicks off AI commentary + tweak suggestions.
   const name = document.getElementById("name-input").value.trim() || generateName();
   const cfg = buildConfig(false);
   cfg.name = name;
 
+  // Get or create user credentials
+  let creds = loadUserCreds();
+  const isNew = !creds;
+  if (isNew) {
+    creds = { username: null, pin: generatePin() };
+  }
+
+  // First save to candlelab backend
   apiFetch("/api/finalise", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1894,6 +1931,39 @@ function goLive() {
       renderTradeLog(d.chart_trades, state.slMult, state.tpMult);
       fetchAiCommentary(cfg, d);
       fetchAiTweaks(cfg, d);
+
+      // Then register strategy on tradelog
+      const inst = INSTRUMENTS.find(i => i.code === state.instrument);
+      const payload = {
+        username:      creds.username,
+        pin:           creds.pin,
+        instrument:    inst ? inst.label : state.instrument,
+        interval:      state.interval,
+        anchor:        state.anchor,
+        complement:    state.complement,
+        connector:     state.connector,
+        session:       state.session,
+        sl_mult:       state.slMult,
+        tp_mult:       state.tpMult,
+        timeout:       state.timeout,
+        direction:     state.direction,
+        strategy_name: name,
+      };
+
+      fetch(`${TRADELOG_URL}/api/save-strategy`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      })
+        .then(r => r.json())
+        .then(res => {
+          if (res.username) {
+            creds.username = res.username;
+            saveUserCreds(creds.username, creds.pin);
+            showCredentialScreen(creds.username, creds.pin, isNew);
+          }
+        })
+        .catch(err => console.warn("tradelog save failed:", err));
     })
     .catch(() => {
       alert("Failed to save strategy.");
