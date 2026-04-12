@@ -1104,6 +1104,85 @@ def api_tweaks():
     return jsonify(data)
 
 
+@app.route("/api/strategy-pnl", methods=["POST"])
+def api_strategy_pnl():
+    """
+    Backtest a strategy from saved_at to now, returning cum_net and signals.
+    Called by the My Strategies panel to show live PnL since save date.
+    """
+    body = request.get_json(force=True)
+    instrument = body.get("instrument", "EURUSD")
+    interval = body.get("interval", "5m")
+    anchor = body.get("anchor")
+    saved_at = body.get("saved_at")
+    sl_mult = float(body.get("sl_multiplier", 1.0))
+    tp_mult = float(body.get("tp_multiplier", 3.0))
+    timeout = int(body.get("timeout", TIMEOUT))
+    direction = body.get("direction", "both")
+    session_filter = body.get("session_filter")
+    complement = body.get("complement")
+    connector = body.get("connector", "ordered")
+
+    if not anchor:
+        return jsonify({"error": "missing anchor"}), 400
+
+    # Resolve instrument label to code
+    meta = None
+    instrument_label = None
+    for label, cfg in INSTRUMENTS.items():
+        if cfg["symbol"].replace("/", "") == instrument or label == instrument:
+            meta = cfg
+            instrument_label = label
+            break
+    if meta is None:
+        return jsonify({"error": "unknown instrument"}), 400
+
+    pip = meta["pip"]
+
+    try:
+        df = get_ohlc(instrument_label, days=90, interval=interval)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    if df.empty:
+        return jsonify({"cum_net": 0.0, "signals": 0})
+
+    # Filter to only bars after saved_at
+    if saved_at:
+        try:
+            saved_ts = pd.Timestamp(saved_at, tz="UTC")
+            df = df[df.index >= saved_ts]
+        except Exception:
+            pass
+
+    if df.empty:
+        return jsonify({"cum_net": 0.0, "signals": 0})
+
+    direction_val = 0
+    if direction == "long":
+        direction_val = 1
+    if direction == "short":
+        direction_val = -1
+
+    result = _backtest_pattern(
+        df,
+        pip,
+        anchor,
+        timeout=timeout,
+        session=session_filter,
+        sl_mult=sl_mult,
+        tp_mult=tp_mult,
+        direction_val=direction_val,
+        instrument=instrument_label,
+    )
+
+    return jsonify({
+        "cum_net": result.get("cum_net", 0.0),
+        "signals": result.get("signals", 0),
+        "win_pct": result.get("win_pct", 0.0),
+    })
+
+
 init_strategy_tables()
 start_scheduler()
 

@@ -2665,40 +2665,88 @@ function closeStrategiesPanel() {
 }
 
 function loadStrategiesPanel() {
-  // API chain (My Strategies):
-  // - Trigger: user clicks "My Strategies" in the header
-  // - Request: GET `/api/live` scoped by device UUID
-  // - Response: list of strategies with live_pnl, trade count, and metadata
-  // - Effect: render a list of cards (or an empty state)
   const body = document.getElementById("strategies-panel-body");
   body.innerHTML = `<div class="spinner-wrap"><div class="spinner"></div><span>Loading…</span></div>`;
 
-  apiFetch(`/api/live?device_uuid=${encodeURIComponent(state.deviceUuid)}`)
+  const creds = loadUserCreds();
+  if (!creds || !creds.username || !creds.pin) {
+    body.innerHTML = `<div style="padding:24px 8px; text-align:center; color:var(--muted); font-size:14px; line-height:1.65;">
+      No account found. Complete the wizard and hit Go Live to create your account.
+    </div>`;
+    return;
+  }
+
+  fetch(`${TRADELOG_URL}/api/my-strategies?username=${encodeURIComponent(creds.username)}&pin=${encodeURIComponent(creds.pin)}`)
     .then(r => r.json())
-    .then(strategies => {
+    .then(data => {
       body.innerHTML = "";
-      if (!strategies || strategies.length === 0) {
-        body.innerHTML = `<div style="padding:24px 8px; text-align:center; color:var(--muted); font-size:14px; line-height:1.65;">You have not gone live with any strategies yet.<br>Complete the wizard to launch your first one.</div>`;
+      const strategies = data.strategies || [];
+      if (strategies.length === 0) {
+        body.innerHTML = `<div style="padding:24px 8px; text-align:center; color:var(--muted); font-size:14px; line-height:1.65;">
+          No strategies yet. Complete the wizard and hit Go Live to launch your first one.
+        </div>`;
         return;
       }
-      strategies.forEach(s => body.appendChild(buildStratCard(s)));
+      // Show username at top
+      const hdr = document.createElement("div");
+      hdr.style.cssText = "padding:8px 12px 4px; font-size:12px; color:var(--muted);";
+      hdr.textContent = `Logged in as ${creds.username}`;
+      body.appendChild(hdr);
+
+      strategies.forEach(s => {
+        const card = buildStratCard(s);
+        body.appendChild(card);
+        // Fetch live P&L for each strategy
+        fetchStratPnl(s, card);
+      });
     })
     .catch(() => {
       body.innerHTML = `<div style="padding:20px; color:var(--red); font-size:13px;">Failed to load strategies.</div>`;
     });
 }
 
+function fetchStratPnl(s, card) {
+  const inst = INSTRUMENTS.find(i => i.label === s.instrument || i.code === s.instrument);
+  const instCode = inst ? inst.code : "EURUSD";
+  const payload = {
+    instrument:   instCode,
+    interval:     s.interval || "5m",
+    anchor:       s.anchor,
+    complement:   s.complement || null,
+    connector:    s.connector || "ordered",
+    session_filter: s.session !== "All" ? s.session : null,
+    sl_multiplier: s.sl_mult,
+    tp_multiplier: s.tp_mult,
+    timeout:      s.timeout || 1000,
+    direction:    s.direction || "both",
+    preview:      true,
+    saved_at:     s.saved_at,
+  };
+
+  apiFetch("/api/strategy-pnl", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  })
+    .then(r => r.json())
+    .then(d => {
+      const pnlEl = card.querySelector(".strat-pnl");
+      if (!pnlEl) return;
+      const pnl = d.cum_net ?? 0;
+      const pnlText = pnl > 0 ? `+$${pnl.toFixed(0)}` : pnl < 0 ? `-$${Math.abs(pnl).toFixed(0)}` : "$0";
+      const pnlColor = pnl > 0 ? "var(--green)" : pnl < 0 ? "var(--red)" : "var(--muted)";
+      pnlEl.textContent = `Since save: ${pnlText}`;
+      pnlEl.style.color = pnlColor;
+      const sigEl = card.querySelector(".strat-sigs");
+      if (sigEl) sigEl.textContent = `${d.signals || 0} signals`;
+    })
+    .catch(() => {});
+}
+
 function buildStratCard(s) {
-  // Render a single strategy "card" row inside the overlay. Visual status is derived from:
-  // - `live_pnl` (green/red/neutral)
-  // - `trades` count (amber dot for zero trades)
-  const pnl      = s.live_pnl ?? 0;
-  const trades   = s.trades  ?? 0;
-  const pnlClass = pnl > 0 ? "strat-pnl-pos" : pnl < 0 ? "strat-pnl-neg" : "strat-pnl-nil";
-  const pnlText  = pnl > 0 ? `+$${pnl.toFixed(2)}` : pnl < 0 ? `-$${Math.abs(pnl).toFixed(2)}` : "$0.00";
-  const dotClass = pnl > 0 ? "strat-dot-green" : trades === 0 ? "strat-dot-amber" : "strat-dot-red";
-  const created  = s.created_ts ? new Date(s.created_ts).toLocaleDateString(undefined, { day:"numeric", month:"short", year:"numeric" }) : "—";
-  const winPct   = s.win_pct != null ? `${s.win_pct}% win rate` : "";
+  const created = s.saved_at
+    ? new Date(s.saved_at).toLocaleDateString(undefined, { day:"numeric", month:"short", year:"numeric" })
+    : "—";
 
   const card = document.createElement("div");
   card.className = "strat-card";
@@ -2706,16 +2754,14 @@ function buildStratCard(s) {
   card.innerHTML = `
     <div class="strat-card-top">
       <div style="display:flex;align-items:flex-start;gap:8px;">
-        <div class="strat-dot ${dotClass}" style="margin-top:5px;"></div>
-        <div class="strat-card-name">${s.name || "Unnamed"}</div>
+        <div class="strat-dot strat-dot-amber" style="margin-top:5px;"></div>
+        <div class="strat-card-name">${s.strategy_name || "Unnamed"}</div>
       </div>
-      <button class="strat-delete-btn" onclick="deleteStrategy('${s.id}', this)">Delete</button>
     </div>
-    <div class="strat-card-meta">${s.instrument || ""} · ${s.interval || ""} · Created ${created}</div>
+    <div class="strat-card-meta">${s.instrument || ""} · ${s.interval || ""} · ${s.anchor || ""} · Saved ${created}</div>
     <div class="strat-card-stats">
-      <span class="${pnlClass}">Live PnL: ${pnlText}</span>
-      <span style="color:var(--muted);">${trades} signal${trades !== 1 ? "s" : ""}</span>
-      ${winPct ? `<span style="color:var(--muted);">${winPct}</span>` : ""}
+      <span class="strat-pnl" style="color:var(--muted);">Calculating…</span>
+      <span class="strat-sigs" style="color:var(--muted);">—</span>
     </div>`;
   return card;
 }
