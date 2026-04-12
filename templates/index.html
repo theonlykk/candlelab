@@ -2736,6 +2736,11 @@ function fetchStratPnl(s, card) {
       const pnlText = pnl > 0 ? `+$${pnl.toFixed(0)}` : pnl < 0 ? `-$${Math.abs(pnl).toFixed(0)}` : "$0";
       const pnlColor = pnl > 0 ? "var(--green)" : pnl < 0 ? "var(--red)" : "var(--muted)";
       pnlEl.textContent = `Since save: ${pnlText}`;
+      const dot = card.querySelector(".strat-dot");
+      if (dot) {
+        dot.classList.remove("strat-dot-amber", "strat-dot-green", "strat-dot-red");
+        dot.classList.add(pnl > 0 ? "strat-dot-green" : pnl < 0 ? "strat-dot-red" : "strat-dot-amber");
+      }
       pnlEl.style.color = pnlColor;
       const sigEl = card.querySelector(".strat-sigs");
       if (sigEl) sigEl.textContent = `${d.signals || 0} signals`;
