@@ -802,6 +802,7 @@ def api_finalise():
             "entry":      round(t["entry"], meta["decimals"]),
             "tp":         round(t["tp"], meta["decimals"]),
             "sl":         round(t["sl"], meta["decimals"]),
+            "atr":        round(t["atr"], 6),
             "win":        t["win"],
             "exit_price": round(t["exit_price"], meta["decimals"]),
             "exit_type":  "TP" if t["outcome"] == "win" else ("SL" if t["outcome"] == "loss" else "TO"),

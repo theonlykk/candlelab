@@ -2012,6 +2012,7 @@ function renderTradeLog(trades, slMult, tpMult) {
       <td style="padding:6px 10px;">${date}</td>
       <td style="padding:6px 10px;">${dir}</td>
       <td style="padding:6px 10px;">${t.entry}</td>
+      <td style="padding:6px 10px; color:var(--muted); font-size:12px;">${t.atr ? (t.atr / (PIP_SIZES[state.instrument] || 0.0001)).toFixed(1) + 'p' : '—'}</td>
       <td style="padding:6px 10px; color:${exitColor}; font-weight:600;">${t.exit_price ?? "—"}</td>
       ${slipCell}
       <td style="padding:6px 10px; color:${exitColor}; font-weight:600;">${t.exit_type ?? "—"}</td>
@@ -2045,6 +2046,7 @@ function renderTradeLog(trades, slMult, tpMult) {
             <th style="padding:7px 10px; text-align:left; font-weight:500;">Date</th>
             <th style="padding:7px 10px; text-align:left; font-weight:500;">Dir</th>
             <th style="padding:7px 10px; text-align:left; font-weight:500;">Entry</th>
+            <th style="padding:7px 10px; text-align:left; font-weight:500;">ATR</th>
             <th style="padding:7px 10px; text-align:left; font-weight:500;">Exit</th>
             <th style="padding:7px 10px; text-align:left; font-weight:500;">Slip</th>
             <th style="padding:7px 10px; text-align:left; font-weight:500;">Type</th>
