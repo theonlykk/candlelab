@@ -998,6 +998,20 @@
     <div class="landing-title">Build your first trading strategy in 5 minutes.</div>
     <div class="landing-sub">We guide you through every step. No experience needed.</div>
     <button class="landing-btn" onclick="startWizard()">Let's start →</button>
+    <button type="button" id="landing-signin-toggle" onclick="toggleLandingSignIn()"
+      style="margin-top:16px;background:none;border:none;color:var(--muted);font-size:13px;cursor:pointer;text-decoration:underline;">
+      Returning user? Sign in
+    </button>
+    <div id="landing-signin-panel" style="display:none;margin-top:14px;width:100%;max-width:280px;margin-left:auto;margin-right:auto;text-align:left;">
+      <label style="display:block;font-size:12px;color:var(--muted);margin-bottom:4px;">Username</label>
+      <input type="text" id="landing-signin-user" autocomplete="username"
+        style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text);font-size:14px;margin-bottom:10px;" />
+      <label style="display:block;font-size:12px;color:var(--muted);margin-bottom:4px;">PIN</label>
+      <input type="password" id="landing-signin-pin" autocomplete="current-password"
+        style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text);font-size:14px;margin-bottom:10px;" />
+      <button type="button" class="landing-btn" onclick="submitLandingSignIn()" style="width:100%;margin-top:4px;">Submit</button>
+      <div id="landing-signin-err" style="display:none;color:var(--red);font-size:12px;margin-top:10px;text-align:center;"></div>
+    </div>
   </div>
 </div>
 
@@ -1259,6 +1273,55 @@ function switchAccount() {
   localStorage.removeItem("candlelab_user");
   document.getElementById("welcome-back").style.display = "none";
   document.getElementById("landing").style.display = "flex";
+  const sip = document.getElementById("landing-signin-panel");
+  if (sip) sip.style.display = "none";
+  const siu = document.getElementById("landing-signin-user");
+  const sipn = document.getElementById("landing-signin-pin");
+  const sie = document.getElementById("landing-signin-err");
+  if (siu) siu.value = "";
+  if (sipn) sipn.value = "";
+  if (sie) { sie.style.display = "none"; sie.textContent = ""; }
+}
+
+function toggleLandingSignIn() {
+  const p = document.getElementById("landing-signin-panel");
+  if (!p) return;
+  p.style.display = (p.style.display === "none" || !p.style.display) ? "block" : "none";
+  const e = document.getElementById("landing-signin-err");
+  if (e && p.style.display === "none") { e.style.display = "none"; e.textContent = ""; }
+}
+
+function submitLandingSignIn() {
+  const u = (document.getElementById("landing-signin-user") || {}).value.trim();
+  const pin = (document.getElementById("landing-signin-pin") || {}).value.trim();
+  const err = document.getElementById("landing-signin-err");
+  if (err) { err.style.display = "none"; err.textContent = ""; }
+  if (!u || !pin) {
+    if (err) { err.textContent = "Enter username and PIN"; err.style.display = "block"; }
+    return;
+  }
+  fetch(TRADELOG_URL + "/api/my-strategies?username=" + encodeURIComponent(u) + "&pin=" + encodeURIComponent(pin))
+    .then(function(r) {
+      if (!r.ok) throw new Error("bad");
+      return r.json();
+    })
+    .then(function(data) {
+      if (data && data.error) throw new Error("bad");
+      saveUserCreds(u, pin);
+      document.getElementById("landing").style.display = "none";
+      const panel = document.getElementById("landing-signin-panel");
+      if (panel) panel.style.display = "none";
+      document.getElementById("wb-username").textContent = u;
+      document.getElementById("welcome-back").style.display = "block";
+      const pEl = document.getElementById("landing-signin-pin");
+      if (pEl) pEl.value = "";
+    })
+    .catch(function() {
+      if (err) {
+        err.textContent = "Username or PIN not recognised";
+        err.style.display = "block";
+      }
+    });
 }
 
 // ── Timestamp parser ─────────────────────────────────────────────────────────
@@ -2241,7 +2304,7 @@ function renderTradeLog(trades, slMult, tpMult) {
     </div>`;
 
   document.getElementById("download-csv-btn").addEventListener("click", () => {
-    const blob = new Blob([csvRows], { type: "text/csv" });
+    const blob = new Blob(["\uFEFF" + csvRows], { type: "text/csv;charset=utf-8;" });
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement("a");
     a.href = url;
