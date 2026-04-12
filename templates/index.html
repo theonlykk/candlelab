@@ -1001,6 +1001,16 @@
   </div>
 </div>
 
+<div id="welcome-back" style="display:none; padding:32px 20px; text-align:center;">
+  <div style="font-size:22px; font-weight:700; color:var(--accent); margin-bottom:4px;" id="wb-username"></div>
+  <div style="font-size:14px; color:var(--muted); margin-bottom:24px;">Welcome back! Your strategies are running live.</div>
+  <button class="landing-btn" onclick="openStrategiesPanel()" style="margin-bottom:12px;">View My Strategies</button>
+  <br>
+  <button onclick="startWizardFresh()" style="background:none; border:none; color:var(--muted); font-size:13px; cursor:pointer; text-decoration:underline;">Build a new strategy</button>
+  <br><br>
+  <div style="font-size:11px; color:var(--muted);">Not you? <span style="color:var(--accent); cursor:pointer;" onclick="switchAccount()">Switch account</span></div>
+</div>
+
 <div id="progress-bar" class="wizard-hidden"><div id="progress-fill"></div></div>
 
 <div id="header" class="wizard-hidden">
@@ -1226,10 +1236,29 @@
 <script>
 // ── Landing ───────────────────────────────────────────────────────────────────
 function startWizard() {
-  document.getElementById("landing").classList.add("hidden");
+  const creds = loadUserCreds();
+  if (creds && creds.username) {
+    // Returning user — show welcome back screen
+    document.getElementById("landing").style.display = "none";
+    document.getElementById("wb-username").textContent = creds.username;
+    document.getElementById("welcome-back").style.display = "block";
+  } else {
+    startWizardFresh();
+  }
+}
+
+function startWizardFresh() {
+  document.getElementById("landing").style.display = "none";
+  document.getElementById("welcome-back").style.display = "none";
   document.getElementById("progress-bar").classList.remove("wizard-hidden");
   document.getElementById("header").classList.remove("wizard-hidden");
   goStep(1);
+}
+
+function switchAccount() {
+  localStorage.removeItem("candlelab_user");
+  document.getElementById("welcome-back").style.display = "none";
+  document.getElementById("landing").style.display = "flex";
 }
 
 // ── Timestamp parser ─────────────────────────────────────────────────────────
