@@ -163,6 +163,7 @@ PIP_VALUES = {
 }
 MIN_SL_PIPS = 5.0
 ATR_PERIOD   = 14
+TIMEOUT      = 1000
 
 
 def _sl_distance_price(atr: float, pip: float) -> float:
@@ -310,7 +311,7 @@ def _backtest_pattern(
     df: pd.DataFrame,
     pip: float,
     pattern_name: str,
-    timeout: int = 5,
+    timeout: int = TIMEOUT,
     session: str = None,
     indicator_fn=None,
     direction_val: int = 0,
@@ -645,7 +646,7 @@ def api_complement():
     anchor_signals = signals_df[anchor]
     anchor_indices = np.where(anchor_signals.to_numpy() != 0)[0]
 
-    anchor_r = _backtest_pattern(df, pip, anchor, timeout=5, instrument=instrument)
+    anchor_r = _backtest_pattern(df, pip, anchor, timeout=TIMEOUT, instrument=instrument)
     anchor_win_pct = anchor_r["win_pct"]
 
     CONNECTORS = ["ordered", "any-order", "optional"]
@@ -703,9 +704,9 @@ def api_indicator_check():
     }
     indicator_fn = indicator_map.get(indicator)
 
-    base_r = _backtest_pattern(df, pip, anchor, timeout=5, instrument=instrument)
+    base_r = _backtest_pattern(df, pip, anchor, timeout=TIMEOUT, instrument=instrument)
     filtered_r = _backtest_pattern(
-        df, pip, anchor, timeout=5, indicator_fn=indicator_fn, instrument=instrument,
+        df, pip, anchor, timeout=TIMEOUT, indicator_fn=indicator_fn, instrument=instrument,
     )
 
     return jsonify({
@@ -761,7 +762,7 @@ def api_finalise():
         if df.empty:
             return None
         r = _backtest_pattern(
-            df, pip, anchor, timeout=5,
+            df, pip, anchor, timeout=TIMEOUT,
             session=session_filter,
             indicator_fn=indicator_fn,
             sl_mult=sl_mult, tp_mult=tp_mult,
