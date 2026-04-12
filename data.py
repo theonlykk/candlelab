@@ -160,13 +160,17 @@ def load_bars(instrument: str, days: int = 62, interval: str = "5m") -> pd.DataF
     tbl    = _table(instrument, interval)
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     with get_conn() as conn:
-        df = pd.read_sql(
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(
             f"SELECT * FROM {tbl} WHERE ts >= %s ORDER BY ts",
-            conn,
-            params=(cutoff,),
-            parse_dates=["ts"],
-            index_col="ts",
+            (cutoff,),
         )
+        rows = cur.fetchall()
+        df = pd.DataFrame(rows)
+        if df.empty:
+            return df
+        df["ts"] = pd.to_datetime(df["ts"])
+        df = df.set_index("ts")
     if df.empty:
         return df
     idx = pd.DatetimeIndex(df.index)
