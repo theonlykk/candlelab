@@ -731,6 +731,8 @@ def api_finalise():
     session_filter = body.get("session_filter")
     sl_mult = float(body.get("sl_multiplier", 1.0))
     tp_mult = float(body.get("tp_multiplier", 3.0))
+    timeout = int(body.get("timeout", TIMEOUT))
+    timeout = max(5, min(timeout, 1000))  # clamp between 5 and 1000
     device_uuid = body.get("device_uuid") or request.headers.get("X-Device-UUID")
     name = body.get("name")
 
@@ -762,7 +764,7 @@ def api_finalise():
         if df.empty:
             return None
         r = _backtest_pattern(
-            df, pip, anchor, timeout=TIMEOUT,
+            df, pip, anchor, timeout=timeout,
             session=session_filter,
             indicator_fn=indicator_fn,
             sl_mult=sl_mult, tp_mult=tp_mult,
