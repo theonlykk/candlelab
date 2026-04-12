@@ -1948,7 +1948,7 @@ function renderCharts(data) {
     else if (idx === 0)            { alignedTime = validTimes[0]; }
     else if (validTimes.length > 0){ alignedTime = validTimes[validTimes.length - 1]; }
     equityPoints.push({ time: alignedTime - 1, value: currentEquity });
-    const pnl = trade.win ? 300 : -100;
+    const pnl = trade.pnl_net !== undefined ? trade.pnl_net : (trade.win ? 300 : -100);
     currentEquity += pnl;
     equityPoints.push({ time: alignedTime, value: currentEquity });
   });
@@ -2077,15 +2077,13 @@ function renderStatsTable(trades, slMult, tpMult) {
 
   const RISK = 100;
   const reward = RISK * tpMult / slMult;
-  const returns = trades.map(t => t.win ? reward : -RISK);
+  const returns = trades.map(t => t.pnl_net !== undefined ? t.pnl_net : (t.win ? reward : -RISK));
   const n = returns.length;
   const won = returns.filter(r => r > 0).length;
   const lost = n - won;
   const winRate = n ? (won / n * 100).toFixed(1) : "0.0";
-
   const biggestWin  = Math.max(...returns.filter(r => r > 0), 0);
   const biggestLoss = Math.min(...returns.filter(r => r < 0), 0);
-
   let equity = 1000;
   returns.forEach(r => { equity += r; });
   const endEquity = equity.toFixed(0);
