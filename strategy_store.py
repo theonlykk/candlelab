@@ -77,15 +77,24 @@ def init_strategy_tables():
             )
             existing = {r["column_name"] for r in cur.fetchall()}
         for col, typedef in [
+            ("name", "TEXT"),
+            ("patterns", "TEXT"),
+            ("connectors", "TEXT"),
+            ("direction", "TEXT"),
+            ("window_days", "INTEGER"),
+            ("instrument", "TEXT"),
+            ("interval", "TEXT"),
+            ("created_ts", "TEXT"),
+            ("live_from_ts", "TEXT"),
+            ("active", "INTEGER"),
+            ("device_uuid", "TEXT"),
+            ("indicator_filter", "TEXT"),
+            ("session_filter", "TEXT"),
             ("bt_win_pct", "DOUBLE PRECISION"),
             ("bt_cum_net", "DOUBLE PRECISION"),
             ("bt_cum_gross", "DOUBLE PRECISION"),
             ("bt_signals", "INTEGER"),
             ("bt_tp_hits", "INTEGER"),
-            ("connectors", "TEXT"),
-            ("device_uuid", "TEXT"),
-            ("indicator_filter", "TEXT"),
-            ("session_filter", "TEXT"),
         ]:
             if col not in existing:
                 cur.execute(
