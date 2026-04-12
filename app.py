@@ -153,7 +153,6 @@ def _session_mask(index: pd.DatetimeIndex, session: str) -> np.ndarray:
 # ── Custom backtest engine ────────────────────────────────────────────────────
 
 RISK_DOLLARS = 100.0
-SPREAD_PIPS  = 1.0
 PIP_VALUES = {
     "EUR/USD": 10.0, "GBP/USD": 10.0, "GBP/JPY": 9.30,
     "USD/JPY": 9.30, "USD/CAD": 7.70, "AUD/USD": 10.0,
@@ -170,18 +169,6 @@ def _sl_distance_price(atr: float, pip: float) -> float:
     """Price distance for SL: max(ATR, MIN_SL_PIPS × pip)."""
     base = float(atr) if np.isfinite(atr) else 0.0
     return max(base, MIN_SL_PIPS * pip) if pip > 0 else base
-
-
-def _spread_cost(atr_val: float, pip: float, sl_mult: float) -> float:
-    """
-    Transaction cost model: spread_pips / SL_pips × RISK_DOLLARS.
-    SL distance uses _sl_distance_price so it is consistent with lot sizing.
-    """
-    sl_dist = _sl_distance_price(atr_val, pip)
-    sl_pips = sl_dist / pip if pip > 0 else 1.0
-    if sl_pips <= 0:
-        return 0.0
-    return (SPREAD_PIPS / sl_pips) * RISK_DOLLARS
 
 
 def _simulate_trades(
@@ -231,9 +218,8 @@ def _simulate_trades(
         sl_pips  = sl_dist / pip if pip > 0 else 0.0
         tp_pips  = sl_pips * (tp_mult / sl_mult)
         lot_size = (RISK_DOLLARS / (sl_pips * pip_val)) if sl_pips > 0 and pip_val > 0 else 0.0
-        spread_cost_fixed = round(SPREAD_PIPS * pip_val * lot_size, 2)
 
-        entry = float(df["open"].iloc[i + 1])
+        entry = float(df["open"].iloc[i + 1]) + direction * 0.5 * pip
         tp = entry + direction * tp_mult * trade_atr
         sl = entry - direction * _sl_distance_price(trade_atr, pip)
 
@@ -285,7 +271,7 @@ def _simulate_trades(
             pnl_gross = round(exit_pips * pip_val * lot_size, 2)
             outcome   = "timeout_win" if exit_pips > 0 else "timeout_loss"
 
-        pnl_net = round(pnl_gross - spread_cost_fixed, 2)
+        pnl_net = round(pnl_gross, 2)
         is_win = outcome in ("win", "timeout_win")
 
         trades.append({
@@ -300,7 +286,6 @@ def _simulate_trades(
             "outcome":   outcome,
             "win":       is_win,
             "pnl_gross": round(pnl_gross, 2),
-            "spread_cost": spread_cost_fixed,
             "pnl_net":   pnl_net,
         })
 
