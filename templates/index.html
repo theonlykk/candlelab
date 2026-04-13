@@ -1243,6 +1243,9 @@
     <button id="strategies-panel-close" onclick="closeStrategiesPanel()">✕</button>
   </div>
   <div id="strategies-panel-body"></div>
+  <div style="text-align:center; margin-top:1.5rem;">
+    <a href="#" onclick="resetAccount(); return false;" style="font-size:0.75rem; color:#999;">Reset account</a>
+  </div>
 </div>
 
 <div id="step-actions"></div>
@@ -1979,6 +1982,13 @@ function loadUserCreds() {
 
 function saveUserCreds(username, pin) {
   localStorage.setItem("candlelab_user", JSON.stringify({ username, pin }));
+}
+
+function resetAccount() {
+  if (confirm('This will clear your saved username and PIN. You will get a new account next time you go live. Continue?')) {
+    localStorage.removeItem('candlelab_user');
+    alert('Account reset. You will be registered as a new user next time you go live.');
+  }
 }
 
 function showCredentialScreen(username, pin, isNew) {
