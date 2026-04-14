@@ -18,6 +18,22 @@ from datetime import datetime, timezone, timedelta
 log = logging.getLogger(__name__)
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
+_CANDLE_DIAG_DDL_DONE = False
+
+CANDLE_DIAGNOSTICS_DDL = """
+CREATE TABLE IF NOT EXISTS candle_diagnostics (
+    id SERIAL PRIMARY KEY,
+    source TEXT NOT NULL,
+    instrument TEXT NOT NULL,
+    candle_time TIMESTAMPTZ NOT NULL,
+    open DOUBLE PRECISION,
+    high DOUBLE PRECISION,
+    low DOUBLE PRECISION,
+    close DOUBLE PRECISION,
+    logged_at TIMESTAMPTZ DEFAULT NOW()
+);
+"""
+
 # Tracks which (instrument, interval) pairs are currently being backfilled
 _backfill_in_progress: set = set()
 _backfill_lock = threading.Lock()
@@ -85,6 +101,7 @@ def get_conn() -> PGConnection:
 
 def init_db():
     """Create OHLC tables for all instruments/intervals if missing."""
+    global _CANDLE_DIAG_DDL_DONE
     with get_conn() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         for inst in INSTRUMENTS:
@@ -101,7 +118,59 @@ def init_db():
                     )
                     """
                 )
+        cur.execute(CANDLE_DIAGNOSTICS_DDL)
         conn.commit()
+    _CANDLE_DIAG_DDL_DONE = True
+
+
+def _ensure_candle_diagnostics_ddl(cur) -> None:
+    global _CANDLE_DIAG_DDL_DONE
+    if _CANDLE_DIAG_DDL_DONE:
+        return
+    cur.execute(CANDLE_DIAGNOSTICS_DDL)
+    _CANDLE_DIAG_DDL_DONE = True
+
+
+def _ts_to_utc_aware(ts) -> datetime:
+    if isinstance(ts, pd.Timestamp):
+        ts = ts.to_pydatetime()
+    if ts.tzinfo is None:
+        return ts.replace(tzinfo=timezone.utc)
+    return ts.astimezone(timezone.utc)
+
+
+def write_candle_diagnostics(source: str, instrument_oanda: str, df: pd.DataFrame) -> None:
+    """Insert last 3 rows of OHLC into candle_diagnostics (Postgres)."""
+    if not DATABASE_URL or df is None or df.empty:
+        return
+    tail = df.tail(3)
+    rows = []
+    for ts, row in tail.iterrows():
+        rows.append(
+            (
+                source,
+                instrument_oanda,
+                _ts_to_utc_aware(ts),
+                float(row["open"]),
+                float(row["high"]),
+                float(row["low"]),
+                float(row["close"]),
+            )
+        )
+    try:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            _ensure_candle_diagnostics_ddl(cur)
+            cur.executemany(
+                """
+                INSERT INTO candle_diagnostics (source, instrument, candle_time, open, high, low, close)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """,
+                rows,
+            )
+            conn.commit()
+    except Exception as e:
+        log.warning("candle_diagnostics insert failed: %s", e)
 
 
 def latest_ts(instrument: str, interval: str = "5m") -> datetime | None:
@@ -169,7 +238,12 @@ def _log_candle_check_candlelab(instrument: str, df: pd.DataFrame) -> None:
         )
 
 
-def load_bars(instrument: str, days: int = 62, interval: str = "5m") -> pd.DataFrame:
+def load_bars(
+    instrument: str,
+    days: int = 62,
+    interval: str = "5m",
+    record_candle_diagnostics: bool = False,
+) -> pd.DataFrame:
     """
     Load the most recent `days` of bars from PostgreSQL for an instrument/interval.
 
@@ -194,6 +268,8 @@ def load_bars(instrument: str, days: int = 62, interval: str = "5m") -> pd.DataF
     idx = pd.DatetimeIndex(df.index)
     df.index = idx.tz_convert("UTC") if idx.tzinfo else idx.tz_localize("UTC")
     _log_candle_check_candlelab(instrument, df)
+    if record_candle_diagnostics:
+        write_candle_diagnostics("candlelab", _oanda_instrument_id(instrument), df)
     return df
 
 
@@ -400,14 +476,26 @@ def backfill_missing(instrument: str, interval: str = "5m"):
     backfill_instrument(instrument, interval)
 
 
-def get_ohlc(instrument: str = DEFAULT_INSTRUMENT, days: int = 62, interval: str = "5m") -> pd.DataFrame:
+def get_ohlc(
+    instrument: str = DEFAULT_INSTRUMENT,
+    days: int = 62,
+    interval: str = "5m",
+    record_candle_diagnostics: bool = False,
+) -> pd.DataFrame:
     """
     Public API: return a recent OHLC DataFrame, ensuring data is backfilled first.
 
     The backfill step may trigger network fetches if the local DB is behind.
+    When record_candle_diagnostics is True (e.g. scheduler poll), last 3 bars are
+    persisted to candle_diagnostics.
     """
     backfill_missing(instrument, interval)
-    return load_bars(instrument, days=days, interval=interval)
+    return load_bars(
+        instrument,
+        days=days,
+        interval=interval,
+        record_candle_diagnostics=record_candle_diagnostics,
+    )
 
 
 def atr_to_pips(atr_value: float, instrument: str) -> float:

@@ -43,7 +43,12 @@ def _compute_and_cache(instrument: str, interval: str, days: int):
     # precomputed payload quickly (when a matching route consumes it).
     log.info(f"Scheduler: computing {instrument} {interval} {days}d")
     try:
-        df = get_ohlc(instrument, days=days, interval=interval)
+        df = get_ohlc(
+            instrument,
+            days=days,
+            interval=interval,
+            record_candle_diagnostics=True,
+        )
         if df.empty:
             log.warning(f"Scheduler: no data for {instrument}")
             return
@@ -114,7 +119,7 @@ def _compute_and_cache(instrument: str, interval: str, days: int):
                     "atr_pips":    atr_to_pips(t["atr"], instrument),
                     "pnl_gross":   t["pnl_gross"],
                     "pnl_net":     t["pnl_net"],
-                    "spread_cost": t["spread_cost"],
+                    "spread_cost": t.get("spread_cost", 0),
                 })
         tradelog_list.sort(key=lambda x: x["ts"], reverse=True)
         tradelog = tradelog_list[:10]
@@ -133,7 +138,7 @@ def _compute_and_cache(instrument: str, interval: str, days: int):
                     "outcome":     t["outcome"],
                     "pnl_gross":   t["pnl_gross"],
                     "pnl_net":     t["pnl_net"],
-                    "spread_cost": t["spread_cost"],
+                    "spread_cost": t.get("spread_cost", 0),
                     "atr_pips":    atr_to_pips(t["atr"], instrument),
                 })
         all_trades.sort(key=lambda x: x["ts"])
