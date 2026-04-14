@@ -151,6 +151,24 @@ def insert_bars(instrument: str, df: pd.DataFrame, interval: str = "5m"):
         conn.commit()
 
 
+def _log_candle_check_candlelab(instrument: str, df: pd.DataFrame) -> None:
+    """Temporary diagnostic: last 3 rows loaded from Postgres (compare to strategy_executor OANDA fetch)."""
+    if df is None or df.empty:
+        return
+    oanda_id = _oanda_instrument_id(instrument)
+    for ts, row in df.tail(3).iterrows():
+        tstr = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
+        log.info(
+            "CANDLE_CHECK | source=candlelab | instrument=%s | time=%s | O=%s | H=%s | L=%s | C=%s",
+            oanda_id,
+            tstr,
+            row["open"],
+            row["high"],
+            row["low"],
+            row["close"],
+        )
+
+
 def load_bars(instrument: str, days: int = 62, interval: str = "5m") -> pd.DataFrame:
     """
     Load the most recent `days` of bars from PostgreSQL for an instrument/interval.
@@ -175,6 +193,7 @@ def load_bars(instrument: str, days: int = 62, interval: str = "5m") -> pd.DataF
         return df
     idx = pd.DatetimeIndex(df.index)
     df.index = idx.tz_convert("UTC") if idx.tzinfo else idx.tz_localize("UTC")
+    _log_candle_check_candlelab(instrument, df)
     return df
 
 
