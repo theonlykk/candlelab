@@ -34,6 +34,11 @@ CREATE TABLE IF NOT EXISTS candle_diagnostics (
 );
 """
 
+CANDLE_DIAGNOSTICS_ALTER_BID_ASK = """
+ALTER TABLE candle_diagnostics ADD COLUMN IF NOT EXISTS bid DOUBLE PRECISION,
+ADD COLUMN IF NOT EXISTS ask DOUBLE PRECISION;
+"""
+
 # Tracks which (instrument, interval) pairs are currently being backfilled
 _backfill_in_progress: set = set()
 _backfill_lock = threading.Lock()
@@ -119,16 +124,17 @@ def init_db():
                     """
                 )
         cur.execute(CANDLE_DIAGNOSTICS_DDL)
+        cur.execute(CANDLE_DIAGNOSTICS_ALTER_BID_ASK)
         conn.commit()
     _CANDLE_DIAG_DDL_DONE = True
 
 
 def _ensure_candle_diagnostics_ddl(cur) -> None:
     global _CANDLE_DIAG_DDL_DONE
-    if _CANDLE_DIAG_DDL_DONE:
-        return
-    cur.execute(CANDLE_DIAGNOSTICS_DDL)
-    _CANDLE_DIAG_DDL_DONE = True
+    if not _CANDLE_DIAG_DDL_DONE:
+        cur.execute(CANDLE_DIAGNOSTICS_DDL)
+        _CANDLE_DIAG_DDL_DONE = True
+    cur.execute(CANDLE_DIAGNOSTICS_ALTER_BID_ASK)
 
 
 def _ts_to_utc_aware(ts) -> datetime:
@@ -163,8 +169,8 @@ def write_candle_diagnostics(source: str, instrument_oanda: str, df: pd.DataFram
             _ensure_candle_diagnostics_ddl(cur)
             cur.executemany(
                 """
-                INSERT INTO candle_diagnostics (source, instrument, candle_time, open, high, low, close)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO candle_diagnostics (source, instrument, candle_time, open, high, low, close, bid, ask)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, NULL, NULL)
                 """,
                 rows,
             )
