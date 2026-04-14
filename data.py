@@ -175,8 +175,14 @@ def write_candle_diagnostics(source: str, instrument_oanda: str, df: pd.DataFram
                 rows,
             )
             conn.commit()
-    except Exception as e:
-        log.warning("candle_diagnostics insert failed: %s", e)
+    except Exception:
+        log.exception(
+            "candle_diagnostics INSERT failed source=%r instrument=%r row_count=%s",
+            source,
+            instrument_oanda,
+            len(rows),
+        )
+        raise
 
 
 def latest_ts(instrument: str, interval: str = "5m") -> datetime | None:
