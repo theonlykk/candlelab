@@ -1885,7 +1885,7 @@ function buildConfig(preview) {
   // Consolidate the current wizard state into the backend config payload expected by
   // `/api/finalise`. This function is used in two modes:
   // - preview=true: light-weight response to update the live preview on the sliders step
-  // - preview=false: full response used when rendering charts after summary
+  // - preview=false: full backtest payload (charts when not in preview mode)
   const cfg = {
     instrument: state.instrument,
     interval: state.interval,
@@ -1925,52 +1925,39 @@ function goStep(n) {
   }
 }
 
-/** Full `/api/finalise` (charts + trade log), then switches from the step-9 summary form to the results layout. */
+/** Uses `state.finalResult` from the step-9 `loadSummary` request (no network). Shows charts, stats table, and trade log. */
 function revealStep9ResultsFromFinalise() {
-  if (state.currentStep !== 9) return Promise.resolve();
-  const name = document.getElementById("name-input").value.trim() || generateName();
-  const cfg = buildConfig(false);
-  cfg.name = name;
-  return apiFetch("/api/finalise", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(cfg),
-  })
-    .then(r => r.json())
-    .then(d => {
-      if (state.currentStep !== 9) return;
-      if (d.error) {
-        alert(d.error || "Failed to load chart results.");
-        return;
-      }
-      state.finalResult = d;
-      document.getElementById("wizard-step9-form").classList.add("hidden");
-      document.getElementById("saved-state").classList.add("visible");
-      renderCharts(d);
-      renderStatsTable(d.chart_trades, state.slMult, state.tpMult);
-      renderTradeLog(d.chart_trades, state.slMult, state.tpMult);
-      fetchAiCommentary(cfg, d);
-      fetchAiTweaks(cfg, d);
-      syncStep9ResultsLifecycleUI();
-    })
-    .catch(() => alert("Failed to load chart results."));
+  if (state.currentStep !== 9) return;
+  const d = state.finalResult;
+  if (!d || !Array.isArray(d.chart_trades)) return;
+  document.getElementById("wizard-step9-form").classList.add("hidden");
+  document.getElementById("saved-state").classList.add("visible");
+  renderCharts(d);
+  renderStatsTable(d.chart_trades, state.slMult, state.tpMult);
+  renderTradeLog(d.chart_trades, state.slMult, state.tpMult);
+  syncStep9ResultsLifecycleUI();
 }
 
 function loadSummary() {
-  // API chain (Step 8 → Step 9):
-  // - Trigger: entering Step 9 (either via CTA or step transition hook)
-  // - Request: POST `/api/finalise` with preview=true
-  // - Response: {win_pct, signals, cross_timeframe, ...}
-  // - Effect: updates `state.finalResult` and renders the summary stats table.
+  // Step 9: one POST `/api/finalise` with no_persist (full charts + stats, no save_strategy).
   const statsEl = document.getElementById("summary-stats");
   const xfEl = document.getElementById("xf-tbody");
   statsEl.innerHTML = `<div class="spinner-wrap" style="padding:30px;"><div class="spinner"></div></div>`;
   xfEl.innerHTML = "";
 
+  const ni = document.getElementById("name-input");
+  if (!window.WIZARD_EDIT || !window.WIZARD_EDIT.preserveName) {
+    ni.value = generateName();
+  }
+  const name = (ni.value || "").trim() || generateName();
+  const body = buildConfig(false);
+  body.name = name;
+  body.no_persist = true;
+
   apiFetch("/api/finalise", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(buildConfig(true)),
+    body: JSON.stringify(body),
   })
     .then(r => r.json())
     .then(d => {
@@ -2000,13 +1987,12 @@ function loadSummary() {
         });
       }
 
-      // Pre-fill name (keep when editing draft/live from panel)
-      const ni = document.getElementById("name-input");
-      if (!window.WIZARD_EDIT || !window.WIZARD_EDIT.preserveName) {
-        ni.value = generateName();
-      }
       updateWizardActionRow();
       revealStep9ResultsFromFinalise();
+      const cfgAi = buildConfig(false);
+      cfgAi.name = name;
+      fetchAiCommentary(cfgAi, d);
+      fetchAiTweaks(cfgAi, d);
     })
     .catch(() => {
       statsEl.innerHTML = `<div style="color:var(--red); padding:16px;">Failed to load summary.</div>`;

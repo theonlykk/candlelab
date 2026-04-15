@@ -715,6 +715,8 @@ def api_indicator_check():
 def api_finalise():
     body = request.get_json(force=True)
     preview = body.get("preview", False)
+    # When true, run full backtest + charts but skip device-bound save_strategy (draft/live use separate APIs).
+    no_persist = body.get("no_persist", False)
 
     instrument_raw = body.get("instrument", "EUR/USD")
     interval = body.get("interval", "5m")
@@ -890,27 +892,30 @@ def api_finalise():
         except Exception as e:
             log.warning("chart render failed: %s", e, exc_info=True)
 
-    try:
-        saved = save_strategy({
-            "name":             name,
-            "patterns":         [anchor] + ([complement] if complement else []),
-            "connectors":       [connector, connector],
-            "direction":        body.get("direction", ""),
-            "window_days":      5,
-            "instrument":       instrument,
-            "interval":         interval,
-            "bt_win_pct":       main_r["win_pct"],
-            "bt_cum_net":       main_r["cum_net"],
-            "bt_cum_gross":     None,
-            "bt_signals":       main_r["signals"],
-            "bt_tp_hits":       None,
-            "device_uuid":      device_uuid,
-            "indicator_filter": indicator_filter,
-            "session_filter":   session_filter,
-        })
-    except Exception:
-        log.exception("save_strategy failed")
-        return jsonify({"error": "Failed to save strategy"}), 500
+    if no_persist:
+        saved = {"id": None, "name": name or ""}
+    else:
+        try:
+            saved = save_strategy({
+                "name":             name,
+                "patterns":         [anchor] + ([complement] if complement else []),
+                "connectors":       [connector, connector],
+                "direction":        body.get("direction", ""),
+                "window_days":      5,
+                "instrument":       instrument,
+                "interval":         interval,
+                "bt_win_pct":       main_r["win_pct"],
+                "bt_cum_net":       main_r["cum_net"],
+                "bt_cum_gross":     None,
+                "bt_signals":       main_r["signals"],
+                "bt_tp_hits":       None,
+                "device_uuid":      device_uuid,
+                "indicator_filter": indicator_filter,
+                "session_filter":   session_filter,
+            })
+        except Exception:
+            log.exception("save_strategy failed")
+            return jsonify({"error": "Failed to save strategy"}), 500
 
     return jsonify({
         "id":               saved["id"],
