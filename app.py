@@ -29,6 +29,7 @@ from strategy_store import (
     lifecycle_close_live,
     lifecycle_delete_drafts,
     lifecycle_list_my_strategies,
+    lifecycle_register_user,
 )
 from indicators import check_ma_cross, check_rsi_extreme, check_ma_stable
 
@@ -1256,6 +1257,20 @@ def api_strategy_pnl():
         "signals": result.get("signals", 0),
         "win_pct": result.get("win_pct", 0.0),
     })
+
+
+@app.route("/api/user/register", methods=["POST"])
+def api_user_register():
+    body = request.get_json(force=True) or {}
+    try:
+        data, code = lifecycle_register_user(
+            body.get("username"),
+            body.get("pin"),
+        )
+        return jsonify(data), code
+    except Exception as e:
+        log.exception("api_user_register")
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/strategy/save-draft", methods=["POST"])

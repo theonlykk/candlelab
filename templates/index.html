@@ -1263,12 +1263,28 @@
     <button id="strategies-panel-close" onclick="closeStrategiesPanel()">✕</button>
   </div>
   <div id="ms-session-login" style="display:none;padding:12px 16px;border-bottom:1px solid var(--border);">
-    <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">Enter your PIN to load drafts and live strategies. Your PIN stays in this tab only until you close it.</div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-      <input id="ms-pin-input" type="password" placeholder="PIN" autocomplete="off" style="flex:1;min-width:120px;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);">
-      <button type="button" class="landing-btn" style="margin:0;" onclick="submitMsPanelPin()">Unlock</button>
+    <div id="ms-unlock-block">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">Enter your PIN to load drafts and live strategies. Your PIN stays in this tab only until you close it.</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        <input id="ms-pin-input" type="password" placeholder="PIN" autocomplete="off" style="flex:1;min-width:120px;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);">
+        <button type="button" class="landing-btn" style="margin:0;" onclick="submitMsPanelPin()">Unlock</button>
+      </div>
+      <div style="margin-top:10px;font-size:12px;">
+        <a href="#" onclick="showMsRegisterPanel(true); return false;" style="color:var(--accent);">New user? Register</a>
+      </div>
+      <div id="ms-login-err" style="display:none;color:var(--red);font-size:12px;margin-top:8px;"></div>
     </div>
-    <div id="ms-login-err" style="display:none;color:var(--red);font-size:12px;margin-top:8px;"></div>
+    <div id="ms-register-block" style="display:none;">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">Create a CandleLab account (username + PIN).</div>
+      <input id="ms-reg-user" type="text" placeholder="Username" autocomplete="username" style="width:100%;box-sizing:border-box;padding:8px 10px;margin-bottom:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);">
+      <input id="ms-reg-pin" type="password" placeholder="PIN" autocomplete="new-password" style="width:100%;box-sizing:border-box;padding:8px 10px;margin-bottom:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);">
+      <input id="ms-reg-pin2" type="password" placeholder="Confirm PIN" autocomplete="new-password" style="width:100%;box-sizing:border-box;padding:8px 10px;margin-bottom:10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        <button type="button" class="cta-btn" style="margin:0;padding:8px 16px;font-size:13px;" onclick="submitMsRegister()">Create account</button>
+        <a href="#" onclick="showMsRegisterPanel(false); return false;" style="font-size:12px;color:var(--muted);">Back to unlock</a>
+      </div>
+      <div id="ms-reg-err" style="display:none;color:var(--red);font-size:12px;margin-top:8px;"></div>
+    </div>
   </div>
   <div id="strategies-panel-body"></div>
   <div style="text-align:center; margin-top:1.5rem;">
@@ -2986,9 +3002,63 @@ function wizardPromoteNewLiveClick() {
 }
 
 // ── My Strategies panel ───────────────────────────────────────────────────────
+function showMsRegisterPanel(show) {
+  const u = document.getElementById("ms-unlock-block");
+  const r = document.getElementById("ms-register-block");
+  const re = document.getElementById("ms-reg-err");
+  if (re) { re.style.display = "none"; re.textContent = ""; }
+  if (u) u.style.display = show ? "none" : "block";
+  if (r) r.style.display = show ? "block" : "none";
+}
+
+function submitMsRegister() {
+  const errEl = document.getElementById("ms-reg-err");
+  if (errEl) { errEl.style.display = "none"; errEl.textContent = ""; }
+  const u = (document.getElementById("ms-reg-user") || {}).value.trim();
+  const p1 = (document.getElementById("ms-reg-pin") || {}).value;
+  const p2 = (document.getElementById("ms-reg-pin2") || {}).value;
+  if (!u || !p1) {
+    if (errEl) { errEl.textContent = "Username and PIN required."; errEl.style.display = "block"; }
+    return;
+  }
+  if (p1 !== p2) {
+    if (errEl) { errEl.textContent = "PINs do not match."; errEl.style.display = "block"; }
+    return;
+  }
+  fetch("/api/user/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: u, pin: p1 }),
+  })
+    .then(r => r.json().then(data => ({ ok: r.ok, status: r.status, data })))
+    .then(({ ok, status, data }) => {
+      if (data && data.error === "username taken") {
+        if (errEl) { errEl.textContent = "That username is already taken."; errEl.style.display = "block"; }
+        return;
+      }
+      if (!ok || !data.success) {
+        if (errEl) { errEl.textContent = (data && data.error) || "Registration failed."; errEl.style.display = "block"; }
+        return;
+      }
+      saveUserCreds(u, p1);
+      showMsRegisterPanel(false);
+      const login = document.getElementById("ms-session-login");
+      if (login) login.style.display = "none";
+      ["ms-reg-user", "ms-reg-pin", "ms-reg-pin2", "ms-pin-input"].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = "";
+      });
+      loadStrategiesPanel();
+    })
+    .catch(() => {
+      if (errEl) { errEl.textContent = "Registration failed."; errEl.style.display = "block"; }
+    });
+}
+
 function openStrategiesPanel() {
   document.getElementById("strategies-overlay").classList.add("open");
   document.getElementById("strategies-panel").classList.add("open");
+  showMsRegisterPanel(false);
   const login = document.getElementById("ms-session-login");
   const stored = (function() {
     try {

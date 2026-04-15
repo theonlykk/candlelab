@@ -91,13 +91,13 @@ def _ensure_draft_live_tables(cur) -> None:
 
 def _verify_user_pin(cur, username: str, pin: str) -> bool:
     cur.execute(
-        "SELECT pin_hash FROM user_strategies WHERE username=%s LIMIT 1",
+        "SELECT pin FROM candlelab_users WHERE username=%s LIMIT 1",
         (username,),
     )
     row = cur.fetchone()
     if not row:
         return False
-    stored = row.get("pin_hash")
+    stored = row.get("pin")
     return stored is not None and str(stored) == str(pin)
 
 
@@ -116,6 +116,28 @@ def _row_to_strategy_dict(r: dict) -> dict:
         except Exception:
             pass
     return d
+
+
+def lifecycle_register_user(username: str, pin: str) -> tuple[dict, int]:
+    username = (username or "").strip()
+    pin = str(pin or "")
+    if not username or not pin:
+        return {"error": "missing_params"}, 400
+    init_strategy_tables()
+    with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(
+            "SELECT 1 FROM candlelab_users WHERE username=%s LIMIT 1",
+            (username,),
+        )
+        if cur.fetchone():
+            return {"error": "username taken"}, 409
+        cur.execute(
+            "INSERT INTO candlelab_users (username, pin) VALUES (%s, %s)",
+            (username, pin),
+        )
+        conn.commit()
+    return {"success": True}, 200
 
 
 def lifecycle_save_draft(body: dict) -> tuple[dict, int]:
@@ -370,6 +392,16 @@ def init_strategy_tables():
     """
     with get_conn() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS candlelab_users (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(100) UNIQUE NOT NULL,
+                pin VARCHAR(50) NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+            """
+        )
         cur.execute("""
             CREATE TABLE IF NOT EXISTS candlelab_strategies (
                 id           SERIAL PRIMARY KEY,
