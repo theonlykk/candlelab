@@ -517,11 +517,6 @@
     margin-top: 20px;
     text-align: center;
   }
-  #build-another p {
-    font-size: 14px;
-    color: var(--muted);
-    margin-bottom: 12px;
-  }
   #build-another button {
     background: none;
     border: 1px solid var(--border);
@@ -891,34 +886,7 @@
   }
   .comp-card.flash { animation: flashGreen 0.6s ease forwards; }
 
-  /* Real trading CTA */
-  #real-trade-cta {
-    margin-top: 24px;
-    border: 2px dashed var(--border);
-    border-radius: var(--radius);
-    background: rgba(76,175,80,0.04);
-    padding: 24px 20px;
-    text-align: center;
-  }
-  .cta-real-emoji { font-size: 28px; margin-bottom: 8px; }
-  .cta-real-headline { font-size: 18px; font-weight: 700; margin-bottom: 6px; }
-  .cta-real-sub { font-size: 14px; color: var(--muted); margin-bottom: 20px; line-height: 1.55; }
-  .cta-real-btn {
-    width: 100%; background: transparent;
-    border: 2px solid var(--accent); border-radius: var(--radius);
-    color: var(--accent); font-size: 16px; font-weight: 700;
-    padding: 16px; cursor: pointer; min-height: 56px;
-    transition: background 0.15s;
-  }
-  .cta-real-btn:hover { background: rgba(76,175,80,0.08); }
   @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-  #real-trade-response {
-    display: none;
-    color: var(--green); font-size: 15px; font-weight: 600;
-    line-height: 1.65; padding-top: 4px;
-    animation: fadeIn 0.5s ease;
-  }
-  #real-trade-response.visible { display: block; }
 
   /* Market comparison */
   .compare-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:10px; }
@@ -1221,8 +1189,14 @@
       <input type="text" id="name-input" placeholder="Strategy name…">
 
       <div id="wizard-step9-actions-wrap" style="margin-top:16px;display:flex;flex-direction:column;gap:10px;align-items:stretch;">
+        <div id="wizard-step9-banner" style="display:none;width:100%;font-size:12px;color:#ffb347;padding:8px;box-sizing:border-box;background:rgba(255,165,0,0.08);border-radius:8px;border:1px solid #FFA500;"></div>
+        <div id="wizard-step9-lifecycle-err" style="display:none;color:var(--red);font-size:12px;"></div>
+        <div id="wizard-step9-promote-msg" style="display:none;color:var(--accent);font-size:13px;font-weight:600;"></div>
+        <div id="wizard-step9-lifecycle-row" style="display:none;flex-wrap:wrap;gap:10px;">
+          <button type="button" class="landing-btn" style="margin:0;flex:1;min-width:140px;" id="wizard-step9-save-btn" onclick="step9LifecycleSaveDraft('form')">Save to Draft</button>
+          <button type="button" class="cta-btn" style="margin:0;flex:1;min-width:140px;" id="wizard-step9-promote-btn" onclick="step9LifecyclePromoteLive('form')">Promote to Live</button>
+        </div>
         <button class="cta-btn" id="go-live-btn" onclick="goLive()">Go Live 🚀</button>
-        <div id="wizard-alt-wrap" style="display:none;flex-wrap:wrap;gap:10px;"></div>
       </div>
     </div>
 
@@ -1240,15 +1214,14 @@
       <div id="suggestion-card"></div>
       <div id="ai-tweaks"></div>
       <div id="build-another">
-        <p>Strategy saved and running live.</p>
+        <div id="step9-results-banner" style="display:none;width:100%;font-size:12px;color:#ffb347;padding:8px;margin-bottom:10px;box-sizing:border-box;background:rgba(255,165,0,0.08);border-radius:8px;border:1px solid #FFA500;"></div>
+        <div id="step9-results-lifecycle-err" style="display:none;color:var(--red);font-size:13px;margin-bottom:10px;"></div>
+        <div id="step9-results-promote-confirm" style="display:none;color:var(--accent);font-size:14px;font-weight:600;margin-bottom:12px;line-height:1.5;"></div>
+        <div id="step9-results-lifecycle-row" style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px;">
+          <button type="button" class="landing-btn" id="step9-results-save-btn" onclick="step9LifecycleSaveDraft('results')">Save to Draft</button>
+          <button type="button" class="cta-btn" id="step9-results-promote-btn" onclick="step9LifecyclePromoteLive('results')">Promote to Live</button>
+        </div>
         <button onclick="restartWizard()">Build another strategy</button>
-      </div>
-      <div id="real-trade-cta">
-        <div class="cta-real-emoji">🚀</div>
-        <div class="cta-real-headline">Want to trade this for real?</div>
-        <div class="cta-real-sub">We can port your strategy to OANDA and execute it automatically. Just $1 to activate.</div>
-        <button id="real-trade-btn" class="cta-real-btn" onclick="showRealTradeResponse()">Yes, trade it for real! 🚀</button>
-        <div id="real-trade-response">🎉 Amazing! We are on it. We will reach out to set you up — watch your inbox. You are about to become an algo trader.</div>
       </div>
     </div>
   </div>
@@ -2140,34 +2113,12 @@ function goLive() {
             if (res.username) {
               afterRegister(res.username);
             }
+            syncStep9ResultsLifecycleUI();
           })
           .catch(err => console.warn("tradelog save failed:", err));
       } else {
-        const draftBody = Object.assign({}, payload);
-        apiFetch("/api/strategy/save-draft", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(draftBody),
-        })
-          .then(r => r.json())
-          .then(draftRes => {
-            if (draftRes.error) throw new Error(draftRes.error);
-            return apiFetch("/api/strategy/promote-live", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                draft_id: draftRes.draft_id,
-                username: creds.username,
-                pin: creds.pin,
-              }),
-            });
-          })
-          .then(r => r.json())
-          .then(promo => {
-            if (promo.error) throw new Error(promo.error);
-            afterRegister(creds.username);
-          })
-          .catch(err => console.warn("go live draft/promote failed:", err));
+        saveUserCreds(creds.username, creds.pin);
+        syncStep9ResultsLifecycleUI();
       }
     })
     .catch(() => {
@@ -2460,6 +2411,12 @@ function _clearSavedState() {
   document.getElementById("suggestion-card").classList.remove("visible");
   document.getElementById("suggestion-card").innerHTML = "";
   document.getElementById("ai-tweaks").innerHTML = "";
+  const rb = document.getElementById("step9-results-banner");
+  const re = document.getElementById("step9-results-lifecycle-err");
+  const rc = document.getElementById("step9-results-promote-confirm");
+  if (rb) { rb.style.display = "none"; rb.innerHTML = ""; }
+  if (re) { re.style.display = "none"; re.textContent = ""; }
+  if (rc) { rc.style.display = "none"; rc.textContent = ""; }
 }
 
 function tryOnMarket(code) {
@@ -2887,118 +2844,244 @@ function buildStrategyLifecycleBody(nameOverride) {
   };
 }
 
-function updateWizardActionRow() {
-  const go = document.getElementById("go-live-btn");
-  const wrap = document.getElementById("wizard-alt-wrap");
-  if (!go || !wrap) return;
+function step9EscHtml(s) {
+  return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;");
+}
+
+function getStep9LifecycleLabels() {
   const ed = window.WIZARD_EDIT;
-  wrap.innerHTML = "";
-  wrap.style.display = "none";
-  go.style.display = "block";
-  if (!ed || !ed.kind) return;
-  go.style.display = "none";
-  wrap.style.display = "flex";
-  if (ed.kind === "draft") {
-    wrap.innerHTML = `
-      <button type="button" class="landing-btn" style="margin:0;" onclick="wizardSaveDraftClick()">Save to Draft</button>
-      <button type="button" class="cta-btn" style="margin:0;" onclick="wizardPromoteDraftClick()">Promote to Live</button>`;
-  } else if (ed.kind === "live") {
-    const pn = String(ed.prevLiveName || "strategy").replace(/</g, "");
-    wrap.innerHTML = `
-      <div style="width:100%;font-size:12px;color:#ffb347;padding:8px;background:rgba(255,165,0,0.08);border-radius:8px;border:1px solid #FFA500;">
-        Your previous <strong>${pn}</strong> is still running. Close it manually when ready.
-      </div>
-      <button type="button" class="landing-btn" style="margin:0;" onclick="wizardSaveAsDraftFromLiveClick()">Save as Draft</button>
-      <button type="button" class="cta-btn" style="margin:0;" onclick="wizardPromoteNewLiveClick()">Promote to New Live</button>`;
+  if (ed && ed.kind === "live") {
+    return {
+      saveLabel: "Save as Draft",
+      promoteLabel: "Promote to New Live",
+      showBanner: true,
+      bannerHtml: `Your previous <strong>${step9EscHtml(ed.prevLiveName || "strategy")}</strong> is still running. Close it manually when ready.`,
+    };
+  }
+  return {
+    saveLabel: "Save to Draft",
+    promoteLabel: "Promote to Live",
+    showBanner: false,
+    bannerHtml: "",
+  };
+}
+
+function syncStep9LifecycleLabels() {
+  const L = getStep9LifecycleLabels();
+  ["wizard-step9-save-btn", "step9-results-save-btn"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = L.saveLabel;
+  });
+  ["wizard-step9-promote-btn", "step9-results-promote-btn"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = L.promoteLabel;
+  });
+  ["wizard-step9-banner", "step9-results-banner"].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (L.showBanner) {
+      el.style.display = "block";
+      el.innerHTML = L.bannerHtml;
+    } else {
+      el.style.display = "none";
+      el.innerHTML = "";
+    }
+  });
+}
+
+function syncStep9ResultsLifecycleUI() {
+  syncStep9LifecycleLabels();
+  const re = document.getElementById("step9-results-lifecycle-err");
+  const rc = document.getElementById("step9-results-promote-confirm");
+  if (re) { re.style.display = "none"; re.textContent = ""; }
+  if (rc) { rc.style.display = "none"; rc.textContent = ""; }
+}
+
+function step9ClearFormLifecycleMsg() {
+  const e = document.getElementById("wizard-step9-lifecycle-err");
+  if (e) { e.style.display = "none"; e.textContent = ""; }
+  const m = document.getElementById("wizard-step9-promote-msg");
+  if (m) { m.style.display = "none"; m.textContent = ""; }
+}
+
+function ensureStrategiesSession() {
+  loadUserCreds();
+  const s = window.__strategiesSession;
+  if (s && s.username && s.pin) return true;
+  openStrategiesPanel();
+  const msg = document.getElementById("ms-login-err");
+  if (msg) {
+    msg.textContent = "Enter your PIN in My Strategies above to save or promote.";
+    msg.style.display = "block";
+  }
+  return false;
+}
+
+function step9ShowPromoteConfirmation(source) {
+  const text = "Strategy promoted to live. It appears under Live in My Strategies.";
+  if (source === "results") {
+    const el = document.getElementById("step9-results-promote-confirm");
+    if (el) { el.textContent = text; el.style.display = "block"; }
+    const fm = document.getElementById("wizard-step9-promote-msg");
+    if (fm) { fm.style.display = "none"; fm.textContent = ""; }
+  } else {
+    const el = document.getElementById("wizard-step9-promote-msg");
+    if (el) { el.textContent = text; el.style.display = "block"; }
+    const rs = document.getElementById("step9-results-promote-confirm");
+    if (rs) { rs.style.display = "none"; rs.textContent = ""; }
   }
 }
 
-function wizardSaveDraftClick() {
-  const ed = window.WIZARD_EDIT;
-  if (!ed || ed.kind !== "draft") return;
-  let body;
-  try { body = Object.assign(buildStrategyLifecycleBody(), { draft_id: ed.draftId }); }
-  catch (e) { alert(e.message); return; }
-  apiFetch("/api/strategy/save-draft", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
-    .then(r => r.json())
-    .then(res => {
-      if (res.error) { alert(res.error); return; }
-      alert("Draft saved.");
-      clearWizardEdit();
-    })
-    .catch(() => alert("Save failed."));
-}
-
-function wizardPromoteDraftClick() {
-  const ed = window.WIZARD_EDIT;
-  if (!ed || ed.kind !== "draft") return;
-  let body;
-  try { body = Object.assign(buildStrategyLifecycleBody(), { draft_id: ed.draftId }); }
-  catch (e) { alert(e.message); return; }
-  apiFetch("/api/strategy/save-draft", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
-    .then(r => r.json())
-    .then(res => {
-      if (res.error) throw new Error(res.error);
-      const creds = loadUserCreds();
-      return apiFetch("/api/strategy/promote-live", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ draft_id: res.draft_id, username: creds.username, pin: creds.pin }),
-      });
-    })
-    .then(r => r.json())
-    .then(res2 => {
-      if (res2.error) throw new Error(res2.error);
-      alert("Strategy is live with OANDA.");
-      clearWizardEdit();
-    })
-    .catch(e => alert(e.message || "Promote failed."));
-}
-
-function wizardSaveAsDraftFromLiveClick() {
-  const ed = window.WIZARD_EDIT;
-  if (!ed || ed.kind !== "live") return;
-  let body;
-  try { body = Object.assign(buildStrategyLifecycleBody(), { edited_from_live_id: ed.liveId }); }
-  catch (e) { alert(e.message); return; }
-  apiFetch("/api/strategy/save-draft", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
-    .then(r => r.json())
-    .then(res => {
-      if (res.error) { alert(res.error); return; }
-      alert("Saved as new draft.");
-      clearWizardEdit();
-    })
-    .catch(() => alert("Save failed."));
-}
-
-function wizardPromoteNewLiveClick() {
-  const ed = window.WIZARD_EDIT;
-  if (!ed || ed.kind !== "live") return;
-  let base;
-  try {
-    base = buildStrategyLifecycleBody();
-  } catch (e) {
-    alert(e.message);
+function step9ShowLifecycleErr(source, message) {
+  const id = source === "results" ? "step9-results-lifecycle-err" : "wizard-step9-lifecycle-err";
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (!message) {
+    el.style.display = "none";
+    el.textContent = "";
     return;
   }
-  const body = Object.assign({}, base, { edited_from_live_id: ed.liveId });
-  apiFetch("/api/strategy/save-draft", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+  el.textContent = message;
+  el.style.display = "block";
+}
+
+function step9ClearLifecycleErr(source) {
+  step9ShowLifecycleErr(source, "");
+}
+
+function getStep9SaveDraftExtra() {
+  const ed = window.WIZARD_EDIT;
+  if (!ed || !ed.kind) return {};
+  if (ed.kind === "draft") return { draft_id: ed.draftId };
+  if (ed.kind === "live") return { edited_from_live_id: ed.liveId };
+  return {};
+}
+
+function step9LifecycleSaveDraft(source) {
+  step9ClearLifecycleErr(source);
+  if (source === "form") step9ClearFormLifecycleMsg();
+  if (source === "results") {
+    const rc = document.getElementById("step9-results-promote-confirm");
+    if (rc) { rc.style.display = "none"; rc.textContent = ""; }
+  }
+  if (!ensureStrategiesSession()) return;
+  const ed = window.WIZARD_EDIT;
+  let body;
+  try {
+    body = Object.assign(buildStrategyLifecycleBody(), getStep9SaveDraftExtra());
+  } catch (e) {
+    step9ShowLifecycleErr(source, e.message);
+    return;
+  }
+  apiFetch("/api/strategy/save-draft", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+    .then(r => r.json())
+    .then(res => {
+      if (res.error) {
+        step9ShowLifecycleErr(source, res.error);
+        return;
+      }
+      loadStrategiesPanel();
+      if (ed && ed.kind) clearWizardEdit();
+    })
+    .catch(() => step9ShowLifecycleErr(source, "Save failed."));
+}
+
+function step9LifecyclePromoteLive(source) {
+  step9ClearLifecycleErr(source);
+  if (source === "form") step9ClearFormLifecycleMsg();
+  const rc = document.getElementById("step9-results-promote-confirm");
+  if (rc && source === "results") { rc.style.display = "none"; rc.textContent = ""; }
+  if (!ensureStrategiesSession()) return;
+  const ed = window.WIZARD_EDIT;
+  const creds = loadUserCreds();
+  if (!creds || !creds.pin) {
+    step9ShowLifecycleErr(source, "PIN required.");
+    return;
+  }
+  const promoteWithDraftId = draftId => apiFetch("/api/strategy/promote-live", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ draft_id: draftId, username: creds.username, pin: creds.pin }),
+  }).then(r => r.json());
+
+  if (ed && ed.kind === "live") {
+    let base;
+    try {
+      base = buildStrategyLifecycleBody();
+    } catch (e) {
+      step9ShowLifecycleErr(source, e.message);
+      return;
+    }
+    const body = Object.assign({}, base, { edited_from_live_id: ed.liveId });
+    apiFetch("/api/strategy/save-draft", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+      .then(r => r.json())
+      .then(res => {
+        if (res.error) throw new Error(res.error);
+        return promoteWithDraftId(res.draft_id);
+      })
+      .then(res2 => {
+        if (res2.error) throw new Error(res2.error);
+        step9ShowPromoteConfirmation(source);
+        loadStrategiesPanel();
+        clearWizardEdit();
+      })
+      .catch(e => step9ShowLifecycleErr(source, e.message || "Promote failed."));
+    return;
+  }
+
+  let body;
+  try {
+    body = Object.assign(buildStrategyLifecycleBody(), ed && ed.kind === "draft" ? { draft_id: ed.draftId } : {});
+  } catch (e) {
+    step9ShowLifecycleErr(source, e.message);
+    return;
+  }
+  apiFetch("/api/strategy/save-draft", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
     .then(r => r.json())
     .then(res => {
       if (res.error) throw new Error(res.error);
-      return apiFetch("/api/strategy/promote-live", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ draft_id: res.draft_id, username: base.username, pin: base.pin }),
-      });
+      return promoteWithDraftId(res.draft_id);
     })
-    .then(r => r.json())
     .then(res2 => {
       if (res2.error) throw new Error(res2.error);
-      alert("New live strategy created. Your previous strategy is still active until you close it.");
-      clearWizardEdit();
+      step9ShowPromoteConfirmation(source);
+      loadStrategiesPanel();
+      if (ed && ed.kind) clearWizardEdit();
     })
-    .catch(e => alert(e.message || "Promote failed."));
+    .catch(e => step9ShowLifecycleErr(source, e.message || "Promote failed."));
+}
+
+function updateWizardActionRow() {
+  const go = document.getElementById("go-live-btn");
+  const row = document.getElementById("wizard-step9-lifecycle-row");
+  const ban = document.getElementById("wizard-step9-banner");
+  if (!go || !row) return;
+  const ed = window.WIZARD_EDIT;
+  if (ed && ed.kind) {
+    go.style.display = "none";
+    row.style.display = "flex";
+    if (ban) {
+      if (ed.kind === "live") ban.style.display = "block";
+      else ban.style.display = "none";
+    }
+  } else {
+    go.style.display = "block";
+    row.style.display = "none";
+    if (ban) ban.style.display = "none";
+  }
+  syncStep9LifecycleLabels();
 }
 
 // ── My Strategies panel ───────────────────────────────────────────────────────
@@ -3413,10 +3496,6 @@ function typewriter(el, text, msPerChar) {
   })();
 }
 
-function showRealTradeResponse() {
-  document.getElementById("real-trade-btn").style.display = "none";
-  document.getElementById("real-trade-response").classList.add("visible");
-}
 </script>
 
 <div id="version-stamp" style="text-align:center; font-size:11px; color:#ccc; padding:8px; margin-top:40px;">
