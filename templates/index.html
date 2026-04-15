@@ -769,6 +769,23 @@
     line-height: 1;
   }
   #strategies-panel-close:hover { color: var(--text); }
+  .wizard-field-glow .card,
+  .wizard-field-glow input[type="text"],
+  .wizard-field-glow input[type="range"],
+  .wizard-field-glow select,
+  .wizard-field-glow .timeout-btn.active,
+  .wizard-field-glow .slider-row {
+    border: 2px solid #FFA500 !important;
+    box-shadow: 0 0 8px rgba(255, 165, 0, 0.35);
+  }
+  .wizard-field-glow .card { border-radius: 10px; }
+  .strat-section-title { font-size: 13px; font-weight: 600; color: var(--muted); margin: 16px 0 8px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .strat-draft-row { display: flex; align-items: flex-start; gap: 10px; }
+  .strat-draft-row input[type="checkbox"] { margin-top: 10px; }
+  .ms-delete-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+  .btn-danger-outline { border: 1px solid var(--red); color: var(--red); background: transparent; border-radius: 8px; padding: 6px 12px; font-size: 12px; cursor: pointer; }
+  .btn-danger-outline:disabled { opacity: 0.5; cursor: not-allowed; }
+
   #strategies-panel-body {
     flex: 1; overflow-y: auto; padding: 14px 14px 24px;
   }
@@ -1203,7 +1220,10 @@
 
       <input type="text" id="name-input" placeholder="Strategy name…">
 
-      <button class="cta-btn" id="go-live-btn" onclick="goLive()">Go Live 🚀</button>
+      <div id="wizard-step9-actions-wrap" style="margin-top:16px;display:flex;flex-direction:column;gap:10px;align-items:stretch;">
+        <button class="cta-btn" id="go-live-btn" onclick="goLive()">Go Live 🚀</button>
+        <div id="wizard-alt-wrap" style="display:none;flex-wrap:wrap;gap:10px;"></div>
+      </div>
     </div>
 
     <div id="saved-state">
@@ -1237,10 +1257,18 @@
 
 <!-- My Strategies panel -->
 <div id="strategies-overlay" onclick="closeStrategiesPanel()"></div>
-<div id="strategies-panel">
+<div id="strategies-panel" onclick="event.stopPropagation()">
   <div id="strategies-panel-hdr">
     <span>My Strategies</span>
     <button id="strategies-panel-close" onclick="closeStrategiesPanel()">✕</button>
+  </div>
+  <div id="ms-session-login" style="display:none;padding:12px 16px;border-bottom:1px solid var(--border);">
+    <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">Enter your PIN to load drafts and live strategies. Your PIN stays in this tab only until you close it.</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <input id="ms-pin-input" type="password" placeholder="PIN" autocomplete="off" style="flex:1;min-width:120px;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);">
+      <button type="button" class="landing-btn" style="margin:0;" onclick="submitMsPanelPin()">Unlock</button>
+    </div>
+    <div id="ms-login-err" style="display:none;color:var(--red);font-size:12px;margin-top:8px;"></div>
   </div>
   <div id="strategies-panel-body"></div>
   <div style="text-align:center; margin-top:1.5rem;">
@@ -1269,6 +1297,7 @@ function startWizard() {
 }
 
 function startWizardFresh() {
+  clearWizardEdit();
   document.getElementById("landing").style.display = "none";
   document.getElementById("welcome-back").style.display = "none";
   document.getElementById("progress-bar").classList.remove("wizard-hidden");
@@ -1307,7 +1336,7 @@ function submitLandingSignIn() {
     if (err) { err.textContent = "Enter username and PIN"; err.style.display = "block"; }
     return;
   }
-  fetch(TRADELOG_URL + "/api/my-strategies?username=" + encodeURIComponent(u) + "&pin=" + encodeURIComponent(pin))
+  fetch("/api/strategy/my-strategies?username=" + encodeURIComponent(u) + "&pin=" + encodeURIComponent(pin))
     .then(function(r) {
       if (!r.ok) throw new Error("bad");
       return r.json();
@@ -1951,8 +1980,12 @@ function loadSummary() {
         });
       }
 
-      // Pre-fill name
-      document.getElementById("name-input").value = generateName();
+      // Pre-fill name (keep when editing draft/live from panel)
+      const ni = document.getElementById("name-input");
+      if (!window.WIZARD_EDIT || !window.WIZARD_EDIT.preserveName) {
+        ni.value = generateName();
+      }
+      updateWizardActionRow();
     })
     .catch(() => {
       statsEl.innerHTML = `<div style="color:var(--red); padding:16px;">Failed to load summary.</div>`;
@@ -1969,6 +2002,9 @@ function generateName() {
 
 const TRADELOG_URL = "https://tradelog.theonlykhalid.com";
 
+/** PIN for strategy APIs: memory-only for the tab; username persisted in localStorage. */
+window.__strategiesSession = window.__strategiesSession || null;
+
 function generatePin() {
   return String(Math.floor(100 + Math.random() * 900));
 }
@@ -1976,17 +2012,32 @@ function generatePin() {
 function loadUserCreds() {
   try {
     const raw = localStorage.getItem("candlelab_user");
-    return raw ? JSON.parse(raw) : null;
+    if (!raw) return null;
+    const j = JSON.parse(raw);
+    const s = window.__strategiesSession;
+    if (j && j.username && s && s.username === j.username && s.pin) {
+      return { username: j.username, pin: s.pin };
+    }
+    if (j && j.pin) {
+      window.__strategiesSession = { username: j.username, pin: j.pin };
+      localStorage.setItem("candlelab_user", JSON.stringify({ username: j.username }));
+      return { username: j.username, pin: j.pin };
+    }
+    return j.username ? { username: j.username, pin: null } : null;
   } catch { return null; }
 }
 
 function saveUserCreds(username, pin) {
-  localStorage.setItem("candlelab_user", JSON.stringify({ username, pin }));
+  localStorage.setItem("candlelab_user", JSON.stringify({ username: username || "" }));
+  if (pin && username) {
+    window.__strategiesSession = { username, pin };
+  }
 }
 
 function resetAccount() {
   if (confirm('This will clear your saved username and PIN. You will get a new account next time you go live. Continue?')) {
     localStorage.removeItem('candlelab_user');
+    window.__strategiesSession = null;
     alert('Account reset. You will be registered as a new user next time you go live.');
   }
 }
@@ -2038,7 +2089,6 @@ function goLive() {
       fetchAiCommentary(cfg, d);
       fetchAiTweaks(cfg, d);
 
-      // Then register strategy on tradelog
       const inst = INSTRUMENTS.find(i => i.code === state.instrument);
       const payload = {
         username:      creds.username,
@@ -2054,22 +2104,55 @@ function goLive() {
         timeout:       state.timeout,
         direction:     state.direction,
         strategy_name: name,
+        indicator_filter: state.indicator || null,
       };
 
-      fetch(`${TRADELOG_URL}/api/save-strategy`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      })
-        .then(r => r.json())
-        .then(res => {
-          if (res.username) {
-            creds.username = res.username;
-            saveUserCreds(creds.username, creds.pin);
-            showCredentialScreen(creds.username, creds.pin, isNew);
-          }
+      const afterRegister = (username) => {
+        creds.username = username;
+        saveUserCreds(creds.username, creds.pin);
+        showCredentialScreen(creds.username, creds.pin, isNew);
+      };
+
+      if (isNew) {
+        fetch(`${TRADELOG_URL}/api/save-strategy`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
         })
-        .catch(err => console.warn("tradelog save failed:", err));
+          .then(r => r.json())
+          .then(res => {
+            if (res.username) {
+              afterRegister(res.username);
+            }
+          })
+          .catch(err => console.warn("tradelog save failed:", err));
+      } else {
+        const draftBody = Object.assign({}, payload);
+        apiFetch("/api/strategy/save-draft", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(draftBody),
+        })
+          .then(r => r.json())
+          .then(draftRes => {
+            if (draftRes.error) throw new Error(draftRes.error);
+            return apiFetch("/api/strategy/promote-live", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                draft_id: draftRes.draft_id,
+                username: creds.username,
+                pin: creds.pin,
+              }),
+            });
+          })
+          .then(r => r.json())
+          .then(promo => {
+            if (promo.error) throw new Error(promo.error);
+            afterRegister(creds.username);
+          })
+          .catch(err => console.warn("go live draft/promote failed:", err));
+      }
     })
     .catch(() => {
       alert("Failed to save strategy.");
@@ -2592,6 +2675,7 @@ function applyTweak(idx, btn) {
 
 // ── Restart ───────────────────────────────────────────────────────────────────
 function restartWizard() {
+  clearWizardEdit();
   const savedInst = state.instrument;
   const savedIvl  = state.interval;
   Object.assign(state, {
@@ -2688,14 +2772,265 @@ function checkScrollHint() {
 }
 window.addEventListener("scroll", checkScrollHint, { passive: true });
 
+function clearWizardEdit() {
+  window.WIZARD_EDIT = null;
+  const m = document.getElementById("main");
+  if (m) m.classList.remove("wizard-field-glow");
+  updateWizardActionRow();
+}
+
+function labelToInstrumentCode(label) {
+  if (!label) return "EURUSD";
+  const t = INSTRUMENTS.find(i => i.label === label);
+  if (t) return t.code;
+  const compact = String(label).replace(/[/\s]/g, "").toUpperCase();
+  const u = INSTRUMENTS.find(i => i.code === compact);
+  return u ? u.code : "EURUSD";
+}
+
+function applyRowToState(row) {
+  state.instrument = labelToInstrumentCode(row.instrument);
+  state.interval = row.interval || "5m";
+  state.direction = row.direction || "both";
+  state.anchor = row.anchor || null;
+  state.anchorTip = "";
+  state.complement = row.complement || null;
+  state.connector = row.connector || "ordered";
+  state.session = (row.session && row.session !== "All") ? row.session : "All";
+  state.slMult = parseFloat(row.sl_mult) || 1;
+  state.tpMult = parseFloat(row.tp_mult) || 3;
+  state.timeout = parseInt(row.timeout, 10) || 1000;
+  state.indicator = row.indicator_filter || null;
+  const ni = document.getElementById("name-input");
+  if (ni) ni.value = (row.strategy_name || "").trim() || generateName();
+  const sl = document.getElementById("sl-slider");
+  const tp = document.getElementById("tp-slider");
+  if (sl) sl.value = Math.round(state.slMult * 10);
+  if (tp) tp.value = Math.round(state.tpMult * 10);
+  const slv = document.getElementById("sl-val");
+  const tpv = document.getElementById("tp-val");
+  if (slv) slv.textContent = state.slMult.toFixed(1) + "×";
+  if (tpv) tpv.textContent = state.tpMult.toFixed(1) + "×";
+  document.querySelectorAll(".timeout-btn").forEach(b => {
+    b.classList.toggle("active", parseInt(b.dataset.val, 10) === state.timeout);
+  });
+}
+
+function openWizardFromDraft(row) {
+  clearWizardEdit();
+  window.WIZARD_EDIT = { kind: "draft", draftId: row.id, preserveName: true };
+  document.getElementById("landing").style.display = "none";
+  document.getElementById("welcome-back").style.display = "none";
+  document.getElementById("progress-bar").classList.remove("wizard-hidden");
+  document.getElementById("header").classList.remove("wizard-hidden");
+  applyRowToState(row);
+  document.getElementById("main").classList.add("wizard-field-glow");
+  closeStrategiesPanel();
+  goStep(9);
+}
+
+function openWizardFromLive(row) {
+  clearWizardEdit();
+  window.WIZARD_EDIT = {
+    kind: "live",
+    liveId: row.id,
+    prevLiveName: row.strategy_name || "strategy",
+    preserveName: true,
+  };
+  document.getElementById("landing").style.display = "none";
+  document.getElementById("welcome-back").style.display = "none";
+  document.getElementById("progress-bar").classList.remove("wizard-hidden");
+  document.getElementById("header").classList.remove("wizard-hidden");
+  applyRowToState(row);
+  document.getElementById("main").classList.add("wizard-field-glow");
+  closeStrategiesPanel();
+  goStep(9);
+}
+
+function buildStrategyLifecycleBody(nameOverride) {
+  const creds = loadUserCreds();
+  if (!creds || !creds.pin) throw new Error("Not signed in with PIN in this session.");
+  const inst = INSTRUMENTS.find(i => i.code === state.instrument);
+  const ni = document.getElementById("name-input");
+  const name = (nameOverride != null ? nameOverride : (ni && ni.value) || "").trim() || generateName();
+  return {
+    username: creds.username,
+    pin: creds.pin,
+    strategy_name: name,
+    instrument: inst ? inst.label : state.instrument,
+    interval: state.interval,
+    anchor: state.anchor,
+    complement: state.complement,
+    connector: state.connector || "ordered",
+    session: state.session || "All",
+    sl_mult: state.slMult,
+    tp_mult: state.tpMult,
+    timeout: state.timeout,
+    direction: state.direction,
+    indicator_filter: state.indicator || null,
+  };
+}
+
+function updateWizardActionRow() {
+  const go = document.getElementById("go-live-btn");
+  const wrap = document.getElementById("wizard-alt-wrap");
+  if (!go || !wrap) return;
+  const ed = window.WIZARD_EDIT;
+  wrap.innerHTML = "";
+  wrap.style.display = "none";
+  go.style.display = "block";
+  if (!ed || !ed.kind) return;
+  go.style.display = "none";
+  wrap.style.display = "flex";
+  if (ed.kind === "draft") {
+    wrap.innerHTML = `
+      <button type="button" class="landing-btn" style="margin:0;" onclick="wizardSaveDraftClick()">Save to Draft</button>
+      <button type="button" class="cta-btn" style="margin:0;" onclick="wizardPromoteDraftClick()">Promote to Live</button>`;
+  } else if (ed.kind === "live") {
+    const pn = String(ed.prevLiveName || "strategy").replace(/</g, "");
+    wrap.innerHTML = `
+      <div style="width:100%;font-size:12px;color:#ffb347;padding:8px;background:rgba(255,165,0,0.08);border-radius:8px;border:1px solid #FFA500;">
+        Your previous <strong>${pn}</strong> is still running. Close it manually when ready.
+      </div>
+      <button type="button" class="landing-btn" style="margin:0;" onclick="wizardSaveAsDraftFromLiveClick()">Save as Draft</button>
+      <button type="button" class="cta-btn" style="margin:0;" onclick="wizardPromoteNewLiveClick()">Promote to New Live</button>`;
+  }
+}
+
+function wizardSaveDraftClick() {
+  const ed = window.WIZARD_EDIT;
+  if (!ed || ed.kind !== "draft") return;
+  let body;
+  try { body = Object.assign(buildStrategyLifecycleBody(), { draft_id: ed.draftId }); }
+  catch (e) { alert(e.message); return; }
+  apiFetch("/api/strategy/save-draft", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+    .then(r => r.json())
+    .then(res => {
+      if (res.error) { alert(res.error); return; }
+      alert("Draft saved.");
+      clearWizardEdit();
+    })
+    .catch(() => alert("Save failed."));
+}
+
+function wizardPromoteDraftClick() {
+  const ed = window.WIZARD_EDIT;
+  if (!ed || ed.kind !== "draft") return;
+  let body;
+  try { body = Object.assign(buildStrategyLifecycleBody(), { draft_id: ed.draftId }); }
+  catch (e) { alert(e.message); return; }
+  apiFetch("/api/strategy/save-draft", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+    .then(r => r.json())
+    .then(res => {
+      if (res.error) throw new Error(res.error);
+      const creds = loadUserCreds();
+      return apiFetch("/api/strategy/promote-live", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ draft_id: res.draft_id, username: creds.username, pin: creds.pin }),
+      });
+    })
+    .then(r => r.json())
+    .then(res2 => {
+      if (res2.error) throw new Error(res2.error);
+      alert("Strategy is live with OANDA.");
+      clearWizardEdit();
+    })
+    .catch(e => alert(e.message || "Promote failed."));
+}
+
+function wizardSaveAsDraftFromLiveClick() {
+  const ed = window.WIZARD_EDIT;
+  if (!ed || ed.kind !== "live") return;
+  let body;
+  try { body = Object.assign(buildStrategyLifecycleBody(), { edited_from_live_id: ed.liveId }); }
+  catch (e) { alert(e.message); return; }
+  apiFetch("/api/strategy/save-draft", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+    .then(r => r.json())
+    .then(res => {
+      if (res.error) { alert(res.error); return; }
+      alert("Saved as new draft.");
+      clearWizardEdit();
+    })
+    .catch(() => alert("Save failed."));
+}
+
+function wizardPromoteNewLiveClick() {
+  const ed = window.WIZARD_EDIT;
+  if (!ed || ed.kind !== "live") return;
+  let base;
+  try {
+    base = buildStrategyLifecycleBody();
+  } catch (e) {
+    alert(e.message);
+    return;
+  }
+  const body = Object.assign({}, base, { edited_from_live_id: ed.liveId });
+  apiFetch("/api/strategy/save-draft", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+    .then(r => r.json())
+    .then(res => {
+      if (res.error) throw new Error(res.error);
+      return apiFetch("/api/strategy/promote-live", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ draft_id: res.draft_id, username: base.username, pin: base.pin }),
+      });
+    })
+    .then(r => r.json())
+    .then(res2 => {
+      if (res2.error) throw new Error(res2.error);
+      alert("New live strategy created. Your previous strategy is still active until you close it.");
+      clearWizardEdit();
+    })
+    .catch(e => alert(e.message || "Promote failed."));
+}
+
 // ── My Strategies panel ───────────────────────────────────────────────────────
 function openStrategiesPanel() {
-  // My Strategies overlay:
-  // - Lightweight “account” view keyed by device UUID (see initUuid).
-  // - Loads current live PnL and trade counts from the backend and renders cards.
   document.getElementById("strategies-overlay").classList.add("open");
   document.getElementById("strategies-panel").classList.add("open");
+  const login = document.getElementById("ms-session-login");
+  const stored = (function() {
+    try {
+      const raw = localStorage.getItem("candlelab_user");
+      return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+  })();
+  const s = window.__strategiesSession;
+  const hasSession = stored && stored.username && s && s.username === stored.username && s.pin;
+  if (login) login.style.display = hasSession ? "none" : "block";
   loadStrategiesPanel();
+}
+
+function submitMsPanelPin() {
+  const err = document.getElementById("ms-login-err");
+  if (err) { err.style.display = "none"; err.textContent = ""; }
+  const stored = (function() {
+    try {
+      const raw = localStorage.getItem("candlelab_user");
+      return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+  })();
+  const u = stored && stored.username ? stored.username.trim() : "";
+  const pin = (document.getElementById("ms-pin-input") || {}).value.trim();
+  if (!u || !pin) {
+    if (err) { err.textContent = "Username missing from saved account or PIN empty."; err.style.display = "block"; }
+    return;
+  }
+  fetch("/api/strategy/my-strategies?username=" + encodeURIComponent(u) + "&pin=" + encodeURIComponent(pin))
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) throw new Error("bad");
+      saveUserCreds(u, pin);
+      const login = document.getElementById("ms-session-login");
+      if (login) login.style.display = "none";
+      const pi = document.getElementById("ms-pin-input");
+      if (pi) pi.value = "";
+      loadStrategiesPanel();
+    })
+    .catch(() => {
+      if (err) { err.textContent = "Wrong PIN or unknown user."; err.style.display = "block"; }
+    });
 }
 
 function closeStrategiesPanel() {
@@ -2703,44 +3038,171 @@ function closeStrategiesPanel() {
   document.getElementById("strategies-panel").classList.remove("open");
 }
 
+window.__msDraftDeleteMode = false;
+
+function toggleMsDraftDeleteMode() {
+  window.__msDraftDeleteMode = !window.__msDraftDeleteMode;
+  loadStrategiesPanel();
+}
+
 function loadStrategiesPanel() {
   const body = document.getElementById("strategies-panel-body");
   body.innerHTML = `<div class="spinner-wrap"><div class="spinner"></div><span>Loading…</span></div>`;
 
   const creds = loadUserCreds();
-  if (!creds || !creds.username || !creds.pin) {
+  if (!creds || !creds.username) {
     body.innerHTML = `<div style="padding:24px 8px; text-align:center; color:var(--muted); font-size:14px; line-height:1.65;">
       No account found. Complete the wizard and hit Go Live to create your account.
     </div>`;
     return;
   }
+  if (!creds.pin) {
+    body.innerHTML = `<div style="padding:16px 8px; text-align:center; color:var(--muted); font-size:13px;">
+      Unlock with your PIN above to view drafts and live strategies.
+    </div>`;
+    return;
+  }
 
-  fetch(`${TRADELOG_URL}/api/my-strategies?username=${encodeURIComponent(creds.username)}&pin=${encodeURIComponent(creds.pin)}`)
+  fetch(`/api/strategy/my-strategies?username=${encodeURIComponent(creds.username)}&pin=${encodeURIComponent(creds.pin)}`)
     .then(r => r.json())
     .then(data => {
+      if (data.error) throw new Error(data.error);
       body.innerHTML = "";
-      const strategies = data.strategies || [];
-      if (strategies.length === 0) {
-        body.innerHTML = `<div style="padding:24px 8px; text-align:center; color:var(--muted); font-size:14px; line-height:1.65;">
-          No strategies yet. Complete the wizard and hit Go Live to launch your first one.
-        </div>`;
-        return;
-      }
-      // Show username at top
       const hdr = document.createElement("div");
       hdr.style.cssText = "padding:8px 12px 4px; font-size:12px; color:var(--muted);";
       hdr.innerHTML = `Logged in as <strong>${creds.username}</strong> <span style="color:var(--accent); cursor:pointer; font-size:11px;" onclick="editUsername()">edit</span>`;
       body.appendChild(hdr);
 
-      strategies.forEach(s => {
-        const card = buildStratCard(s);
-        body.appendChild(card);
-        // Fetch live P&L for each strategy
-        fetchStratPnl(s, card);
-      });
+      const drafts = data.drafts || [];
+      const live = data.live || [];
+
+      const secD = document.createElement("div");
+      secD.innerHTML = `<div class="strat-section-title">Drafts</div>`;
+      const delBar = document.createElement("div");
+      delBar.className = "ms-delete-bar";
+      delBar.innerHTML = `
+        <label style="font-size:12px;cursor:pointer;display:flex;align-items:center;gap:6px;color:var(--muted);">
+          <input type="checkbox" id="ms-del-toggle" ${window.__msDraftDeleteMode ? "checked" : ""} onchange="toggleMsDraftDeleteMode()"> Delete mode
+        </label>
+        <button type="button" class="btn-danger-outline" id="ms-del-selected" style="display:${window.__msDraftDeleteMode ? "inline-block" : "none"};" onclick="deleteSelectedDrafts()">Delete selected</button>`;
+      secD.appendChild(delBar);
+      body.appendChild(secD);
+
+      if (!drafts.length) {
+        const em = document.createElement("div");
+        em.style.cssText = "padding:8px 12px 16px; font-size:13px; color:var(--muted);";
+        em.textContent = "No drafts.";
+        body.appendChild(em);
+      } else {
+        drafts.forEach(d => {
+          body.appendChild(buildDraftCard(d));
+        });
+      }
+
+      const secL = document.createElement("div");
+      secL.innerHTML = `<div class="strat-section-title">Live</div>`;
+      body.appendChild(secL);
+      if (!live.length) {
+        const em = document.createElement("div");
+        em.style.cssText = "padding:8px 12px 16px; font-size:13px; color:var(--muted);";
+        em.textContent = "No active live strategies.";
+        body.appendChild(em);
+      } else {
+        live.forEach(l => {
+          body.appendChild(buildLiveStratCard(l));
+        });
+      }
     })
     .catch(() => {
       body.innerHTML = `<div style="padding:20px; color:var(--red); font-size:13px;">Failed to load strategies.</div>`;
+    });
+}
+
+function buildDraftCard(d) {
+  const card = document.createElement("div");
+  card.className = "strat-card";
+  card.dataset.draftId = d.id;
+  const when = d.saved_at ? new Date(d.saved_at).toLocaleString() : "—";
+  const showCb = !!window.__msDraftDeleteMode;
+  card.innerHTML = `
+    <div class="strat-draft-row">
+      ${showCb ? `<input type="checkbox" class="draft-sel-cb" data-draft-id="${d.id}" aria-label="Select draft">` : ""}
+      <div style="flex:1;cursor:pointer;" class="draft-card-main">
+        <div class="strat-card-top">
+          <div class="strat-dot strat-dot-amber" style="margin-top:5px;"></div>
+          <div class="strat-card-name">${(d.strategy_name || "Draft").replace(/</g, "")}</div>
+        </div>
+        <div class="strat-card-meta">${(d.instrument || "").replace(/</g, "")} · ${d.interval || ""} · ${(d.anchor || "").replace(/</g, "")} · Saved ${when}</div>
+      </div>
+    </div>`;
+  const main = card.querySelector(".draft-card-main");
+  if (main) {
+    main.addEventListener("click", () => openWizardFromDraft(d));
+  }
+  return card;
+}
+
+function buildLiveStratCard(l) {
+  const card = document.createElement("div");
+  card.className = "strat-card";
+  card.dataset.liveId = l.id;
+  const when = l.go_live_at ? new Date(l.go_live_at).toLocaleString() : "—";
+  card.innerHTML = `
+    <div style="cursor:pointer;" class="live-card-main">
+      <div class="strat-card-top">
+        <div class="strat-dot strat-dot-green" style="margin-top:5px;"></div>
+        <div class="strat-card-name">${(l.strategy_name || "Live").replace(/</g, "")}</div>
+      </div>
+      <div class="strat-card-meta">${(l.instrument || "").replace(/</g, "")} · Live since ${when}</div>
+    </div>
+    <div style="margin-top:10px;">
+      <button type="button" class="btn-danger-outline" onclick="closeLiveStrat(${l.id}, this)">Close out</button>
+    </div>`;
+  const main = card.querySelector(".live-card-main");
+  if (main) main.addEventListener("click", () => openWizardFromLive(l));
+  const s = Object.assign({}, l);
+  fetchStratPnl(s, card);
+  return card;
+}
+
+function deleteSelectedDrafts() {
+  const creds = loadUserCreds();
+  if (!creds || !creds.pin) return;
+  const ids = Array.from(document.querySelectorAll(".draft-sel-cb:checked")).map(cb => parseInt(cb.dataset.draftId, 10)).filter(Boolean);
+  if (!ids.length) { alert("Select at least one draft."); return; }
+  if (!confirm(`Delete ${ids.length} draft(s)? This cannot be undone.`)) return;
+  apiFetch("/api/strategy/delete-draft", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ draft_ids: ids, username: creds.username, pin: creds.pin }),
+  })
+    .then(r => r.json())
+    .then(res => {
+      if (res.error) { alert(res.error); return; }
+      window.__msDraftDeleteMode = false;
+      loadStrategiesPanel();
+    })
+    .catch(() => alert("Delete failed."));
+}
+
+function closeLiveStrat(liveId, btn) {
+  const creds = loadUserCreds();
+  if (!creds || !creds.pin) return;
+  if (!confirm("Close this strategy? It stops new OANDA signals; you manage open positions manually.")) return;
+  if (btn) { btn.disabled = true; }
+  apiFetch("/api/strategy/close-live", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ live_id: liveId, username: creds.username, pin: creds.pin }),
+  })
+    .then(r => r.json())
+    .then(res => {
+      if (res.error) { alert(res.error); if (btn) btn.disabled = false; return; }
+      loadStrategiesPanel();
+    })
+    .catch(() => {
+      alert("Close failed.");
+      if (btn) btn.disabled = false;
     });
 }
 
@@ -2759,7 +3221,7 @@ function fetchStratPnl(s, card) {
     timeout:      s.timeout || 1000,
     direction:    s.direction || "both",
     preview:      true,
-    saved_at:     s.saved_at,
+    saved_at:     s.saved_at || s.go_live_at,
   };
 
   apiFetch("/api/strategy-pnl", {

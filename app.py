@@ -19,8 +19,16 @@ from patterns import detect_all, PATTERNS
 from cache import cache_set, cache_get
 from scheduler import start_scheduler
 from strategy_store import (
-    save_strategy, get_strategies_by_device,
-    init_strategy_tables, load_strategy_trades, delete_strategy,
+    save_strategy,
+    get_strategies_by_device,
+    init_strategy_tables,
+    load_strategy_trades,
+    delete_strategy,
+    lifecycle_save_draft,
+    lifecycle_promote_live,
+    lifecycle_close_live,
+    lifecycle_delete_drafts,
+    lifecycle_list_my_strategies,
 )
 from indicators import check_ma_cross, check_rsi_extreme, check_ma_stable
 
@@ -1248,6 +1256,62 @@ def api_strategy_pnl():
         "signals": result.get("signals", 0),
         "win_pct": result.get("win_pct", 0.0),
     })
+
+
+@app.route("/api/strategy/save-draft", methods=["POST"])
+def api_strategy_save_draft():
+    body = request.get_json(force=True)
+    try:
+        data, code = lifecycle_save_draft(body)
+        return jsonify(data), code
+    except Exception as e:
+        log.exception("api_strategy_save_draft")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/strategy/promote-live", methods=["POST"])
+def api_strategy_promote_live():
+    body = request.get_json(force=True)
+    try:
+        data, code = lifecycle_promote_live(body)
+        return jsonify(data), code
+    except Exception as e:
+        log.exception("api_strategy_promote_live")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/strategy/close-live", methods=["POST"])
+def api_strategy_close_live():
+    body = request.get_json(force=True)
+    try:
+        data, code = lifecycle_close_live(body)
+        return jsonify(data), code
+    except Exception as e:
+        log.exception("api_strategy_close_live")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/strategy/delete-draft", methods=["DELETE"])
+def api_strategy_delete_draft():
+    body = request.get_json(silent=True) or {}
+    try:
+        data, code = lifecycle_delete_drafts(body)
+        return jsonify(data), code
+    except Exception as e:
+        log.exception("api_strategy_delete_draft")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/strategy/my-strategies", methods=["GET"])
+def api_strategy_my_strategies():
+    username = request.args.get("username") or ""
+    pin = request.args.get("pin") or ""
+    try:
+        data, code = lifecycle_list_my_strategies(username, pin)
+        return jsonify(data), code
+    except Exception as e:
+        log.exception("api_strategy_my_strategies")
+        return jsonify({"error": str(e)}), 500
 
 
 init_strategy_tables()
