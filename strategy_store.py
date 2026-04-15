@@ -58,10 +58,12 @@ def _ensure_draft_live_tables(cur) -> None:
             indicator_filter JSONB,
             go_live_at TIMESTAMPTZ DEFAULT NOW(),
             closed_at TIMESTAMPTZ,
-            user_strategies_id INT,
             saved_at TIMESTAMPTZ DEFAULT NOW()
         );
         """
+    )
+    cur.execute(
+        "ALTER TABLE candlelab_strategies_live DROP COLUMN IF EXISTS user_strategies_id"
     )
     cur.execute(
         """
@@ -97,15 +99,6 @@ def _verify_user_pin(cur, username: str, pin: str) -> bool:
         return False
     stored = row.get("pin_hash")
     return stored is not None and str(stored) == str(pin)
-
-
-def _fetch_user_pin_hash(cur, username: str) -> str | None:
-    cur.execute(
-        "SELECT pin_hash FROM user_strategies WHERE username=%s LIMIT 1",
-        (username,),
-    )
-    row = cur.fetchone()
-    return row["pin_hash"] if row else None
 
 
 def _row_to_strategy_dict(r: dict) -> dict:
@@ -238,16 +231,8 @@ def lifecycle_promote_live(body: dict) -> tuple[dict, int]:
         if not dr:
             return {"error": "draft_not_found"}, 404
         dr = dict(dr)
-        pin_hash = _fetch_user_pin_hash(cur, username)
-        if not pin_hash:
-            return {"error": "user_not_found"}, 404
         direction = _normalize_strategy_direction(dr.get("direction", "both"))
         ind = dr.get("indicator_filter")
-        ind_us = (
-            json.dumps(ind)
-            if ind is not None and isinstance(ind, (dict, list))
-            else ind
-        )
         cur.execute(
             """
             INSERT INTO candlelab_strategies_live (
@@ -275,41 +260,6 @@ def lifecycle_promote_live(body: dict) -> tuple[dict, int]:
         live_row = cur.fetchone()
         live_id = live_row["id"]
         cur.execute(
-            """
-            INSERT INTO user_strategies (
-                username, pin_hash, instrument, interval, anchor,
-                complement, connector, session, sl_mult, tp_mult,
-                timeout, direction, strategy_name, indicator_filter, active
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, TRUE)
-            RETURNING id
-            """,
-            (
-                username,
-                pin_hash,
-                dr.get("instrument"),
-                dr.get("interval"),
-                dr.get("anchor"),
-                dr.get("complement"),
-                dr.get("connector") or "ordered",
-                dr.get("session") or "All",
-                float(dr.get("sl_mult") or 1.0),
-                float(dr.get("tp_mult") or 3.0),
-                int(dr.get("timeout") or 1000),
-                direction,
-                dr.get("strategy_name"),
-                ind_us,
-            ),
-        )
-        us_row = cur.fetchone()
-        us_id = us_row["id"]
-        cur.execute(
-            """
-            UPDATE candlelab_strategies_live
-            SET user_strategies_id=%s WHERE id=%s
-            """,
-            (us_id, live_id),
-        )
-        cur.execute(
             "DELETE FROM candlelab_strategies_draft WHERE id=%s",
             (int(draft_id),),
         )
@@ -330,7 +280,7 @@ def lifecycle_close_live(body: dict) -> tuple[dict, int]:
             return {"error": "auth_failed"}, 401
         cur.execute(
             """
-            SELECT id, user_strategies_id FROM candlelab_strategies_live
+            SELECT id FROM candlelab_strategies_live
             WHERE id=%s AND username=%s AND closed_at IS NULL
             """,
             (int(live_id), username),
@@ -338,7 +288,6 @@ def lifecycle_close_live(body: dict) -> tuple[dict, int]:
         lr = cur.fetchone()
         if not lr:
             return {"error": "not_found"}, 404
-        us_id = lr.get("user_strategies_id")
         cur.execute(
             """
             UPDATE candlelab_strategies_live
@@ -346,11 +295,6 @@ def lifecycle_close_live(body: dict) -> tuple[dict, int]:
             """,
             (int(live_id),),
         )
-        if us_id:
-            cur.execute(
-                "UPDATE user_strategies SET active=FALSE WHERE id=%s",
-                (us_id,),
-            )
         conn.commit()
     return {"success": True}, 200
 
@@ -405,7 +349,7 @@ def lifecycle_list_my_strategies(username: str, pin: str) -> tuple[dict, int]:
             """
             SELECT id, username, strategy_name, instrument, interval, anchor, complement,
                    connector, direction, session, sl_mult, tp_mult, timeout, indicator_filter,
-                   go_live_at, closed_at, user_strategies_id, saved_at
+                   go_live_at, closed_at, saved_at
             FROM candlelab_strategies_live
             WHERE username=%s AND closed_at IS NULL
             ORDER BY go_live_at DESC
