@@ -599,9 +599,6 @@
     55%       { box-shadow: 0 0 0 14px rgba(76,175,80,0); }
   }
 
-  /* Go Live button — amber/gold to signal final commitment */
-  #go-live-btn { background: #F5A623; }
-  #go-live-btn:hover:not(:disabled) { opacity: 0.88; }
 
   /* Hide header + progress until wizard starts */
   #progress-bar.wizard-hidden, #header.wizard-hidden { display: none !important; }
@@ -1171,7 +1168,7 @@
   <!-- Step 9: Summary -->
   <div class="step" id="step-9">
     <div class="step-title">Your strategy</div>
-    <div class="step-subtitle">Here's your completed strategy. Review the results and when you're ready, go live.</div>
+    <div class="step-subtitle">Here's your completed strategy. Review the results, then use Save to Draft or Promote to Live. If a PIN is required, My Strategies opens for you to unlock.</div>
 
     <div id="wizard-step9-form">
       <div class="card" style="cursor:default; flex-direction:column; align-items:stretch; padding:0;">
@@ -1192,11 +1189,10 @@
         <div id="wizard-step9-banner" style="display:none;width:100%;font-size:12px;color:#ffb347;padding:8px;box-sizing:border-box;background:rgba(255,165,0,0.08);border-radius:8px;border:1px solid #FFA500;"></div>
         <div id="wizard-step9-lifecycle-err" style="display:none;color:var(--red);font-size:12px;"></div>
         <div id="wizard-step9-promote-msg" style="display:none;color:var(--accent);font-size:13px;font-weight:600;"></div>
-        <div id="wizard-step9-lifecycle-row" style="display:none;flex-wrap:wrap;gap:10px;">
+        <div id="wizard-step9-lifecycle-row" style="display:flex;flex-wrap:wrap;gap:10px;">
           <button type="button" class="landing-btn" style="margin:0;flex:1;min-width:140px;" id="wizard-step9-save-btn" onclick="step9LifecycleSaveDraft('form')">Save to Draft</button>
           <button type="button" class="cta-btn" style="margin:0;flex:1;min-width:140px;" id="wizard-step9-promote-btn" onclick="step9LifecyclePromoteLive('form')">Promote to Live</button>
         </div>
-        <button class="cta-btn" id="go-live-btn" onclick="goLive()">Go Live 🚀</button>
       </div>
     </div>
 
@@ -1889,7 +1885,7 @@ function buildConfig(preview) {
   // Consolidate the current wizard state into the backend config payload expected by
   // `/api/finalise`. This function is used in two modes:
   // - preview=true: light-weight response to update the live preview on the sliders step
-  // - preview=false: full response used when saving "Go Live" / rendering charts
+  // - preview=false: full response used when rendering charts after summary
   const cfg = {
     instrument: state.instrument,
     interval: state.interval,
@@ -1929,6 +1925,37 @@ function goStep(n) {
   }
 }
 
+/** Full `/api/finalise` (charts + trade log), then switches from the step-9 summary form to the results layout. */
+function revealStep9ResultsFromFinalise() {
+  if (state.currentStep !== 9) return Promise.resolve();
+  const name = document.getElementById("name-input").value.trim() || generateName();
+  const cfg = buildConfig(false);
+  cfg.name = name;
+  return apiFetch("/api/finalise", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(cfg),
+  })
+    .then(r => r.json())
+    .then(d => {
+      if (state.currentStep !== 9) return;
+      if (d.error) {
+        alert(d.error || "Failed to load chart results.");
+        return;
+      }
+      state.finalResult = d;
+      document.getElementById("wizard-step9-form").classList.add("hidden");
+      document.getElementById("saved-state").classList.add("visible");
+      renderCharts(d);
+      renderStatsTable(d.chart_trades, state.slMult, state.tpMult);
+      renderTradeLog(d.chart_trades, state.slMult, state.tpMult);
+      fetchAiCommentary(cfg, d);
+      fetchAiTweaks(cfg, d);
+      syncStep9ResultsLifecycleUI();
+    })
+    .catch(() => alert("Failed to load chart results."));
+}
+
 function loadSummary() {
   // API chain (Step 8 → Step 9):
   // - Trigger: entering Step 9 (either via CTA or step transition hook)
@@ -1947,6 +1974,10 @@ function loadSummary() {
   })
     .then(r => r.json())
     .then(d => {
+      if (d.error) {
+        statsEl.innerHTML = `<div style="color:var(--red); padding:16px;">${d.error}</div>`;
+        return;
+      }
       state.finalResult = d;
       statsEl.innerHTML = `
         <div class="stat-row"><span class="stat-label">Instrument</span><span class="stat-value">${state.instrument}</span></div>
@@ -1975,6 +2006,7 @@ function loadSummary() {
         ni.value = generateName();
       }
       updateWizardActionRow();
+      revealStep9ResultsFromFinalise();
     })
     .catch(() => {
       statsEl.innerHTML = `<div style="color:var(--red); padding:16px;">Failed to load summary.</div>`;
@@ -1993,10 +2025,6 @@ const TRADELOG_URL = "https://tradelog.theonlykhalid.com";
 
 /** PIN for strategy APIs: memory-only for the tab; username persisted in localStorage. */
 window.__strategiesSession = window.__strategiesSession || null;
-
-function generatePin() {
-  return String(Math.floor(100 + Math.random() * 900));
-}
 
 function loadUserCreds() {
   try {
@@ -2024,106 +2052,11 @@ function saveUserCreds(username, pin) {
 }
 
 function resetAccount() {
-  if (confirm('This will clear your saved username and PIN. You will get a new account next time you go live. Continue?')) {
-    localStorage.removeItem('candlelab_user');
+  if (confirm("This will clear your saved username and PIN. Continue?")) {
+    localStorage.removeItem("candlelab_user");
     window.__strategiesSession = null;
-    alert('Account reset. You will be registered as a new user next time you go live.');
+    alert("Account reset. Register or unlock with your PIN in My Strategies when you save or promote a strategy.");
   }
-}
-
-function showCredentialScreen(username, pin, isNew) {
-  const wrap = document.getElementById("saved-state");
-  const existingCred = document.getElementById("cred-screen");
-  if (existingCred) existingCred.remove();
-
-  const div = document.createElement("div");
-  div.id = "cred-screen";
-  div.style.cssText = "background:var(--card);border-radius:12px;padding:24px;margin-bottom:20px;text-align:center;border:2px solid var(--accent);";
-  div.innerHTML = `
-    <div style="font-size:22px;margin-bottom:4px;">🎉 Strategy Live!</div>
-    ${isNew ? `<div style="font-size:13px;color:var(--muted);margin-bottom:16px;">Your login details — <strong>screenshot this now!</strong></div>` : `<div style="font-size:13px;color:var(--muted);margin-bottom:16px;">Strategy added to your account.</div>`}
-    <div style="font-size:28px;font-weight:700;color:var(--accent);letter-spacing:2px;margin-bottom:8px;">${username}</div>
-    <div style="font-size:36px;font-weight:800;letter-spacing:8px;margin-bottom:16px;">${pin}</div>
-    ${isNew ? `<div style="font-size:12px;color:var(--muted);">Username · PIN — use these to view your strategies on any device</div>` : ""}
-  `;
-  wrap.prepend(div);
-}
-
-function goLive() {
-  const name = document.getElementById("name-input").value.trim() || generateName();
-  const cfg = buildConfig(false);
-  cfg.name = name;
-
-  // Get or create user credentials
-  let creds = loadUserCreds();
-  const isNew = !creds;
-  if (isNew) {
-    creds = { username: null, pin: generatePin() };
-  }
-
-  // First save to candlelab backend
-  apiFetch("/api/finalise", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(cfg),
-  })
-    .then(r => r.json())
-    .then(d => {
-      state.finalResult = d;
-      document.getElementById("wizard-step9-form").classList.add("hidden");
-      document.getElementById("saved-state").classList.add("visible");
-      renderCharts(d);
-      renderStatsTable(d.chart_trades, state.slMult, state.tpMult);
-      renderTradeLog(d.chart_trades, state.slMult, state.tpMult);
-      fetchAiCommentary(cfg, d);
-      fetchAiTweaks(cfg, d);
-
-      const inst = INSTRUMENTS.find(i => i.code === state.instrument);
-      const payload = {
-        username:      creds.username,
-        pin:           creds.pin,
-        instrument:    inst ? inst.label : state.instrument,
-        interval:      state.interval,
-        anchor:        state.anchor,
-        complement:    state.complement,
-        connector:     state.connector,
-        session:       state.session,
-        sl_mult:       state.slMult,
-        tp_mult:       state.tpMult,
-        timeout:       state.timeout,
-        direction:     state.direction,
-        strategy_name: name,
-        indicator_filter: state.indicator || null,
-      };
-
-      const afterRegister = (username) => {
-        creds.username = username;
-        saveUserCreds(creds.username, creds.pin);
-        showCredentialScreen(creds.username, creds.pin, isNew);
-      };
-
-      if (isNew) {
-        fetch(`${TRADELOG_URL}/api/save-strategy`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        })
-          .then(r => r.json())
-          .then(res => {
-            if (res.username) {
-              afterRegister(res.username);
-            }
-            syncStep9ResultsLifecycleUI();
-          })
-          .catch(err => console.warn("tradelog save failed:", err));
-      } else {
-        saveUserCreds(creds.username, creds.pin);
-        syncStep9ResultsLifecycleUI();
-      }
-    })
-    .catch(() => {
-      alert("Failed to save strategy.");
-    });
 }
 
 // ── Charts (server-rendered PNG from `/api/finalise`) ─────────────────────────
@@ -3064,22 +2997,13 @@ function step9LifecyclePromoteLive(source) {
 }
 
 function updateWizardActionRow() {
-  const go = document.getElementById("go-live-btn");
   const row = document.getElementById("wizard-step9-lifecycle-row");
   const ban = document.getElementById("wizard-step9-banner");
-  if (!go || !row) return;
+  if (row) row.style.display = "flex";
   const ed = window.WIZARD_EDIT;
-  if (ed && ed.kind) {
-    go.style.display = "none";
-    row.style.display = "flex";
-    if (ban) {
-      if (ed.kind === "live") ban.style.display = "block";
-      else ban.style.display = "none";
-    }
-  } else {
-    go.style.display = "block";
-    row.style.display = "none";
-    if (ban) ban.style.display = "none";
+  if (ban) {
+    if (ed && ed.kind === "live") ban.style.display = "block";
+    else ban.style.display = "none";
   }
   syncStep9LifecycleLabels();
 }
@@ -3205,7 +3129,7 @@ function loadStrategiesPanel() {
   const creds = loadUserCreds();
   if (!creds || !creds.username) {
     body.innerHTML = `<div style="padding:24px 8px; text-align:center; color:var(--muted); font-size:14px; line-height:1.65;">
-      No account found. Complete the wizard and hit Go Live to create your account.
+      No account found. Use <strong>Save to Draft</strong> or <strong>Promote to Live</strong> on step 9, or register below.
     </div>`;
     return;
   }
