@@ -1,7 +1,6 @@
 """
 strategy_store.py — PostgreSQL persistence for user strategies
 """
-import hashlib
 import json
 import logging
 import random
@@ -28,10 +27,6 @@ ANIMALS = ["Falcon","Wolf","Eagle","Lynx","Raven","Panther","Hawk",
 def _auto_name() -> str:
     """Generate a human-readable strategy name for users who skip naming."""
     return f"{random.choice(VERBS)} {random.choice(COLOURS)} {random.choice(ANIMALS)}"
-
-
-def _hash_pin(pin: str) -> str:
-    return hashlib.sha256((pin or "").encode()).hexdigest()
 
 
 def _normalize_strategy_direction(raw) -> str:
@@ -100,7 +95,8 @@ def _verify_user_pin(cur, username: str, pin: str) -> bool:
     row = cur.fetchone()
     if not row:
         return False
-    return row["pin_hash"] == _hash_pin(pin)
+    stored = row.get("pin_hash")
+    return stored is not None and str(stored) == str(pin)
 
 
 def _fetch_user_pin_hash(cur, username: str) -> str | None:
