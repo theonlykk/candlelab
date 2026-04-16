@@ -1,0 +1,14 @@
+Every response over 50 lines MUST start with exactly:
+CHECKSUM: There is a checksum at the bottom. If you do not reach it, stop and tell the user before proceeding.
+And end with exactly:
+CHECKSUM: This message is N lines.
+Count every line including blank lines. No exceptions.
+
+Build constraints:
+- No scipy, QuantLib, or ta-lib. All indicators from scratch in numpy/pandas.
+- Never use git add -A. Always stage explicit filenames.
+- Every change must be committed and pushed before reporting done.
+- No clarifying questions before building.
+
+Do not modify any other files. Confirm the file was created.
+Run it in d:\candlelab, then d:\oanda-trading and d:\pipshed
