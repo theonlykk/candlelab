@@ -38,6 +38,24 @@ def _normalize_strategy_direction(raw) -> str:
     return "both"
 
 
+def _complement_present(raw) -> bool:
+    if raw is None:
+        return False
+    return bool(str(raw).strip())
+
+
+def _connector_for_persist(raw_complement, raw_connector) -> str | None:
+    """
+    Store connector only when a complement is set; otherwise NULL in Postgres (not 'ordered').
+    """
+    if not _complement_present(raw_complement):
+        return None
+    if raw_connector is None:
+        return "ordered"
+    s = str(raw_connector).strip()
+    return s if s else "ordered"
+
+
 def _ensure_draft_live_tables(cur) -> None:
     """
     indicator_filter (JSONB on live/draft): store JSON objects, e.g.
@@ -163,7 +181,7 @@ def lifecycle_save_draft(body: dict) -> tuple[dict, int]:
         interval = body.get("interval", "5m")
         anchor = body.get("anchor") or ""
         complement = body.get("complement")
-        connector = body.get("connector") or "ordered"
+        connector = _connector_for_persist(complement, body.get("connector"))
         direction = _normalize_strategy_direction(body.get("direction", "both"))
         session = body.get("session") or "All"
         sl_mult = float(body.get("sl_mult", 1.0))
@@ -276,7 +294,7 @@ def lifecycle_promote_live(body: dict) -> tuple[dict, int]:
                 dr.get("interval"),
                 dr.get("anchor"),
                 dr.get("complement"),
-                dr.get("connector") or "ordered",
+                _connector_for_persist(dr.get("complement"), dr.get("connector")),
                 direction,
                 dr.get("session") or "All",
                 float(dr.get("sl_mult") or 1.0),

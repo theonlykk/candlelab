@@ -788,7 +788,8 @@ def api_finalise():
     interval = body.get("interval", "5m")
     anchor = body.get("anchor", "")
     complement = body.get("complement")
-    connector = body.get("connector", "ordered")
+    has_complement = complement is not None and str(complement).strip() != ""
+    connector = (body.get("connector") or "ordered") if has_complement else None
     indicator_filter = body.get("indicator_filter")
     session_filter = body.get("session_filter")
     sl_mult = float(body.get("sl_multiplier", 1.0))
@@ -956,8 +957,8 @@ def api_finalise():
         try:
             saved = save_strategy({
                 "name":             name,
-                "patterns":         [anchor] + ([complement] if complement else []),
-                "connectors":       [connector, connector],
+                "patterns":         [anchor] + ([complement] if has_complement else []),
+                "connectors":       [connector, connector] if has_complement else [],
                 "direction":        body.get("direction", ""),
                 "window_days":      5,
                 "instrument":       instrument,
