@@ -61,8 +61,55 @@ def _last_bar_patterns(sig_df) -> list[str]:
         except (TypeError, ValueError):
             continue
         if v != 0:
-            out.append(_pattern_slug(col))
+            out.append(_pattern_slug(str(col)))
     return sorted(set(out))
+
+
+def _candle_time_iso_z(idx) -> str:
+    ts = pd.Timestamp(idx)
+    if ts.tzinfo is None:
+        ct = ts.tz_localize("UTC")
+    else:
+        ct = ts.tz_convert("UTC")
+    return ct.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _patterns_at_row(sig_df, row_index: int) -> list[str]:
+    if sig_df is None or len(sig_df) == 0 or row_index < 0 or row_index >= len(sig_df):
+        return []
+    row = sig_df.iloc[row_index]
+    out: list[str] = []
+    for col in sig_df.columns:
+        try:
+            v = int(row[col])
+        except (TypeError, ValueError):
+            continue
+        if v != 0:
+            out.append(_pattern_slug(str(col)))
+    return sorted(set(out))
+
+
+def _build_candle_history(df, sig_df, dec: int, n_bars: int = 25) -> list[dict]:
+    """Last ``n_bars`` rows oldest-first; ``patterns`` from ``detect_all`` at each row (logging only)."""
+    if df is None or df.empty:
+        return []
+    n = min(n_bars, len(df))
+    start = len(df) - n
+    hist: list[dict] = []
+    for pos in range(start, len(df)):
+        idx = df.index[pos]
+        r = df.iloc[pos]
+        hist.append({
+            "candle_time": _candle_time_iso_z(idx),
+            "ohlc": {
+                "o": round(float(r["open"]), dec),
+                "h": round(float(r["high"]), dec),
+                "l": round(float(r["low"]), dec),
+                "c": round(float(r["close"]), dec),
+            },
+            "patterns": _patterns_at_row(sig_df, pos) if sig_df is not None else [],
+        })
+    return hist
 
 
 def _strategy_poll_row(
@@ -121,6 +168,7 @@ def _build_record_for_instrument(inst_key: str) -> dict:
     candle_time: str | None = None
     ohlc: dict | None = None
     patterns_detected: list[str] = []
+    candle_history: list[dict] = []
     sig_df = None
 
     try:
@@ -152,6 +200,7 @@ def _build_record_for_instrument(inst_key: str) -> dict:
         except Exception:
             log.exception("poll_log: detect_all failed for %s", inst_key)
             sig_df = None
+        candle_history = _build_candle_history(df, sig_df, dec, n_bars=25)
 
     live_rows: list[dict] = []
     try:
@@ -182,6 +231,7 @@ def _build_record_for_instrument(inst_key: str) -> dict:
         "candle_time": candle_time,
         "ohlc": ohlc,
         "patterns_detected": patterns_detected,
+        "candle_history": candle_history,
         "live_strategies_checked": live_rows,
     }
 
