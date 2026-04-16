@@ -1379,6 +1379,9 @@ const state = {
   complement: null,
   connector: "ordered",
   indicator: null,
+  rsiOversold: 30,
+  rsiOverbought: 70,
+  maCrossDirection: "auto",
   session: "All",
   slMult: 1.0,
   tpMult: 3.0,
@@ -1727,6 +1730,84 @@ function buildIndicatorStep() {
     card.onclick = () => toggleIndicator(card, opt.key);
     container.appendChild(card);
   });
+  let panel = document.getElementById("indicator-params-panel");
+  if (!panel) {
+    panel = document.createElement("div");
+    panel.id = "indicator-params-panel";
+    panel.style.cssText = "display:none;margin-top:14px;padding:12px 14px;background:var(--bg);border-radius:8px;border:1px solid var(--border);font-size:13px;";
+    panel.innerHTML = `
+      <div id="indicator-rsi-fields" style="display:none;gap:16px;flex-wrap:wrap;align-items:center;">
+        <label style="display:inline-flex;align-items:center;gap:6px;">Oversold (long)
+          <input type="number" id="rsi-oversold" min="1" max="99" step="1" style="width:64px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);"></label>
+        <label style="display:inline-flex;align-items:center;gap:6px;">Overbought (short)
+          <input type="number" id="rsi-overbought" min="1" max="99" step="1" style="width:64px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);"></label>
+      </div>
+      <div id="indicator-ma-fields" style="display:none;margin-top:8px;">
+        <label style="display:flex;flex-direction:column;gap:4px;max-width:320px;">MA cross direction
+          <select id="ma-cross-dir" style="padding:6px 8px;border-radius:6px;border:1px solid var(--border);">
+            <option value="auto">Auto — long: bullish cross, short: bearish cross</option>
+            <option value="bullish">Bullish (5 crosses above 20)</option>
+            <option value="bearish">Bearish (5 crosses below 20)</option>
+          </select>
+        </label>
+      </div>`;
+    container.parentNode.insertBefore(panel, container.nextSibling);
+    ["rsi-oversold", "rsi-overbought"].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener("change", syncIndicatorThresholdsFromDom);
+    });
+    const msel = document.getElementById("ma-cross-dir");
+    if (msel) msel.addEventListener("change", syncIndicatorThresholdsFromDom);
+  }
+}
+
+function syncIndicatorThresholdsFromDom() {
+  const os = document.getElementById("rsi-oversold");
+  const ob = document.getElementById("rsi-overbought");
+  const md = document.getElementById("ma-cross-dir");
+  if (os) state.rsiOversold = Math.min(99, Math.max(1, parseFloat(os.value) || 30));
+  if (ob) state.rsiOverbought = Math.min(99, Math.max(1, parseFloat(ob.value) || 70));
+  if (md) state.maCrossDirection = md.value || "auto";
+}
+
+function buildIndicatorFilterObject() {
+  if (!state.indicator) return null;
+  const t = state.indicator;
+  if (t === "rsi") {
+    syncIndicatorThresholdsFromDom();
+    return {
+      type: "rsi",
+      oversold: state.rsiOversold,
+      overbought: state.rsiOverbought,
+    };
+  }
+  if (t === "ma_cross") {
+    const md = document.getElementById("ma-cross-dir");
+    const v = md ? md.value : (state.maCrossDirection || "auto");
+    if (v === "auto") return { type: "ma_cross", direction: null };
+    return { type: "ma_cross", direction: v };
+  }
+  if (t === "ma_stable") return { type: "ma_stable" };
+  return { type: t };
+}
+
+function updateIndicatorParamPanel(key) {
+  const panel = document.getElementById("indicator-params-panel");
+  const rsiF = document.getElementById("indicator-rsi-fields");
+  const maF = document.getElementById("indicator-ma-fields");
+  if (!panel || !rsiF || !maF) return;
+  rsiF.style.display = key === "rsi" ? "flex" : "none";
+  maF.style.display = key === "ma_cross" ? "block" : "none";
+  const os = document.getElementById("rsi-oversold");
+  const ob = document.getElementById("rsi-overbought");
+  const md = document.getElementById("ma-cross-dir");
+  if (os) os.value = String(state.rsiOversold != null ? state.rsiOversold : 30);
+  if (ob) ob.value = String(state.rsiOverbought != null ? state.rsiOverbought : 70);
+  if (md) {
+    const want = state.maCrossDirection === "bullish" || state.maCrossDirection === "bearish"
+      ? state.maCrossDirection : "auto";
+    md.value = want;
+  }
 }
 
 function toggleIndicator(card, key) {
@@ -1735,6 +1816,9 @@ function toggleIndicator(card, key) {
 
   if (isOn) {
     state.indicator = key;
+    updateIndicatorParamPanel(key);
+    const panel = document.getElementById("indicator-params-panel");
+    if (panel) panel.style.display = "block";
     deltaEl.className = "toggle-delta delta-loading";
     deltaEl.textContent = "checking…";
 
@@ -1748,7 +1832,7 @@ function toggleIndicator(card, key) {
         direction: state.direction,
         instrument: state.instrument,
         interval: state.interval,
-        indicator: key,
+        indicator_filter: buildIndicatorFilterObject(),
       }),
     })
       .then(r => r.json())
@@ -1762,6 +1846,8 @@ function toggleIndicator(card, key) {
       });
   } else {
     state.indicator = null;
+    const panel = document.getElementById("indicator-params-panel");
+    if (panel) panel.style.display = "none";
     deltaEl.textContent = "";
     // turn off all others
     document.querySelectorAll(".toggle-card.on").forEach(c => c.classList.remove("on"));
@@ -1899,8 +1985,9 @@ function buildConfig(preview) {
     timeout: state.timeout,
     device_uuid: state.deviceUuid,
   };
-  if (state.indicator) {
-    cfg.indicator_filter = state.indicator;
+  const indObj = buildIndicatorFilterObject();
+  if (indObj) {
+    cfg.indicator_filter = indObj;
   }
   if (preview) cfg.preview = true;
   return cfg;
@@ -1971,7 +2058,7 @@ function loadSummary() {
         <div class="stat-row"><span class="stat-label">Timeframe</span><span class="stat-value">${state.interval}</span></div>
         <div class="stat-row"><span class="stat-label">Anchor pattern</span><span class="stat-value">${state.anchor}</span></div>
         ${state.complement ? `<div class="stat-row"><span class="stat-label">Complement</span><span class="stat-value">${state.complement} (${state.connector})</span></div>` : ""}
-        ${state.indicator ? `<div class="stat-row"><span class="stat-label">Indicator</span><span class="stat-value">${state.indicator}</span></div>` : ""}
+        ${state.indicator ? `<div class="stat-row"><span class="stat-label">Indicator</span><span class="stat-value" style="word-break:break-all;">${JSON.stringify(buildIndicatorFilterObject())}</span></div>` : ""}
         ${state.session !== "All" ? `<div class="stat-row"><span class="stat-label">Session</span><span class="stat-value">${state.session}</span></div>` : ""}
         <div class="stat-row"><span class="stat-label">SL / TP</span><span class="stat-value">${state.slMult}× / ${state.tpMult}×</span></div>
         <div class="stat-row"><span class="stat-label">Win rate</span><span class="stat-value" style="color:var(--accent)">${d.win_pct}%</span></div>
@@ -2416,7 +2503,9 @@ function quickTryTimeframe(ivl) {
   Object.assign(state, {
     instrument: savedInst, interval: ivl,
     anchor: null, anchorTip: "", complement: null, connector: "ordered",
-    indicator: null, session: "All", slMult: 1.0, tpMult: 3.0,
+    indicator: null,
+    rsiOversold: 30, rsiOverbought: 70, maCrossDirection: "auto",
+    session: "All", slMult: 1.0, tpMult: 3.0,
     patternsData: [], complementData: [], finalResult: null, atr: null,
   });
   updateTimeoutLabels();
@@ -2573,7 +2662,9 @@ function restartWizard() {
   Object.assign(state, {
     instrument: savedInst, interval: savedIvl,
     anchor: null, anchorTip: "", complement: null, connector: "ordered",
-    indicator: null, session: "All", slMult: 1.0, tpMult: 3.0,
+    indicator: null,
+    rsiOversold: 30, rsiOverbought: 70, maCrossDirection: "auto",
+    session: "All", slMult: 1.0, tpMult: 3.0,
     patternsData: [], complementData: [], finalResult: null, atr: null,
   });
   updateTimeoutLabels();
@@ -2692,7 +2783,24 @@ function applyRowToState(row) {
   state.slMult = parseFloat(row.sl_mult) || 1;
   state.tpMult = parseFloat(row.tp_mult) || 3;
   state.timeout = parseInt(row.timeout, 10) || 1000;
-  state.indicator = row.indicator_filter || null;
+  const rawInd = row.indicator_filter;
+  state.maCrossDirection = "auto";
+  state.rsiOversold = 30;
+  state.rsiOverbought = 70;
+  if (rawInd && typeof rawInd === "object" && rawInd.type) {
+    state.indicator = rawInd.type;
+    if (rawInd.type === "rsi") {
+      if (rawInd.oversold != null) state.rsiOversold = Number(rawInd.oversold);
+      if (rawInd.overbought != null) state.rsiOverbought = Number(rawInd.overbought);
+    }
+    if (rawInd.type === "ma_cross") {
+      state.maCrossDirection = rawInd.direction == null ? "auto" : rawInd.direction;
+    }
+  } else if (typeof rawInd === "string" && rawInd.trim()) {
+    state.indicator = rawInd.trim();
+  } else {
+    state.indicator = null;
+  }
   const ni = document.getElementById("name-input");
   if (ni) ni.value = (row.strategy_name || "").trim() || generateName();
   const sl = document.getElementById("sl-slider");
@@ -2759,7 +2867,7 @@ function buildStrategyLifecycleBody(nameOverride) {
     tp_mult: state.tpMult,
     timeout: state.timeout,
     direction: state.direction,
-    indicator_filter: state.indicator || null,
+    indicator_filter: buildIndicatorFilterObject() || null,
   };
 }
 

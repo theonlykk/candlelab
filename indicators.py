@@ -51,11 +51,12 @@ def _rsi(arr: np.ndarray, period: int = 14) -> np.ndarray:
     return result
 
 
-def check_ma_cross(df: pd.DataFrame, signal_idx: int) -> bool:
+def check_ma_cross_direction(df: pd.DataFrame, signal_idx: int, required: str) -> bool:
     """
-    Returns True if the 5-period SMA crossed above the 20-period SMA
-    anywhere in the LOOKBACK candles before signal_idx.
+    LOOKBACK candles before signal_idx: bullish = 5 SMA crosses above 20;
+    bearish = 5 SMA crosses below 20.
     """
+    req = (required or "bullish").strip().lower()
     close = df["close"].to_numpy(dtype=float)
     end = signal_idx
     start = max(0, end - LOOKBACK)
@@ -75,13 +76,27 @@ def check_ma_cross(df: pd.DataFrame, signal_idx: int) -> bool:
     s5v = s5[valid]
     s20v = s20[valid]
     cross_up = np.any((s5v[:-1] < s20v[:-1]) & (s5v[1:] >= s20v[1:]))
+    cross_dn = np.any((s5v[:-1] > s20v[:-1]) & (s5v[1:] <= s20v[1:]))
+    if req == "bearish":
+        return bool(cross_dn)
     return bool(cross_up)
 
 
-def check_rsi_extreme(df: pd.DataFrame, signal_idx: int, direction: str) -> bool:
+def check_ma_cross(df: pd.DataFrame, signal_idx: int) -> bool:
+    """Backward-compatible: bullish cross only."""
+    return check_ma_cross_direction(df, signal_idx, "bullish")
+
+
+def check_rsi_extreme(
+    df: pd.DataFrame,
+    signal_idx: int,
+    direction: str,
+    oversold: float = 30.0,
+    overbought: float = 70.0,
+) -> bool:
     """
-    Returns True if RSI(14) was below 30 (direction='long') or above 70
-    (direction='short') at any point in the LOOKBACK candles before signal_idx.
+    Returns True if RSI(14) was below oversold (long) or above overbought (short)
+    at any point in the LOOKBACK candles before signal_idx.
     """
     close = df["close"].to_numpy(dtype=float)
     end = signal_idx
@@ -95,8 +110,8 @@ def check_rsi_extreme(df: pd.DataFrame, signal_idx: int, direction: str) -> bool
         return False
 
     if direction == "long":
-        return bool(np.any(window < 30.0))
-    return bool(np.any(window > 70.0))
+        return bool(np.any(window < float(oversold)))
+    return bool(np.any(window > float(overbought)))
 
 
 def check_ma_stable(df: pd.DataFrame, signal_idx: int, direction: str) -> bool:

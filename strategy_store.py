@@ -39,6 +39,12 @@ def _normalize_strategy_direction(raw) -> str:
 
 
 def _ensure_draft_live_tables(cur) -> None:
+    """
+    indicator_filter (JSONB on live/draft): store JSON objects, e.g.
+    {"type": "rsi", "overbought": 70, "oversold": 30},
+    {"type": "ma_cross", "direction": "bullish"}.
+    Plain strings remain readable in older rows; executor accepts both.
+    """
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS candlelab_strategies_live (
@@ -541,6 +547,8 @@ def save_strategy(config: dict) -> dict:
 
     `config` is the JSON payload produced by the wizard. Some nested fields are stored as
     JSON text (patterns/connectors/indicator_filter) to keep schema stable as the UI evolves.
+    indicator_filter should be an object: {"type":"rsi","oversold":30,"overbought":70} or
+    {"type":"ma_cross","direction":"bullish"} (or null direction for auto by trade side).
     """
     init_strategy_tables()
     name = config.get("name") or _auto_name()

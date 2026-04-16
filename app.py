@@ -32,7 +32,7 @@ from strategy_store import (
     lifecycle_list_my_strategies,
     lifecycle_register_user,
 )
-from indicators import check_ma_cross, check_rsi_extreme, check_ma_stable
+from indicators import check_ma_cross_direction, check_rsi_extreme, check_ma_stable
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -89,6 +89,70 @@ def _norm_instrument(s: str) -> str:
     if s in INSTRUMENTS:
         return s
     return _INSTRUMENT_MAP.get(s.upper(), s)
+
+
+def _parse_indicator_filter_config(raw) -> dict | None:
+    """Normalize indicator_filter JSON or plain 'rsi' / 'ma_cross' (executor parity)."""
+    if raw is None or raw == "":
+        return None
+    if isinstance(raw, dict):
+        d = dict(raw)
+    else:
+        s = str(raw).strip()
+        if s.startswith("{"):
+            try:
+                d = json.loads(s)
+            except json.JSONDecodeError:
+                return None
+        else:
+            typ = s.lower().replace(" ", "_")
+            if typ == "rsi":
+                return {"type": "rsi", "oversold": 30.0, "overbought": 70.0}
+            if typ == "ma_cross":
+                return {"type": "ma_cross", "direction": None}
+            if typ == "ma_stable":
+                return {"type": "ma_stable"}
+            return None
+    t = str(d.get("type", "")).strip().lower().replace(" ", "_")
+    if not t:
+        return None
+    out: dict = {"type": t}
+    if t == "rsi":
+        out["oversold"] = float(d.get("oversold", 30))
+        out["overbought"] = float(d.get("overbought", 70))
+    elif t == "ma_cross":
+        dr = d.get("direction")
+        out["direction"] = str(dr).strip().lower() if dr is not None else None
+    return out
+
+
+def _make_indicator_fn(indicator_filter):
+    cfg = _parse_indicator_filter_config(indicator_filter)
+    if not cfg:
+        return None
+
+    def fn(df, idx, dir_str):
+        it = str(cfg.get("type", "")).lower()
+        if it == "rsi":
+            return check_rsi_extreme(
+                df,
+                idx,
+                dir_str,
+                float(cfg.get("oversold", 30)),
+                float(cfg.get("overbought", 70)),
+            )
+        if it == "ma_cross":
+            cross_dir = cfg.get("direction")
+            if cross_dir is None:
+                cross_dir = "bullish" if dir_str == "long" else "bearish"
+            else:
+                cross_dir = str(cross_dir).strip().lower()
+            return check_ma_cross_direction(df, idx, cross_dir)
+        if it == "ma_stable":
+            return check_ma_stable(df, idx, dir_str)
+        return True
+
+    return fn
 
 
 # ── Pattern direction classification ─────────────────────────────────────────
@@ -676,6 +740,7 @@ def api_indicator_check():
     instrument_raw = body.get("instrument", "EUR/USD")
     interval = body.get("interval", "5m")
     indicator = body.get("indicator")
+    indicator_filter = body.get("indicator_filter")
 
     instrument = _norm_instrument(instrument_raw)
     if instrument not in INSTRUMENTS:
@@ -692,12 +757,11 @@ def api_indicator_check():
     if df.empty:
         return jsonify({"error": "No data"}), 500
 
-    indicator_map = {
-        "ma_cross":  lambda df, idx, d: check_ma_cross(df, idx),
-        "rsi":       check_rsi_extreme,
-        "ma_stable": check_ma_stable,
-    }
-    indicator_fn = indicator_map.get(indicator)
+    indicator_fn = None
+    if indicator_filter:
+        indicator_fn = _make_indicator_fn(indicator_filter)
+    elif indicator:
+        indicator_fn = _make_indicator_fn(indicator)
 
     base_r = _backtest_pattern(df, pip, anchor, timeout=TIMEOUT, instrument=instrument)
     filtered_r = _backtest_pattern(
@@ -743,15 +807,7 @@ def api_finalise():
     meta = INSTRUMENTS[instrument]
     pip = meta["pip"]
 
-    indicator_fn = None
-    if indicator_filter:
-        itype = indicator_filter if isinstance(indicator_filter, str) else indicator_filter.get("type")
-        indicator_map = {
-            "ma_cross":  lambda df, idx, d: check_ma_cross(df, idx),
-            "rsi":       check_rsi_extreme,
-            "ma_stable": check_ma_stable,
-        }
-        indicator_fn = indicator_map.get(itype)
+    indicator_fn = _make_indicator_fn(indicator_filter) if indicator_filter else None
 
     def _run(ivl):
         try:
