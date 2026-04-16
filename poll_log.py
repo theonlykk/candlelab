@@ -1,6 +1,6 @@
 """
 File-based poll log for the CandleLab 5-minute scheduler cycle.
-Each instrument gets one JSON line per cycle in logs/candlelab_poll.log.
+Each instrument gets one JSON line per cycle in /tmp/logs/candlelab_poll.log.
 """
 from __future__ import annotations
 
@@ -14,8 +14,7 @@ import pandas as pd
 
 log = logging.getLogger(__name__)
 
-_BASE_DIR = Path(__file__).resolve().parent
-LOG_DIR = _BASE_DIR / "logs"
+LOG_DIR = Path("/tmp/logs")
 LOG_FILE = LOG_DIR / "candlelab_poll.log"
 MAX_LINES = 10_000
 
@@ -215,17 +214,19 @@ def append_cycle_poll_logs() -> None:
     _trim_log_file()
 
 
-def read_poll_log_entries(instrument: str, n: int) -> list:
+def read_poll_log_entries(instrument: str, n: int, log_path: Path | None = None) -> list:
     """
     Return up to the last n parsed JSON objects whose "instrument" field matches `instrument`.
+    ``log_path`` defaults to ``LOG_FILE`` (/tmp/logs/candlelab_poll.log).
     """
+    path = log_path or LOG_FILE
     want = (instrument or "").strip()
     if not want or n <= 0:
         return []
-    if not LOG_FILE.is_file():
+    if not path.is_file():
         return []
     try:
-        raw = LOG_FILE.read_text(encoding="utf-8")
+        raw = path.read_text(encoding="utf-8")
     except OSError:
         return []
     out: list[dict] = []
