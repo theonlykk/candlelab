@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -19,20 +18,35 @@ LOG_FILE = LOG_DIR / "candlelab_poll.log"
 MAX_LINES = 10_000
 
 
-def _pattern_slug(name: str) -> str:
-    s = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
-    return re.sub(r"_+", "_", s)
+def _pattern_slug(label: str) -> str:
+    """Stable slug for comparing DB pattern labels to detect_all column names (executor parity)."""
+    raw = str(label or "").strip()
+    if not raw:
+        return ""
+    s = (
+        raw.lower()
+        .replace(".", "")
+        .replace("/", "_")
+        .replace(" ", "_")
+        .replace("-", "_")
+    )
+    while "__" in s:
+        s = s.replace("__", "_")
+    return s.strip("_")
 
 
 def _resolve_pattern_key(anchor: str | None) -> str | None:
+    """Map anchor/complement string to the matching ``detect_all`` column name via slug equality."""
     if not anchor or not str(anchor).strip():
         return None
     from patterns import PATTERNS
 
-    a = str(anchor).strip()
-    for k in PATTERNS:
-        if k.lower() == a.lower():
-            return k
+    key = _pattern_slug(str(anchor).strip())
+    if not key:
+        return None
+    for col in PATTERNS:
+        if _pattern_slug(str(col)) == key:
+            return col
     return None
 
 
