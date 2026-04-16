@@ -367,6 +367,52 @@ def _simulate_trades(
     return trades
 
 
+def _filter_anchor_by_complement(
+    anchor_indices: np.ndarray,
+    signals_df: pd.DataFrame,
+    complement: str | None,
+    connector: str | None,
+    window: int = 10,
+) -> np.ndarray:
+    """
+    Filter anchor signal indices to only those where complement also fires
+    within the required window. If complement is None or not in signals_df,
+    returns anchor_indices unchanged.
+    connector='ordered': complement must fire in next `window` candles after anchor
+    connector='any-order' or anything else: complement within ±window candles
+    """
+    if len(anchor_indices) == 0:
+        return anchor_indices
+    if complement is None or not str(complement).strip():
+        return anchor_indices
+    comp = str(complement).strip()
+    if comp not in signals_df.columns:
+        return anchor_indices
+
+    comp_signals = signals_df[comp].to_numpy()
+    comp_indices_set = set(np.where(comp_signals != 0)[0].tolist())
+    conn = (connector or "").strip().lower()
+    filtered: list[int] = []
+    for ai in anchor_indices:
+        ai_int = int(ai)
+        if conn == "ordered":
+            found = any(
+                j in comp_indices_set
+                for j in range(ai_int + 1, ai_int + window + 1)
+            )
+        else:
+            found = any(
+                abs(ai_int - j) <= window
+                for j in comp_indices_set
+                if abs(ai_int - j) <= window
+            )
+        if found:
+            filtered.append(ai_int)
+    if not filtered:
+        return np.array([], dtype=anchor_indices.dtype)
+    return np.asarray(filtered, dtype=anchor_indices.dtype)
+
+
 def _backtest_pattern(
     df: pd.DataFrame,
     pip: float,
@@ -378,6 +424,8 @@ def _backtest_pattern(
     sl_mult: float = 1.0,
     tp_mult: float = 3.0,
     instrument: str = "EUR/USD",
+    complement: str | None = None,
+    connector: str | None = None,
 ) -> dict:
     """
     Backtest a single pattern using the local engine.
@@ -393,8 +441,20 @@ def _backtest_pattern(
     if pattern_name not in signals_df.columns:
         return {"signals": 0, "wins": 0, "win_pct": 0.0, "cum_net": 0.0, "trades": []}
 
+    anchor_series = signals_df[pattern_name]
+    anchor_indices = np.where(anchor_series.to_numpy() != 0)[0]
+    filtered_idx = _filter_anchor_by_complement(
+        anchor_indices, signals_df, complement, connector, window=10,
+    )
+    keep = {int(i) for i in filtered_idx}
+    sig_arr = anchor_series.to_numpy().copy()
+    for i in range(len(sig_arr)):
+        if sig_arr[i] != 0 and i not in keep:
+            sig_arr[i] = 0
+    filtered_series = pd.Series(sig_arr, index=anchor_series.index)
+
     trades = _simulate_trades(
-        df, signals_df[pattern_name], atr, pip,
+        df, filtered_series, atr, pip,
         sl_mult, tp_mult, timeout, session, indicator_fn, direction_val,
         instrument=instrument,
     )
@@ -464,7 +524,7 @@ def _complement_task(args):
     (comp_name, connector,
      df, signals_df, anchor_indices, atr, anchor_signals, anchor_win_pct) = args
 
-    WINDOW = 5
+    WINDOW = 10
     # Connector semantics:
     # - ordered: complement must occur in the *next* WINDOW candles after anchor
     # - any-order: complement within ±WINDOW candles
@@ -824,6 +884,8 @@ def api_finalise():
             indicator_fn=indicator_fn,
             sl_mult=sl_mult, tp_mult=tp_mult,
             instrument=instrument,
+            complement=complement if has_complement else None,
+            connector=connector if has_complement else None,
         )
         return r
 
@@ -1319,7 +1381,11 @@ def api_strategy_pnl():
     direction = body.get("direction", "both")
     session_filter = body.get("session_filter")
     complement = body.get("complement")
-    connector = body.get("connector", "ordered")
+    if complement is not None and str(complement).strip() == "":
+        complement = None
+    connector = None
+    if complement is not None:
+        connector = body.get("connector") or "ordered"
 
     if not anchor:
         return jsonify({"error": "missing anchor"}), 400
@@ -1372,6 +1438,8 @@ def api_strategy_pnl():
         tp_mult=tp_mult,
         direction_val=direction_val,
         instrument=instrument_label,
+        complement=complement,
+        connector=connector,
     )
 
     return jsonify({
