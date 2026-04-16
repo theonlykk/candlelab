@@ -382,6 +382,29 @@ def lifecycle_list_my_strategies(username: str, pin: str) -> tuple[dict, int]:
     return {"drafts": drafts, "live": live}, 200
 
 
+def list_open_live_for_instrument(instrument_label: str) -> list[dict]:
+    """
+    All open (unclosed) live strategies for a canonical instrument label (e.g. "EUR/USD").
+    Used by the scheduler poll log; not authenticated.
+    """
+    instrument_label = (instrument_label or "").strip()
+    if not instrument_label:
+        return []
+    init_strategy_tables()
+    with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(
+            """
+            SELECT id, strategy_name, anchor, complement, connector, direction, interval
+            FROM candlelab_strategies_live
+            WHERE closed_at IS NULL AND instrument = %s
+            ORDER BY id ASC
+            """,
+            (instrument_label,),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
 def init_strategy_tables():
     """
     Create (and lightly migrate) the PostgreSQL tables used to persist strategies and trades.

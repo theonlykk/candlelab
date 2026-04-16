@@ -198,6 +198,12 @@ def _scheduled_refresh():
     """APScheduler callback: refresh the cached payload for the most recent request."""
     instrument, interval, days = _get_recent_request()
     _compute_and_cache(instrument, interval, days)
+    try:
+        from poll_log import append_cycle_poll_logs
+
+        append_cycle_poll_logs()
+    except Exception:
+        log.exception("Scheduler: poll log append failed")
 
 
 def start_scheduler():

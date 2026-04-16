@@ -18,6 +18,7 @@ from backtest import compute_atr
 from patterns import detect_all, PATTERNS
 from cache import cache_set, cache_get
 from scheduler import start_scheduler
+from poll_log import read_poll_log_entries
 from strategy_store import (
     save_strategy,
     get_strategies_by_device,
@@ -957,6 +958,18 @@ def api_live():
             "trades":     len(trades),
         })
     return jsonify(result)
+
+
+@app.route("/candlelab-log")
+def api_candlelab_log():
+    """Last n poll-log JSON records for an OANDA-style instrument id (e.g. EUR_USD)."""
+    inst = (request.args.get("instrument") or "").strip()
+    try:
+        n = int(request.args.get("n", 100))
+    except (TypeError, ValueError):
+        n = 100
+    n = max(1, min(n, 5000))
+    return jsonify(read_poll_log_entries(inst, n))
 
 
 @app.route("/api/strategy/<sid>", methods=["DELETE"])
