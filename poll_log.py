@@ -1,24 +1,292 @@
 """
 File-based poll log for the CandleLab 5-minute scheduler cycle.
 Each instrument gets one JSON line per cycle in /tmp/logs/candlelab_poll.log.
+Rows are also stored in PostgreSQL table ``candlelab_poll_log`` when DATABASE_URL is set.
 """
 from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
+import psycopg2
+from psycopg2.extras import Json, RealDictCursor
 
 from indicators import _rsi, _sma, check_ma_cross, check_ma_stable, check_rsi_extreme
 
 log = logging.getLogger(__name__)
 
+
+def init_candlelab_poll_log_table() -> None:
+    """Create ``candlelab_poll_log`` and index if they do not exist."""
+    url = os.environ.get("DATABASE_URL")
+    if not url:
+        log.warning("poll_log: DATABASE_URL not set, skip candlelab_poll_log init")
+        return
+    try:
+        conn = psycopg2.connect(url)
+    except Exception:
+        log.exception("poll_log: init_candlelab_poll_log_table connect failed")
+        return
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS candlelab_poll_log (
+                    id SERIAL PRIMARY KEY,
+                    ts TIMESTAMPTZ NOT NULL,
+                    instrument VARCHAR NOT NULL,
+                    candle_time TIMESTAMPTZ,
+                    session VARCHAR,
+                    hour_utc INT,
+                    spread_pips NUMERIC(8,4),
+                    open NUMERIC(12,5),
+                    high NUMERIC(12,5),
+                    low NUMERIC(12,5),
+                    close NUMERIC(12,5),
+                    buffer_len INT,
+                    patterns_detected JSONB,
+                    candle_history JSONB,
+                    live_strategies_checked JSONB
+                );
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS candlelab_poll_log_instrument_ts_idx
+                ON candlelab_poll_log (instrument, ts DESC);
+                """
+            )
+        conn.commit()
+    except Exception:
+        log.exception("poll_log: init_candlelab_poll_log_table failed")
+        conn.rollback()
+    finally:
+        conn.close()
+
+
+def _parse_ts_iso_z(s: str) -> datetime:
+    s = (s or "").strip()
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    dt = datetime.fromisoformat(s)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _session_from_hour_utc(hour_utc: int) -> str:
+    if 0 <= hour_utc <= 6:
+        return "asian"
+    if 7 <= hour_utc <= 11:
+        return "london"
+    if 12 <= hour_utc <= 16:
+        return "new_york"
+    return "asian"
+
+
+def _insert_poll_log_row(rec: dict) -> None:
+    url = os.environ.get("DATABASE_URL")
+    if not url:
+        return
+    try:
+        ts = _parse_ts_iso_z(str(rec.get("ts") or ""))
+    except Exception:
+        log.warning("poll_log: _insert_poll_log_row bad ts %r", rec.get("ts"))
+        return
+
+    hour_utc = ts.hour
+    session = _session_from_hour_utc(hour_utc)
+    ohlc = rec.get("ohlc") or None
+    spread_pips = None
+    o_open = o_high = o_low = o_close = None
+    if isinstance(ohlc, dict) and ohlc:
+        try:
+            h = float(ohlc["h"])
+            l = float(ohlc["l"])
+            spread_pips = round((h - l) * 10000, 4)
+            o_open = float(ohlc["o"])
+            o_high = float(ohlc["h"])
+            o_low = float(ohlc["l"])
+            o_close = float(ohlc["c"])
+        except (KeyError, TypeError, ValueError):
+            spread_pips = None
+            o_open = o_high = o_low = o_close = None
+
+    candle_time = rec.get("candle_time")
+    ct_val = None
+    if candle_time:
+        try:
+            ct_val = _parse_ts_iso_z(str(candle_time))
+        except Exception:
+            ct_val = None
+
+    ch = rec.get("candle_history")
+    buffer_len = len(ch) if isinstance(ch, list) else None
+
+    pat = rec.get("patterns_detected")
+    live = rec.get("live_strategies_checked")
+    inst = str(rec.get("instrument") or "")
+
+    try:
+        conn = psycopg2.connect(url)
+    except Exception:
+        log.exception("poll_log: _insert_poll_log_row connect failed")
+        return
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO candlelab_poll_log (
+                    ts, instrument, candle_time, session, hour_utc, spread_pips,
+                    open, high, low, close, buffer_len,
+                    patterns_detected, candle_history, live_strategies_checked
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s
+                )
+                """,
+                (
+                    ts,
+                    inst,
+                    ct_val,
+                    session,
+                    hour_utc,
+                    spread_pips,
+                    o_open,
+                    o_high,
+                    o_low,
+                    o_close,
+                    buffer_len,
+                    Json(pat if pat is not None else []),
+                    Json(ch if ch is not None else []),
+                    Json(live if live is not None else []),
+                ),
+            )
+        conn.commit()
+    except Exception:
+        log.exception("poll_log: _insert_poll_log_row insert failed")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+    finally:
+        conn.close()
+
+
+def _poll_log_val_jsonable(v: Any) -> Any:
+    if isinstance(v, Decimal):
+        return float(v)
+    if isinstance(v, datetime):
+        return v.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if isinstance(v, (list, dict)):
+        return v
+    if isinstance(v, memoryview):
+        return v.tobytes().decode("utf-8", errors="replace")
+    return v
+
+
+def _poll_log_row_to_jsonable(row: dict) -> dict:
+    out: dict[str, Any] = {}
+    for k, v in row.items():
+        if v is None:
+            out[k] = None
+        else:
+            out[k] = _poll_log_val_jsonable(v)
+    return out
+
+
+def read_poll_log_pg(instrument: str, n: int) -> list:
+    want = (instrument or "").strip()
+    if not want or n <= 0:
+        return []
+    url = os.environ.get("DATABASE_URL")
+    if not url:
+        return []
+    try:
+        conn = psycopg2.connect(url)
+    except Exception:
+        log.exception("poll_log: read_poll_log_pg connect failed")
+        return []
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT * FROM candlelab_poll_log
+                WHERE instrument = %s
+                ORDER BY ts DESC
+                LIMIT %s
+                """,
+                (want, n),
+            )
+            rows = cur.fetchall()
+    except Exception:
+        log.exception("poll_log: read_poll_log_pg query failed")
+        return []
+    finally:
+        conn.close()
+    return [_poll_log_row_to_jsonable(dict(r)) for r in rows]
+
+
+def read_poll_log_view_rows(limit: int = 200, instrument: str | None = None) -> list[dict]:
+    """Last ``limit`` rows for HTML view (newest first). Optional ``instrument`` filter."""
+    if limit <= 0:
+        return []
+    url = os.environ.get("DATABASE_URL")
+    if not url:
+        return []
+    inst = (instrument or "").strip()
+    try:
+        conn = psycopg2.connect(url)
+    except Exception:
+        log.exception("poll_log: read_poll_log_view_rows connect failed")
+        return []
+    cols = (
+        "ts, instrument, session, hour_utc, spread_pips, "
+        "patterns_detected, live_strategies_checked"
+    )
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            if inst:
+                cur.execute(
+                    f"""
+                    SELECT {cols}
+                    FROM candlelab_poll_log
+                    WHERE instrument = %s
+                    ORDER BY ts DESC
+                    LIMIT %s
+                    """,
+                    (inst, limit),
+                )
+            else:
+                cur.execute(
+                    f"""
+                    SELECT {cols}
+                    FROM candlelab_poll_log
+                    ORDER BY ts DESC
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+            rows = cur.fetchall()
+    except Exception:
+        log.exception("poll_log: read_poll_log_view_rows query failed")
+        return []
+    finally:
+        conn.close()
+    return [_poll_log_row_to_jsonable(dict(r)) for r in rows]
+
+
 LOG_DIR = Path("/tmp/logs")
 LOG_FILE = LOG_DIR / "candlelab_poll.log"
-MAX_LINES = 10_000
+MAX_LINES = 500
 
 
 def _pattern_slug(label: str) -> str:
@@ -380,6 +648,7 @@ def append_cycle_poll_logs() -> None:
     for inst_key in INSTRUMENTS:
         try:
             rec = _build_record_for_instrument(inst_key)
+            _insert_poll_log_row(rec)
             lines_out.append(json.dumps(rec, separators=(",", ":")))
         except Exception:
             log.exception("poll_log: build record failed for %s", inst_key)

@@ -4,6 +4,7 @@ Gunicorn: 1 worker, 4 threads. PORT env var, default 7860.
 """
 import os
 import json
+import html
 import logging
 import multiprocessing
 import concurrent.futures
@@ -18,7 +19,7 @@ from backtest import compute_atr
 from patterns import detect_all, PATTERNS
 from cache import cache_set, cache_get
 from scheduler import start_scheduler
-from poll_log import read_poll_log_entries, LOG_FILE as CANDLELAB_POLL_LOG_PATH
+from poll_log import init_candlelab_poll_log_table, read_poll_log_pg, read_poll_log_view_rows
 from strategy_store import (
     save_strategy,
     get_strategies_by_device,
@@ -1018,14 +1019,60 @@ def api_live():
 
 @app.route("/candlelab-log")
 def api_candlelab_log():
-    """Last n poll-log JSON records from /tmp/logs/candlelab_poll.log (OANDA id e.g. EUR_USD)."""
+    """Last n poll-log JSON rows from ``candlelab_poll_log`` (OANDA id e.g. EUR_USD)."""
     inst = (request.args.get("instrument") or "").strip()
     try:
         n = int(request.args.get("n", 100))
     except (TypeError, ValueError):
         n = 100
     n = max(1, min(n, 5000))
-    return jsonify(read_poll_log_entries(inst, n, log_path=CANDLELAB_POLL_LOG_PATH))
+    return jsonify(read_poll_log_pg(inst, n))
+
+
+@app.route("/candlelab-log-view")
+def candlelab_log_view():
+    """HTML table: last 200 ``candlelab_poll_log`` rows (optional ``instrument`` query param)."""
+    if not os.environ.get("DATABASE_URL"):
+        return (
+            "<!DOCTYPE html><html><body><p>DATABASE_URL not configured.</p></body></html>",
+            503,
+        )
+    inst = (request.args.get("instrument") or "").strip() or None
+    rows = read_poll_log_view_rows(limit=200, instrument=inst)
+    subtitle = f"instrument={html.escape(inst)}" if inst else "last 200 rows"
+    head = (
+        "<!DOCTYPE html><html><head><meta charset=utf-8><title>CandleLab poll log</title>"
+        "<style>body{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;margin:16px;"
+        "background:#111;color:#eee}"
+        "table{border-collapse:collapse;width:100%;max-width:1400px;font-size:13px}"
+        "th,td{border:1px solid #444;padding:6px 8px;text-align:left;vertical-align:top}"
+        "th{background:#222}tr:nth-child(even){background:#1a1a1a}"
+        ".num{text-align:right}</style></head><body>"
+        f"<h1>CandleLab poll log</h1><p>{html.escape(subtitle)}</p><table><thead><tr>"
+        "<th>ts</th><th>instrument</th><th>session</th>"
+        "<th class=num>hour_utc</th><th class=num>spread_pips</th>"
+        "<th>patterns_detected</th><th>live_strategies_checked</th></tr></thead><tbody>"
+    )
+    parts: list[str] = [head]
+    for r in rows:
+        ts_s = str(r.get("ts") or "")
+        pat = r.get("patterns_detected")
+        live = r.get("live_strategies_checked")
+        pat_s = html.escape(json.dumps(pat, separators=(",", ":"))) if pat is not None else ""
+        live_s = html.escape(json.dumps(live, separators=(",", ":"))) if live is not None else ""
+        parts.append(
+            "<tr>"
+            f"<td>{html.escape(ts_s)}</td>"
+            f"<td>{html.escape(str(r.get('instrument') or ''))}</td>"
+            f"<td>{html.escape(str(r.get('session') or ''))}</td>"
+            f"<td class=num>{html.escape(str(r.get('hour_utc') if r.get('hour_utc') is not None else ''))}</td>"
+            f"<td class=num>{html.escape(str(r.get('spread_pips') if r.get('spread_pips') is not None else ''))}</td>"
+            f"<td>{pat_s}</td>"
+            f"<td>{live_s}</td>"
+            "</tr>"
+        )
+    parts.append("</tbody></table></body></html>")
+    return "".join(parts)
 
 
 @app.route("/api/strategy/<sid>", methods=["DELETE"])
@@ -1404,6 +1451,7 @@ def api_strategy_my_strategies():
 
 
 init_strategy_tables()
+init_candlelab_poll_log_table()
 start_scheduler()
 
 if __name__ == "__main__":
