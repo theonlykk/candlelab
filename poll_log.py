@@ -9,7 +9,10 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
+
+from indicators import _rsi, _sma, check_ma_cross, check_ma_stable, check_rsi_extreme
 
 log = logging.getLogger(__name__)
 
@@ -74,6 +77,102 @@ def _candle_time_iso_z(idx) -> str:
     return ct.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _null_poll_indicators() -> dict:
+    return {"rsi": None, "ma_fast": None, "ma_slow": None, "ma_cross": None}
+
+
+def _poll_log_indicators_at_row(df: pd.DataFrame, L: int) -> dict:
+    """RSI(14), SMA5/SMA20, fast/slow label — same semantics as oanda-trading executor poll log."""
+    out = _null_poll_indicators()
+    try:
+        if df is None or df.empty or L < 0:
+            return out
+        close = df["close"].to_numpy(dtype=float)
+        if L >= len(close):
+            return out
+        rsi_arr = _rsi(close, 14)
+        sma5 = _sma(close, 5)
+        sma20 = _sma(close, 20)
+        rv = float(rsi_arr[L]) if L < len(rsi_arr) else float("nan")
+        mf = float(sma5[L]) if L < len(sma5) else float("nan")
+        ms = float(sma20[L]) if L < len(sma20) else float("nan")
+        if not np.isnan(rv):
+            out["rsi"] = round(rv, 1)
+        if not np.isnan(mf):
+            out["ma_fast"] = round(mf, 4)
+        if not np.isnan(ms):
+            out["ma_slow"] = round(ms, 4)
+        if not np.isnan(mf) and not np.isnan(ms):
+            if mf > ms:
+                out["ma_cross"] = "bullish"
+            elif mf < ms:
+                out["ma_cross"] = "bearish"
+            else:
+                out["ma_cross"] = "neutral"
+    except Exception:
+        pass
+    return out
+
+
+def _parse_indicator_filter(raw) -> str | None:
+    if raw is None or raw == "":
+        return None
+    if isinstance(raw, dict):
+        t = raw.get("type")
+        return str(t).strip().lower() if t else None
+    s = str(raw).strip()
+    if s.startswith("{"):
+        try:
+            d = json.loads(s)
+            t = d.get("type")
+            return str(t).strip().lower() if t else None
+        except json.JSONDecodeError:
+            return None
+    return s.lower().replace(" ", "_")
+
+
+def _poll_indicator_filter_detail(ind_type: str, df: pd.DataFrame, L: int, dir_str: str) -> dict:
+    it = ind_type.lower()
+    close = df["close"].to_numpy(dtype=float)
+    rsi_arr = _rsi(close, 14)
+    rsi_at = (
+        round(float(rsi_arr[L]), 1)
+        if L < len(rsi_arr) and not np.isnan(rsi_arr[L])
+        else None
+    )
+    sma5 = _sma(close, 5)
+    sma20 = _sma(close, 20)
+    mf = float(sma5[L]) if L < len(sma5) and not np.isnan(sma5[L]) else None
+    ms = float(sma20[L]) if L < len(sma20) and not np.isnan(sma20[L]) else None
+    mf_r = round(mf, 4) if mf is not None else None
+    ms_r = round(ms, 4) if ms is not None else None
+
+    if it == "rsi":
+        return {
+            "rsi": rsi_at,
+            "filter": "rsi",
+            "required": "< 30" if dir_str == "long" else "> 70",
+            "passed": check_rsi_extreme(df, L, dir_str),
+        }
+    if it == "ma_cross":
+        return {
+            "ma_fast": mf_r,
+            "ma_slow": ms_r,
+            "filter": "ma_cross",
+            "required": "5 SMA cross above 20 SMA (10-bar lookback)",
+            "passed": check_ma_cross(df, L),
+        }
+    if it == "ma_stable":
+        return {
+            "ma_fast": mf_r,
+            "ma_slow": ms_r,
+            "filter": "ma_stable",
+            "required": "5 & 20 SMA slope with trade direction (10-bar lookback)",
+            "passed": check_ma_stable(df, L, dir_str),
+        }
+    return {"filter": ind_type, "required": None, "passed": True}
+
+
 def _patterns_at_row(sig_df, row_index: int) -> list[str]:
     if sig_df is None or len(sig_df) == 0 or row_index < 0 or row_index >= len(sig_df):
         return []
@@ -99,6 +198,8 @@ def _build_candle_history(df, sig_df, dec: int, n_bars: int = 25) -> list[dict]:
     for pos in range(start, len(df)):
         idx = df.index[pos]
         r = df.iloc[pos]
+        sub = df.iloc[: pos + 1]
+        Lsub = len(sub) - 1
         hist.append({
             "candle_time": _candle_time_iso_z(idx),
             "ohlc": {
@@ -108,6 +209,7 @@ def _build_candle_history(df, sig_df, dec: int, n_bars: int = 25) -> list[dict]:
                 "c": round(float(r["close"]), dec),
             },
             "patterns": _patterns_at_row(sig_df, pos) if sig_df is not None else [],
+            "indicators": _poll_log_indicators_at_row(sub, Lsub),
         })
     return hist
 
@@ -115,6 +217,7 @@ def _build_candle_history(df, sig_df, dec: int, n_bars: int = 25) -> list[dict]:
 def _strategy_poll_row(
     row: dict,
     sig_df,
+    df: pd.DataFrame | None,
 ) -> dict:
     anchor_key = _resolve_pattern_key(row.get("anchor"))
     comp_key = _resolve_pattern_key(row.get("complement")) if row.get("complement") else None
@@ -146,6 +249,19 @@ def _strategy_poll_row(
 
     signal = anchor_fired and (not has_comp or complement_fired) and dir_ok
 
+    ind_detail = None
+    if (
+        df is not None
+        and not df.empty
+        and sig_df is not None
+        and len(sig_df) > 0
+    ):
+        ind_type = _parse_indicator_filter(row.get("indicator_filter"))
+        if ind_type:
+            L = len(df) - 1
+            dir_str = "long" if sig_anchor > 0 else "short" if sig_anchor < 0 else "long"
+            ind_detail = _poll_indicator_filter_detail(ind_type, df, L, dir_str)
+
     return {
         "id": int(row["id"]) if row.get("id") is not None else None,
         "name": row.get("strategy_name") or "",
@@ -153,6 +269,7 @@ def _strategy_poll_row(
         "anchor_fired": bool(anchor_fired),
         "complement_fired": bool(complement_fired),
         "signal": bool(signal),
+        "indicator_detail": ind_detail,
     }
 
 
@@ -214,7 +331,7 @@ def _build_record_for_instrument(inst_key: str) -> dict:
 
     for row in raw_live:
         if sig_df is not None:
-            live_rows.append(_strategy_poll_row(row, sig_df))
+            live_rows.append(_strategy_poll_row(row, sig_df, df))
         else:
             live_rows.append({
                 "id": int(row["id"]) if row.get("id") is not None else None,
@@ -223,6 +340,7 @@ def _build_record_for_instrument(inst_key: str) -> dict:
                 "anchor_fired": False,
                 "complement_fired": False,
                 "signal": False,
+                "indicator_detail": None,
             })
 
     return {
