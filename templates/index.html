@@ -870,7 +870,7 @@
     0%   { background: rgba(76,175,80,0.28); }
     100% { background: rgba(76,175,80,0.08); }
   }
-  .comp-card.flash { animation: flashGreen 0.6s ease forwards; }
+  .comp-card.flash { animation: flashGreen 0.6s ease; }
 
   @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
@@ -1689,6 +1689,7 @@ function renderComplements(data, isBackNav = false) {
 
         selectComplement(cardIdx);
         if (clickedCard) clickedCard.classList.add("flash");
+        if (clickedCard) setTimeout(() => clickedCard.classList.remove("flash"), 650);
       });
 
       content.appendChild(card);
