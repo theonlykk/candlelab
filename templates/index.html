@@ -1667,25 +1667,19 @@ function renderComplements(data, isBackNav = false) {
       radiosEl.addEventListener("click", e => {
         const btn = e.target.closest(".connector-radio");
         if (!btn) return;
-        const scope = btn.closest(".connector-radios");
-        if (!scope || scope.dataset.card === undefined) return;
         e.stopPropagation();
-        const val     = normalizeConnector(btn.dataset.value);
-        const cardIdx = parseInt(scope.dataset.card, 10);
+        const cardIdx = parseInt(radiosEl.dataset.card, 10);
+        const val = normalizeConnector(btn.dataset.value);
         state.complementData[cardIdx].connector = val;
         state.connector = val;
-        scope.querySelectorAll(".connector-radio").forEach(b => {
+        document.querySelectorAll("#complement-content .comp-card").forEach(c => {
+          c.classList.remove("selected");
+        });
+        card.classList.add("selected");
+        radiosEl.querySelectorAll(".connector-radio").forEach(b => {
           b.classList.toggle("active", b === btn);
         });
-        const targetCard = document.querySelector(
-          `#complement-content .comp-card[data-idx="${cardIdx}"]`
-        );
-        if (targetCard && targetCard.classList.contains("selected")) {
-          selectComplement(cardIdx);
-        } else {
-          state.complementData[cardIdx].connector = val;
-          state.connector = val;
-        }
+        selectComplement(cardIdx);
         card.classList.add("flash");
       });
 
@@ -1809,23 +1803,26 @@ function syncIndicatorThresholdsFromDom() {
 }
 
 function buildIndicatorFilterObject() {
-  if (!state.indicator) return null;
-  // TODO: when backend supports stacked filters (e.g. ma_cross + rsi), merge state.activeIndicators.
-  // For now the API accepts a single filter — use the most recently toggled indicator (state.indicator).
-  const t = state.indicator;
-  if (t === "rsi") {
-    syncIndicatorThresholdsFromDom();
-    return {
-      type: "rsi",
-      oversold: state.rsiOversold,
-      overbought: state.rsiOverbought,
-    };
+  if (!state.activeIndicators || state.activeIndicators.size === 0)
+    return null;
+  const filters = [];
+  for (const t of state.activeIndicators) {
+    if (t === "rsi") {
+      syncIndicatorThresholdsFromDom();
+      filters.push({
+        type: "rsi",
+        oversold: state.rsiOversold,
+        overbought: state.rsiOverbought,
+      });
+    } else if (t === "ma_cross") {
+      filters.push({ type: "ma_cross", direction: null });
+    } else if (t === "ma_stable") {
+      filters.push({ type: "ma_stable" });
+    } else {
+      filters.push({ type: t });
+    }
   }
-  if (t === "ma_cross") {
-    return { type: "ma_cross", direction: null };
-  }
-  if (t === "ma_stable") return { type: "ma_stable" };
-  return { type: t };
+  return filters.length === 1 ? filters[0] : filters;
 }
 
 function updateIndicatorParamPanel(key) {

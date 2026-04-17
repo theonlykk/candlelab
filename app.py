@@ -137,6 +137,17 @@ def _parse_indicator_filter_config(raw) -> dict | None:
 
 
 def _make_indicator_fn(indicator_filter):
+    if isinstance(indicator_filter, list):
+        parts = [_make_indicator_fn(item) for item in indicator_filter]
+        fns = [fn for fn in parts if fn is not None]
+        if not fns:
+            return None
+
+        def combined(df, idx, dir_str):
+            return all(fn(df, idx, dir_str) for fn in fns)
+
+        return combined
+
     cfg = _parse_indicator_filter_config(indicator_filter)
     if not cfg:
         return None
@@ -785,6 +796,7 @@ def api_indicator_check():
         pip,
         anchor,
         timeout=TIMEOUT,
+        indicator_fn=None,
         instrument=instrument,
         complement=complement if has_complement else None,
         connector=connector if has_complement else None,
