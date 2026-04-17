@@ -20,10 +20,10 @@ from psycopg2.extras import RealDictCursor
 from data import get_ohlc, INSTRUMENTS, _oanda_instrument_id
 from backtest import compute_atr
 from patterns import detect_all, PATTERNS
-from signal_engine import PATTERN_IDS, PATTERN_SLUG_TO_NAME, detect_signal
+from signal_engine import detect_signal
 from cache import cache_set, cache_get
 from scheduler import start_scheduler
-from poll_log import init_candlelab_poll_log_table, read_poll_log_pg, read_poll_log_view_rows, _pattern_slug
+from poll_log import init_candlelab_poll_log_table, read_poll_log_pg, read_poll_log_view_rows
 from strategy_store import (
     save_strategy,
     get_strategies_by_device,
@@ -1412,81 +1412,101 @@ def api_strategy_pnl():
     })
 
 
-def _executor_read_poll_rows_since(oanda_instrument: str, go_live_ts: pd.Timestamp) -> list[dict]:
+def _executor_parse_patterns_cell(raw) -> list:
+    """Normalize JSONB ``patterns`` array to a Python list (logging / parity; signals use ``detect_all``)."""
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        return raw
+    if isinstance(raw, str):
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return []
+    return []
+
+
+def _executor_read_continuous_series(oanda_instrument: str, go_live_ts: pd.Timestamp) -> pd.DataFrame:
     """
-    Rows from ``executor_poll_log`` for one OANDA instrument (e.g. EUR_USD), oldest first.
+    One row per unique ``candle_time`` from flattened ``candle_history`` (latest poll wins), ascending.
     """
     url = os.environ.get("DATABASE_URL")
     if not url:
-        return []
+        return pd.DataFrame()
     inst = (oanda_instrument or "").strip()
     if not inst:
-        return []
+        return pd.DataFrame()
     try:
         ts_db = go_live_ts.to_pydatetime() if hasattr(go_live_ts, "to_pydatetime") else go_live_ts
     except Exception:
         ts_db = go_live_ts
+
+    sql = """
+        SELECT DISTINCT ON ((candle->>'candle_time')::timestamptz)
+            ep.ts AS poll_ts,
+            ep.bid,
+            ep.ask,
+            (candle->>'candle_time')::timestamptz AS candle_time,
+            (candle->'ohlc'->>'o')::numeric AS open,
+            (candle->'ohlc'->>'h')::numeric AS high,
+            (candle->'ohlc'->>'l')::numeric AS low,
+            (candle->'ohlc'->>'c')::numeric AS close,
+            candle->'patterns' AS patterns
+        FROM executor_poll_log ep,
+        LATERAL jsonb_array_elements(ep.candle_history) AS candle
+        WHERE ep.instrument = %s
+        AND ep.ts >= %s
+        ORDER BY (candle->>'candle_time')::timestamptz ASC, ep.ts DESC
+    """
+
     conn = None
     raw: list = []
     try:
         conn = psycopg2.connect(url)
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(
-                """
-                SELECT ts, open, high, low, close, bid, ask, candle_history
-                FROM executor_poll_log
-                WHERE instrument = %s AND ts >= %s
-                ORDER BY ts ASC
-                """,
-                (inst, ts_db),
-            )
+            cur.execute(sql, (inst, ts_db))
             raw = cur.fetchall()
     except Exception:
-        log.exception("executor_pnl: poll log query failed")
-        return []
+        log.exception("executor_pnl: continuous series query failed")
+        return pd.DataFrame()
     finally:
         if conn is not None:
             conn.close()
-    return [dict(r) for r in raw]
 
+    if not raw:
+        return pd.DataFrame()
 
-def _executor_signals_df_from_candle_history(ch: list) -> pd.DataFrame | None:
-    if not isinstance(ch, list) or not ch:
-        return None
-    cols = list(PATTERN_IDS.keys())
-    rows_data: list[dict] = []
-    for c in ch:
-        patterns_raw = c.get("patterns") or []
-        row_dict = {name: 0 for name in cols}
-        for p in patterns_raw:
-            slug = _pattern_slug(str(p))
-            disp = PATTERN_SLUG_TO_NAME.get(slug)
-            if disp is not None and disp in row_dict:
-                row_dict[disp] = 1
-        rows_data.append(row_dict)
-    idx = pd.RangeIndex(len(rows_data))
-    return pd.DataFrame(rows_data, index=idx)
-
-
-def _executor_ohlc_df_from_candle_history(ch: list) -> pd.DataFrame | None:
-    if not isinstance(ch, list) or not ch:
-        return None
-    o, h, l, cl, ts = [], [], [], [], []
-    for i, c in enumerate(ch):
-        oh = c.get("ohlc") or {}
+    rows_out = []
+    for r in raw:
         try:
-            o.append(float(oh["o"]))
-            h.append(float(oh["h"]))
-            l.append(float(oh["l"]))
-            cl.append(float(oh["c"]))
-        except (KeyError, TypeError, ValueError):
-            return None
-        ct = c.get("candle_time")
-        try:
-            ts.append(pd.Timestamp(ct, tz="UTC") if ct else pd.Timestamp.utcnow() + pd.Timedelta(seconds=i))
+            ct = pd.Timestamp(r["candle_time"])
+            if ct.tzinfo is None:
+                ct = ct.tz_localize("UTC")
+            else:
+                ct = ct.tz_convert("UTC")
         except Exception:
-            ts.append(pd.Timestamp.utcnow() + pd.Timedelta(seconds=i))
-    return pd.DataFrame({"open": o, "high": h, "low": l, "close": cl}, index=pd.DatetimeIndex(ts))
+            continue
+        try:
+            rows_out.append({
+                "poll_ts": r.get("poll_ts"),
+                "candle_time": ct,
+                "open": float(r["open"]),
+                "high": float(r["high"]),
+                "low": float(r["low"]),
+                "close": float(r["close"]),
+                "bid": float(r["bid"]) if r.get("bid") is not None else np.nan,
+                "ask": float(r["ask"]) if r.get("ask") is not None else np.nan,
+                "patterns": _executor_parse_patterns_cell(r.get("patterns")),
+            })
+        except (TypeError, ValueError, KeyError):
+            continue
+
+    if not rows_out:
+        return pd.DataFrame()
+
+    out = pd.DataFrame(rows_out)
+    out = out.set_index("candle_time").sort_index()
+    return out
 
 
 def _executor_session_ok(ts_raw, session_filter: str | None) -> bool:
@@ -1584,8 +1604,8 @@ def _executor_aggregate_trades(trades: list[tuple[bool, float]]) -> dict:
     }
 
 
-def _executor_compute_from_poll_rows(
-    rows: list[dict],
+def _executor_compute_from_dataframe(
+    df: pd.DataFrame,
     anchor: str,
     complement: str | None,
     connector: str | None,
@@ -1598,90 +1618,74 @@ def _executor_compute_from_poll_rows(
     pip: float,
     instrument_label: str,
 ) -> tuple[list[tuple[bool, float]], list[tuple[bool, float]]]:
-    """Returns (all_trades, clean_only_trades) as lists of (win, pnl_net)."""
+    """
+    Continuous OHLC series: ``detect_all`` + ``detect_signal`` (same as historical backtest),
+    then simulate each fired bar.
+    """
     all_trades: list[tuple[bool, float]] = []
     clean_trades: list[tuple[bool, float]] = []
-    n = len(rows)
-    if n == 0:
+    if df is None or df.empty or len(df) < ATR_PERIOD + 2:
         return all_trades, clean_trades
 
-    for r in range(n):
-        row = rows[r]
-        if not _executor_session_ok(row.get("ts"), session_filter):
+    need = ["open", "high", "low", "close", "bid", "ask"]
+    for c in need:
+        if c not in df.columns:
+            return all_trades, clean_trades
+
+    ohlc = df[["open", "high", "low", "close"]].astype(float).sort_index()
+    if anchor not in PATTERNS:
+        return all_trades, clean_trades
+
+    signals_df = detect_all(ohlc)
+    sig_array = detect_signal(
+        signals_df,
+        anchor,
+        complement,
+        connector,
+        direction_str,
+        window=10,
+    )
+    n = len(ohlc)
+    atr_full = compute_atr(ohlc)
+
+    for i in range(n):
+        if i >= len(sig_array):
+            break
+        direction_val = int(sig_array[i])
+        if direction_val == 0:
             continue
-        ch = row.get("candle_history")
-        if not isinstance(ch, list) or len(ch) < 2:
+        if not _executor_session_ok(ohlc.index[i], session_filter):
+            continue
+        if i + 1 >= n:
             continue
 
-        sig_df = _executor_signals_df_from_candle_history(ch)
-        if sig_df is None or anchor not in sig_df.columns:
-            continue
-
-        sig_array = detect_signal(
-            sig_df,
-            anchor,
-            complement,
-            connector,
-            direction_str,
-            window=10,
-        )
-        if sig_array is None or len(sig_array) < 1 or int(sig_array[-1]) == 0:
-            continue
-
-        direction_val = int(sig_array[-1])
-        ohlc_df = _executor_ohlc_df_from_candle_history(ch)
-        if ohlc_df is None or len(ohlc_df) < ATR_PERIOD:
-            continue
-
-        atr_s = compute_atr(ohlc_df)
-        trade_atr = float(atr_s.iloc[-1])
+        trade_atr = float(atr_full.iloc[i])
         if not np.isfinite(trade_atr) or trade_atr <= 0:
             continue
 
-        last = ch[-1]
-        oh = last.get("ohlc") or {}
-        try:
-            last_open = float(oh["o"])
-            last_close = float(oh["c"])
-        except (KeyError, TypeError, ValueError):
-            continue
-
-        try:
-            bid_f = float(row.get("bid"))
-            ask_f = float(row.get("ask"))
-            spread = max(0.0, ask_f - bid_f)
-        except (TypeError, ValueError):
-            spread = None
-        if spread is None or not np.isfinite(spread):
+        bid_v = df["bid"].iloc[i]
+        ask_v = df["ask"].iloc[i]
+        if pd.notna(bid_v) and pd.notna(ask_v):
+            spread = max(0.0, float(ask_v) - float(bid_v))
+        else:
             spread = 0.5 * tick_size
-        entry = last_open + direction_val * spread
+
+        entry = float(ohlc["open"].iloc[i + 1]) + direction_val * spread
         sl = entry - direction_val * sl_mult * trade_atr
         tp = entry + direction_val * tp_mult * trade_atr
-        clean = abs(last_close - entry) <= 3.0 * tick_size
+        sig_close = float(ohlc["close"].iloc[i])
+        clean = abs(sig_close - entry) <= 3.0 * tick_size
 
-        end = min(r + 1 + int(timeout), n)
-        if end <= r + 1:
+        end = min(i + 1 + int(timeout), n)
+        sub = ohlc.iloc[i + 1 : end]
+        if len(sub) == 0:
             continue
 
-        fh, fl, fc, fo = [], [], [], []
-        ok = True
-        for k in range(r + 1, end):
-            rw = rows[k]
-            try:
-                fh.append(float(rw["high"]))
-                fl.append(float(rw["low"]))
-                fc.append(float(rw["close"]))
-                fo.append(float(rw["open"]))
-            except (TypeError, ValueError, KeyError):
-                ok = False
-                break
-        if not ok or not fh:
-            continue
-
-        future_hi = np.asarray(fh, dtype=float)
-        future_lo = np.asarray(fl, dtype=float)
-        future_cl = np.asarray(fc, dtype=float)
-        L = len(fh)
+        fh = sub["high"].to_numpy(dtype=float)
+        fl = sub["low"].to_numpy(dtype=float)
+        fc = sub["close"].to_numpy(dtype=float)
+        fo = sub["open"].to_numpy(dtype=float)
+        L = len(sub)
         op_next = np.empty(L, dtype=float)
         for j in range(L):
             if j + 1 < L:
@@ -1699,9 +1703,9 @@ def _executor_compute_from_poll_rows(
             tp_mult,
             pip,
             instrument_label,
-            future_hi,
-            future_lo,
-            future_cl,
+            fh,
+            fl,
+            fc,
             op_next,
         )
         all_trades.append((win, pnl_n))
@@ -1714,7 +1718,8 @@ def _executor_compute_from_poll_rows(
 @app.route("/api/strategy/executor-pnl", methods=["POST"])
 def api_strategy_executor_pnl():
     """
-    Live executor stats from ``executor_poll_log`` (5m poll snapshots), since ``go_live_at``.
+    Live executor stats: continuous OHLC from ``executor_poll_log`` (DISTINCT ON candle_time),
+    ``detect_all`` + ``detect_signal`` aligned with historical backtest.
     """
     body = request.get_json(force=True)
     instrument = body.get("instrument", "EURUSD")
@@ -1762,9 +1767,9 @@ def api_strategy_executor_pnl():
         return jsonify({"error": "bad go_live_at"}), 400
 
     oanda_id = _oanda_instrument_id(instrument_label)
-    rows = _executor_read_poll_rows_since(oanda_id, go_live_ts)
-    all_t, clean_t = _executor_compute_from_poll_rows(
-        rows,
+    series_df = _executor_read_continuous_series(oanda_id, go_live_ts)
+    all_t, clean_t = _executor_compute_from_dataframe(
+        series_df,
         anchor,
         complement,
         connector,
