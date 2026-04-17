@@ -1414,8 +1414,7 @@ def api_strategy_pnl():
 
 def _executor_read_poll_rows_since(oanda_instrument: str, go_live_ts: pd.Timestamp) -> list[dict]:
     """
-    Rows from the executor poll table (``candlelab_poll_log`` in this codebase)
-    for one OANDA instrument (e.g. EUR_USD), oldest first.
+    Rows from ``executor_poll_log`` for one OANDA instrument (e.g. EUR_USD), oldest first.
     """
     url = os.environ.get("DATABASE_URL")
     if not url:
@@ -1434,8 +1433,8 @@ def _executor_read_poll_rows_since(oanda_instrument: str, go_live_ts: pd.Timesta
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
                 """
-                SELECT ts, open, high, low, close, candle_history
-                FROM candlelab_poll_log
+                SELECT ts, open, high, low, close, bid, ask, candle_history
+                FROM executor_poll_log
                 WHERE instrument = %s AND ts >= %s
                 ORDER BY ts ASC
                 """,
@@ -1646,7 +1645,15 @@ def _executor_compute_from_poll_rows(
         except (KeyError, TypeError, ValueError):
             continue
 
-        entry = last_open + direction_val * 0.5 * tick_size
+        try:
+            bid_f = float(row.get("bid"))
+            ask_f = float(row.get("ask"))
+            spread = max(0.0, ask_f - bid_f)
+        except (TypeError, ValueError):
+            spread = None
+        if spread is None or not np.isfinite(spread):
+            spread = 0.5 * tick_size
+        entry = last_open + direction_val * spread
         sl = entry - direction_val * sl_mult * trade_atr
         tp = entry + direction_val * tp_mult * trade_atr
         clean = abs(last_close - entry) <= 3.0 * tick_size
@@ -1706,7 +1713,7 @@ def _executor_compute_from_poll_rows(
 @app.route("/api/strategy/executor-pnl", methods=["POST"])
 def api_strategy_executor_pnl():
     """
-    Live executor stats from ``candlelab_poll_log`` (5m poll snapshots), since ``go_live_at``.
+    Live executor stats from ``executor_poll_log`` (5m poll snapshots), since ``go_live_at``.
     """
     body = request.get_json(force=True)
     instrument = body.get("instrument", "EURUSD")
