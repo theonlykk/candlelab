@@ -1640,24 +1640,25 @@ def _executor_compute_from_dataframe(
     tick_size: float,
     pip: float,
     instrument_label: str,
-) -> tuple[list[tuple[bool, float]], list[tuple[bool, float]]]:
+) -> tuple[list[tuple[bool, float]], list[tuple[bool, float]], list[tuple[bool, float]]]:
     """
     Continuous OHLC series: ``detect_all`` + ``detect_signal`` (same as historical backtest),
-    then simulate each fired bar.
+    then simulate each fired bar. ``raw`` uses next-bar open only; ``all`` applies bid/ask spread.
     """
+    raw_trades: list[tuple[bool, float]] = []
     all_trades: list[tuple[bool, float]] = []
     clean_trades: list[tuple[bool, float]] = []
     if df is None or df.empty or len(df) < ATR_PERIOD + 2:
-        return all_trades, clean_trades
+        return raw_trades, all_trades, clean_trades
 
     need = ["open", "high", "low", "close", "bid", "ask"]
     for c in need:
         if c not in df.columns:
-            return all_trades, clean_trades
+            return raw_trades, all_trades, clean_trades
 
     ohlc = df[["open", "high", "low", "close"]].astype(float).sort_index()
     if anchor not in PATTERNS:
-        return all_trades, clean_trades
+        return raw_trades, all_trades, clean_trades
 
     signals_df = detect_all(ohlc)
     sig_array = detect_signal(
@@ -1693,11 +1694,14 @@ def _executor_compute_from_dataframe(
         else:
             spread = 0.5 * tick_size
 
-        entry = float(ohlc["open"].iloc[i + 1]) + direction_val * spread
-        sl = entry - direction_val * sl_mult * trade_atr
-        tp = entry + direction_val * tp_mult * trade_atr
+        entry_raw = float(ohlc["open"].iloc[i + 1])
+        entry_all = entry_raw + direction_val * spread
+        sl_r = entry_raw - direction_val * sl_mult * trade_atr
+        tp_r = entry_raw + direction_val * tp_mult * trade_atr
+        sl_a = entry_all - direction_val * sl_mult * trade_atr
+        tp_a = entry_all + direction_val * tp_mult * trade_atr
         sig_close = float(ohlc["close"].iloc[i])
-        clean = abs(sig_close - entry) <= 3.0 * tick_size
+        clean = abs(sig_close - entry_all) <= 3.0 * tick_size
 
         end = min(i + 1 + int(timeout), n)
         sub = ohlc.iloc[i + 1 : end]
@@ -1716,11 +1720,11 @@ def _executor_compute_from_dataframe(
             else:
                 op_next[j] = float(fc[j])
 
-        win, pnl_n = _executor_simulate_trade_pnl(
-            entry,
+        win_r, pnl_r = _executor_simulate_trade_pnl(
+            entry_raw,
             direction_val,
-            sl,
-            tp,
+            sl_r,
+            tp_r,
             trade_atr,
             sl_mult,
             tp_mult,
@@ -1731,11 +1735,28 @@ def _executor_compute_from_dataframe(
             fc,
             op_next,
         )
-        all_trades.append((win, pnl_n))
-        if clean:
-            clean_trades.append((win, pnl_n))
+        raw_trades.append((win_r, pnl_r))
 
-    return all_trades, clean_trades
+        win_a, pnl_a = _executor_simulate_trade_pnl(
+            entry_all,
+            direction_val,
+            sl_a,
+            tp_a,
+            trade_atr,
+            sl_mult,
+            tp_mult,
+            pip,
+            instrument_label,
+            fh,
+            fl,
+            fc,
+            op_next,
+        )
+        all_trades.append((win_a, pnl_a))
+        if clean:
+            clean_trades.append((win_a, pnl_a))
+
+    return raw_trades, all_trades, clean_trades
 
 
 @app.route("/api/strategy/executor-pnl", methods=["POST"])
@@ -1791,7 +1812,7 @@ def api_strategy_executor_pnl():
 
     oanda_id = _oanda_instrument_id(instrument_label)
     series_df = _executor_read_continuous_series(oanda_id, go_live_ts)
-    all_t, clean_t = _executor_compute_from_dataframe(
+    raw_t, all_t, clean_t = _executor_compute_from_dataframe(
         series_df,
         anchor,
         complement,
@@ -1806,11 +1827,13 @@ def api_strategy_executor_pnl():
         instrument_label,
     )
 
+    agg_raw = _executor_aggregate_trades(raw_t)
     agg_all = _executor_aggregate_trades(all_t)
     agg_clean = _executor_aggregate_trades(clean_t)
     insufficient = agg_all["signals"] == 0
 
     return jsonify({
+        "raw": agg_raw,
         "all": agg_all,
         "clean": agg_clean,
         "insufficient": insufficient,

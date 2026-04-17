@@ -3338,7 +3338,7 @@ function buildLiveStratCard(l) {
       </div>
       <div class="strat-card-meta">${(l.instrument || "").replace(/</g, "")} · Live since ${when} · Ind ${String(indDisp).replace(/</g, "")}</div>
       <div class="live-strat-stat-rows" aria-live="polite">
-        <div class="live-strat-stat-row"><span>Backtest</span><span class="live-strat-stat-vals live-stat-bt">Calculating…</span></div>
+        <div class="live-strat-stat-row"><span>Since live · no spread adj</span><span class="live-strat-stat-vals live-stat-bt">Calculating…</span></div>
         <div class="live-strat-stat-row"><span>Since live · all entries</span><span class="live-strat-stat-vals live-stat-all">—</span></div>
         <div class="live-strat-stat-row"><span>Since live · clean only</span><span class="live-strat-stat-vals live-stat-clean">—</span></div>
       </div>
@@ -3417,64 +3417,44 @@ function fetchStratPnl(s, card) {
     tp_multiplier: s.tp_mult,
     timeout:      s.timeout || 1000,
     direction:    s.direction || "both",
-    preview:      true,
-    saved_at:     s.saved_at || s.go_live_at,
+    go_live_at:   s.go_live_at || null,
+    tick_size:    tickSize,
   };
 
   const btEl = card.querySelector(".live-stat-bt");
   const allEl = card.querySelector(".live-stat-all");
   const cleanEl = card.querySelector(".live-stat-clean");
 
-  apiFetch("/api/strategy-pnl", {
+  apiFetch("/api/strategy/executor-pnl", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   })
     .then(r => r.json())
-    .then(d => {
-      if (d && d.error) {
-        if (btEl) { btEl.textContent = "—"; btEl.style.color = "var(--muted)"; }
-        if (allEl) { allEl.textContent = "—"; allEl.style.color = "var(--muted)"; }
-        if (cleanEl) { cleanEl.textContent = "—"; cleanEl.style.color = "var(--muted)"; }
-        return null;
-      }
-      if (btEl) {
-        btEl.textContent = formatLiveStatPnlLine(d);
-        const pnl = d.cum_net ?? 0;
-        btEl.style.color = pnl > 0 ? "var(--green)" : pnl < 0 ? "var(--red)" : "var(--muted)";
-      }
-      const dot = card.querySelector(".strat-dot");
-      if (dot) {
-        const pnl = d.cum_net ?? 0;
-        dot.classList.remove("strat-dot-amber", "strat-dot-green", "strat-dot-red");
-        dot.classList.add(pnl > 0 ? "strat-dot-green" : pnl < 0 ? "strat-dot-red" : "strat-dot-amber");
-      }
-      const execPayload = Object.assign({}, payload, {
-        go_live_at: s.go_live_at || null,
-        tick_size: tickSize,
-      });
-      return apiFetch("/api/strategy/executor-pnl", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(execPayload),
-      }).then(r => r.json());
-    })
     .then(ex => {
-      if (ex == null) return;
-      if (!allEl || !cleanEl) return;
+      if (!btEl || !allEl || !cleanEl) return;
       if (!ex || ex.error) {
+        btEl.textContent = "—";
         allEl.textContent = "—";
         cleanEl.textContent = "—";
+        btEl.style.color = "var(--muted)";
         allEl.style.color = "var(--muted)";
         cleanEl.style.color = "var(--muted)";
         return;
       }
       const noExecSignals = !ex.all || Number(ex.all.signals) === 0;
       if (noExecSignals) {
+        btEl.textContent = "No trades yet";
         allEl.textContent = "No trades yet";
         cleanEl.textContent = "No trades yet";
+        btEl.style.color = "var(--muted)";
         allEl.style.color = "var(--muted)";
         cleanEl.style.color = "var(--muted)";
+        const dot0 = card.querySelector(".strat-dot");
+        if (dot0) {
+          dot0.classList.remove("strat-dot-amber", "strat-dot-green", "strat-dot-red");
+          dot0.classList.add("strat-dot-amber");
+        }
         return;
       }
       const fmt = (blk) => {
@@ -3483,18 +3463,24 @@ function fetchStratPnl(s, card) {
         const col = pnl > 0 ? "var(--green)" : pnl < 0 ? "var(--red)" : "var(--muted)";
         return { line, col };
       };
+      const rw = fmt(ex.raw);
       const a = fmt(ex.all);
       const c = fmt(ex.clean);
+      btEl.textContent = rw.line;
+      btEl.style.color = rw.col;
       allEl.textContent = a.line;
       allEl.style.color = a.col;
       cleanEl.textContent = c.line;
       cleanEl.style.color = c.col;
+      const dot = card.querySelector(".strat-dot");
+      if (dot) {
+        const pnl = ex.all.cum_net ?? 0;
+        dot.classList.remove("strat-dot-amber", "strat-dot-green", "strat-dot-red");
+        dot.classList.add(pnl > 0 ? "strat-dot-green" : pnl < 0 ? "strat-dot-red" : "strat-dot-amber");
+      }
     })
     .catch(() => {
-      if (btEl && btEl.textContent === "Calculating…") {
-        btEl.textContent = "—";
-        btEl.style.color = "var(--muted)";
-      }
+      if (btEl) { btEl.textContent = "—"; btEl.style.color = "var(--muted)"; }
       if (allEl) { allEl.textContent = "—"; allEl.style.color = "var(--muted)"; }
       if (cleanEl) { cleanEl.textContent = "—"; cleanEl.style.color = "var(--muted)"; }
     });
