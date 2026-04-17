@@ -432,34 +432,6 @@
     cursor: pointer;
   }
 
-  /* Live preview box */
-  #live-preview {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 16px;
-    margin-top: 20px;
-    display: flex;
-    gap: 24px;
-  }
-  .preview-stat { text-align: center; }
-  .preview-stat-val {
-    font-size: 22px;
-    font-weight: 700;
-    color: var(--accent);
-  }
-  .preview-stat-lbl {
-    font-size: 11px;
-    color: var(--muted);
-    margin-top: 2px;
-  }
-  #preview-loading {
-    color: var(--muted);
-    font-size: 13px;
-    text-align: center;
-    width: 100%;
-  }
-
   /* Summary step */
   .stat-row {
     display: flex;
@@ -925,13 +897,21 @@
     color: var(--muted);
     font-size: 13px;
     cursor: pointer;
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    line-height: 1.25;
   }
+  .timeout-btn-l1 { font-size: 13px; }
+  .timeout-btn-l2 { font-size: 11px; color: var(--muted); font-weight: 400; }
   .timeout-btn.active {
     background: var(--accent);
     color: #fff;
     border-color: var(--accent);
     font-weight: 600;
   }
+  .timeout-btn.active .timeout-btn-l2 { color: rgba(255, 255, 255, 0.92); }
 </style>
 </head>
 <body>
@@ -1173,17 +1153,13 @@
         <span style="font-size:13px; color:var(--muted);">How long before forcing an exit?</span>
       </div>
       <div id="timeout-options" style="display:flex; gap:8px; flex-wrap:wrap;">
-        <button class="timeout-btn" data-val="5" onclick="onTimeoutChange(5)">5c</button>
-        <button class="timeout-btn" data-val="10" onclick="onTimeoutChange(10)">10c</button>
-        <button class="timeout-btn" data-val="20" onclick="onTimeoutChange(20)">20c</button>
-        <button class="timeout-btn" data-val="50" onclick="onTimeoutChange(50)">50c</button>
-        <button class="timeout-btn" data-val="100" onclick="onTimeoutChange(100)">100c</button>
-        <button class="timeout-btn active" data-val="1000" onclick="onTimeoutChange(1000)">No limit</button>
+        <button class="timeout-btn" data-val="5" onclick="onTimeoutChange(5)"><span class="timeout-btn-l1">5c</span><span class="timeout-btn-l2">...</span></button>
+        <button class="timeout-btn" data-val="10" onclick="onTimeoutChange(10)"><span class="timeout-btn-l1">10c</span><span class="timeout-btn-l2">...</span></button>
+        <button class="timeout-btn" data-val="20" onclick="onTimeoutChange(20)"><span class="timeout-btn-l1">20c</span><span class="timeout-btn-l2">...</span></button>
+        <button class="timeout-btn" data-val="50" onclick="onTimeoutChange(50)"><span class="timeout-btn-l1">50c</span><span class="timeout-btn-l2">...</span></button>
+        <button class="timeout-btn" data-val="100" onclick="onTimeoutChange(100)"><span class="timeout-btn-l1">100c</span><span class="timeout-btn-l2">...</span></button>
+        <button class="timeout-btn active" data-val="1000" onclick="onTimeoutChange(1000)"><span class="timeout-btn-l1">No limit</span><span class="timeout-btn-l2">...</span></button>
       </div>
-    </div>
-
-    <div id="live-preview">
-      <div id="preview-loading">Calculating…</div>
     </div>
   </div>
 
@@ -1978,7 +1954,10 @@ function onSliderChange() {
   updateSlTpPipDisplay();
 
   clearTimeout(previewTimer);
-  previewTimer = setTimeout(fetchPreview, 500);
+  previewTimer = setTimeout(() => {
+    fetchPreview();
+    fetchTimeoutStats();
+  }, 500);
 }
 
 function timeoutLabel(candles) {
@@ -1996,7 +1975,9 @@ function timeoutLabel(candles) {
 function updateTimeoutLabels() {
   document.querySelectorAll('.timeout-btn').forEach(b => {
     const val = parseInt(b.dataset.val, 10);
-    b.textContent = timeoutLabel(val);
+    const l1 = b.querySelector(".timeout-btn-l1");
+    if (l1) l1.textContent = timeoutLabel(val);
+    else b.textContent = timeoutLabel(val);
   });
 }
 
@@ -2006,13 +1987,14 @@ function onTimeoutChange(val) {
     b.classList.toggle('active', parseInt(b.dataset.val, 10) === val);
   });
   clearTimeout(previewTimer);
-  previewTimer = setTimeout(fetchPreview, 300);
   updateTimeoutLabels();
 }
 
 function fetchPreview() {
   const preview = document.getElementById("live-preview");
-  preview.innerHTML = `<div id="preview-loading">Calculating…</div>`;
+  if (preview) {
+    preview.innerHTML = `<div id="preview-loading">Calculating…</div>`;
+  }
 
   apiFetch("/api/finalise", {
     method: "POST",
@@ -2021,9 +2003,13 @@ function fetchPreview() {
   })
     .then(r => r.json())
     .then(d => {
-      if (d.error) { preview.innerHTML = `<div id="preview-loading">${d.error}</div>`; return; }
+      if (d.error) {
+        if (preview) preview.innerHTML = `<div id="preview-loading">${d.error}</div>`;
+        return;
+      }
       if (d.atr !== undefined) state.atr = d.atr;
-      preview.innerHTML = `
+      if (preview) {
+        preview.innerHTML = `
         <div class="preview-stat">
           <div class="preview-stat-val">${d.win_pct}%</div>
           <div class="preview-stat-lbl">Win rate</div>
@@ -2032,10 +2018,11 @@ function fetchPreview() {
           <div class="preview-stat-val">${d.signals}</div>
           <div class="preview-stat-lbl">Signals</div>
         </div>`;
+      }
       updateSlTpPipDisplay();
     })
     .catch(() => {
-      preview.innerHTML = `<div id="preview-loading">—</div>`;
+      if (preview) preview.innerHTML = `<div id="preview-loading">—</div>`;
     });
 }
 
@@ -2066,6 +2053,44 @@ function buildConfig(preview) {
   return cfg;
 }
 
+function fetchTimeoutStats() {
+  document.querySelectorAll("#step-8 .timeout-btn-l2").forEach(el => {
+    el.textContent = "...";
+  });
+  apiFetch("/api/timeout-check", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(buildConfig(true)),
+  })
+    .then(r => r.json())
+    .then(d => {
+      if (d.error) {
+        document.querySelectorAll("#step-8 .timeout-btn-l2").forEach(el => {
+          el.textContent = "—";
+        });
+        return;
+      }
+      document.querySelectorAll("#step-8 .timeout-btn").forEach(b => {
+        const val = parseInt(b.dataset.val, 10);
+        const key = String(val);
+        const row = d[key];
+        const l1 = b.querySelector(".timeout-btn-l1");
+        const l2 = b.querySelector(".timeout-btn-l2");
+        if (l1) l1.textContent = timeoutLabel(val);
+        if (l2 && row) {
+          const n = Number(row.signals) || 0;
+          const x = row.win_pct != null ? Number(row.win_pct).toFixed(1) : "0.0";
+          l2.textContent = `${n} sig · ${x}%`;
+        }
+      });
+    })
+    .catch(() => {
+      document.querySelectorAll("#step-8 .timeout-btn-l2").forEach(el => {
+        el.textContent = "—";
+      });
+    });
+}
+
 // Called when going to step 9 from step 8
 const _origGoStep = goStep;
 function goStep(n) {
@@ -2075,7 +2100,7 @@ function goStep(n) {
   // preview fetches (step 8) and summary fetch (step 9).
   _origGoStep(n);
   if (n === 8) {
-    // initialise sliders and trigger first preview
+    // initialise sliders (final goStep also refreshes timeout stats on step 8)
     document.getElementById("sl-slider").value = 10;
     document.getElementById("tp-slider").value = 30;
     onSliderChange();
@@ -2786,8 +2811,9 @@ function goStep(n) {
     document.getElementById("tp-slider").value = Math.round(state.tpMult * 10);
     document.getElementById("sl-val").textContent = state.slMult.toFixed(1) + "×";
     document.getElementById("tp-val").textContent = state.tpMult.toFixed(1) + "×";
+    updateSlTpPipDisplay();
     clearTimeout(previewTimer);
-    previewTimer = setTimeout(fetchPreview, 300);
+    fetchTimeoutStats();
   }
   if (n === 9) {
     loadSummary();
@@ -2889,6 +2915,7 @@ function applyRowToState(row) {
   document.querySelectorAll(".timeout-btn").forEach(b => {
     b.classList.toggle("active", parseInt(b.dataset.val, 10) === state.timeout);
   });
+  updateTimeoutLabels();
 }
 
 function openWizardFromDraft(row) {
