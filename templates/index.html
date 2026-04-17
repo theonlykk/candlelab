@@ -1678,15 +1678,17 @@ function renderComplements(data, isBackNav = false) {
         state.complementData[cardIdx].connector = val;
         state.connector = val;
 
-        // Now select only this card
-        card.classList.add("selected");
+        const clickedCard = document.querySelector(
+          `#complement-content .comp-card[data-idx="${cardIdx}"]`
+        );
+        if (clickedCard) clickedCard.classList.add("selected");
 
         radiosEl.querySelectorAll(".connector-radio").forEach(b => {
           b.classList.toggle("active", b === btn);
         });
 
         selectComplement(cardIdx);
-        card.classList.add("flash");
+        if (clickedCard) clickedCard.classList.add("flash");
       });
 
       content.appendChild(card);
