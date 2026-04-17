@@ -786,7 +786,8 @@ def api_indicator_check():
     body = request.get_json(force=True)
     anchor = body.get("anchor")
     complement = body.get("complement")
-    connector = body.get("connector")
+    has_complement = complement is not None and str(complement).strip() != ""
+    connector = (body.get("connector") or "ordered") if has_complement else None
     direction = body.get("direction", "both")
     instrument_raw = body.get("instrument", "EUR/USD")
     interval = body.get("interval", "5m")
@@ -814,9 +815,24 @@ def api_indicator_check():
     elif indicator:
         indicator_fn = _make_indicator_fn(indicator)
 
-    base_r = _backtest_pattern(df, pip, anchor, timeout=TIMEOUT, instrument=instrument)
+    base_r = _backtest_pattern(
+        df,
+        pip,
+        anchor,
+        timeout=TIMEOUT,
+        instrument=instrument,
+        complement=complement if has_complement else None,
+        connector=connector if has_complement else None,
+    )
     filtered_r = _backtest_pattern(
-        df, pip, anchor, timeout=TIMEOUT, indicator_fn=indicator_fn, instrument=instrument,
+        df,
+        pip,
+        anchor,
+        timeout=TIMEOUT,
+        indicator_fn=indicator_fn,
+        instrument=instrument,
+        complement=complement if has_complement else None,
+        connector=connector if has_complement else None,
     )
 
     return jsonify({
