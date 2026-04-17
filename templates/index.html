@@ -1664,12 +1664,14 @@ function renderComplements(data, isBackNav = false) {
       radiosEl.addEventListener("click", e => {
         const btn = e.target.closest(".connector-radio");
         if (!btn) return;
+        const scope = btn.closest(".connector-radios");
+        if (!scope || scope.dataset.card === undefined) return;
         e.stopPropagation();
         const val     = normalizeConnector(btn.dataset.value);
-        const cardIdx = parseInt(radiosEl.dataset.card);
+        const cardIdx = parseInt(scope.dataset.card, 10);
         state.complementData[cardIdx].connector = val;
         state.connector = val;
-        radiosEl.querySelectorAll(".connector-radio").forEach(b => {
+        scope.querySelectorAll(".connector-radio").forEach(b => {
           b.classList.toggle("active", b === btn);
         });
         selectComplement(cardIdx);
@@ -1718,9 +1720,15 @@ function renderComplements(data, isBackNav = false) {
 function selectComplement(idx) {
   state.complement = state.complementData[idx].complement;
   state.connector = normalizeConnector(state.complementData[idx].connector || "ordered");
-  document.querySelectorAll(".comp-card").forEach(card => {
-    card.classList.toggle("selected", parseInt(card.dataset.idx, 10) === idx);
-  });
+  const root = document.getElementById("complement-content");
+  if (root) {
+    root.querySelectorAll(".comp-card").forEach(card => {
+      card.classList.remove("selected");
+      if (parseInt(card.dataset.idx, 10) === idx) {
+        card.classList.add("selected");
+      }
+    });
+  }
   const btn = document.getElementById("comp-continue");
   if (btn) btn.disabled = false;
 }
