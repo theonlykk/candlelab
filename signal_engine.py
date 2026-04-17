@@ -59,6 +59,14 @@ def get_pass_order(anchor: str, complement: str) -> tuple[str, str]:
     return complement, anchor
 
 
+def _connector_is_any_order(connector: str | None) -> bool:
+    """True for bidirectional window pairing; ordered uses backward-only pairing."""
+    if connector is None or str(connector).strip() == "":
+        return False
+    c = str(connector).strip().lower().replace("_", "-")
+    return c in ("any-order", "optional")
+
+
 def build_signal_arrays(
     signals_df: pd.DataFrame,
     anchor: str,
@@ -92,8 +100,12 @@ def run_ring_buffer(
     anchor_arr = lower PATTERN_ID series, complement_arr = higher PATTERN_ID series.
     (detect_signal reorders via get_pass_order before calling.)
 
-    connector == \"ordered\" vs \"any-order\" (or other): same backward time scan;
-    pairing uses anchor bars at indices strictly before the complement bar (t < m).
+    connector \"ordered\": complement bar at m pairs only with the other pattern at
+    an earlier bar t < m (backward ring scan).
+
+    connector \"any-order\" / \"optional\": allow pairing within the window before
+    or after m — backward scan plus a forward scan on the raw pattern arrays (the
+    ring buffer only holds history behind m).
     """
     n = anchor_arr.shape[0]
     out = np.zeros(n, dtype=np.int8)
@@ -109,6 +121,8 @@ def run_ring_buffer(
     w_first = anchor_arr.astype(np.int8, copy=True)
     w_second = complement_arr.astype(np.int8, copy=True)
 
+    any_order = _connector_is_any_order(connector)
+
     buf = np.zeros(window, dtype=np.int8)
     last_t = np.full(window, -1, dtype=np.int32)
     pass1_sig = np.zeros(n, dtype=np.int8)
@@ -121,6 +135,7 @@ def run_ring_buffer(
 
         sv = w_second[m]
         if sv != 0:
+            paired = False
             k = 1
             while k <= window:
                 t = m - k
@@ -135,8 +150,26 @@ def run_ring_buffer(
                         last_t[j] = -1
                         w_first[t] = 0
                         w_second[m] = 0
+                        paired = True
                         break
                 k += 1
+            if not paired and any_order:
+                k = 1
+                while k <= window:
+                    t = m + k
+                    if t >= n:
+                        break
+                    if w_first[t] != 0:
+                        pass1_sig[m] = sv
+                        w_first[t] = 0
+                        w_second[m] = 0
+                        j = t % window
+                        if last_t[j] == t:
+                            buf[j] = 0
+                            last_t[j] = -1
+                        paired = True
+                        break
+                    k += 1
         m += 1
 
     buf2 = np.zeros(window, dtype=np.int8)
@@ -152,6 +185,7 @@ def run_ring_buffer(
         fv = w_first[m]
         p1 = pass1_sig[m]
         if fv != 0 and p1 == 0:
+            paired = False
             k = 1
             while k <= window:
                 t = m - k
@@ -166,8 +200,26 @@ def run_ring_buffer(
                         last_t2[j] = -1
                         w_second[t] = 0
                         w_first[m] = 0
+                        paired = True
                         break
                 k += 1
+            if not paired and any_order:
+                k = 1
+                while k <= window:
+                    t = m + k
+                    if t >= n:
+                        break
+                    if w_second[t] != 0:
+                        pass2_sig[m] = fv
+                        w_second[t] = 0
+                        w_first[m] = 0
+                        j = t % window
+                        if last_t2[j] == t:
+                            buf2[j] = 0
+                            last_t2[j] = -1
+                        paired = True
+                        break
+                    k += 1
         m += 1
 
     i = 0
