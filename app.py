@@ -17,6 +17,7 @@ import anthropic
 from data import get_ohlc, INSTRUMENTS
 from backtest import compute_atr
 from patterns import detect_all, PATTERNS
+from signal_engine import detect_signal
 from cache import cache_set, cache_get
 from scheduler import start_scheduler
 from poll_log import init_candlelab_poll_log_table, read_poll_log_pg, read_poll_log_view_rows
@@ -367,52 +368,6 @@ def _simulate_trades(
     return trades
 
 
-def _filter_anchor_by_complement(
-    anchor_indices: np.ndarray,
-    signals_df: pd.DataFrame,
-    complement: str | None,
-    connector: str | None,
-    window: int = 10,
-) -> np.ndarray:
-    """
-    Filter anchor signal indices to only those where complement also fires
-    within the required window. If complement is None or not in signals_df,
-    returns anchor_indices unchanged.
-    connector='ordered': complement must fire in next `window` candles after anchor
-    connector='any-order' or anything else: complement within ±window candles
-    """
-    if len(anchor_indices) == 0:
-        return anchor_indices
-    if complement is None or not str(complement).strip():
-        return anchor_indices
-    comp = str(complement).strip()
-    if comp not in signals_df.columns:
-        return anchor_indices
-
-    comp_signals = signals_df[comp].to_numpy()
-    comp_indices_set = set(np.where(comp_signals != 0)[0].tolist())
-    conn = (connector or "").strip().lower()
-    filtered: list[int] = []
-    for ai in anchor_indices:
-        ai_int = int(ai)
-        if conn == "ordered":
-            found = any(
-                j in comp_indices_set
-                for j in range(ai_int + 1, ai_int + window + 1)
-            )
-        else:
-            found = any(
-                abs(ai_int - j) <= window
-                for j in comp_indices_set
-                if abs(ai_int - j) <= window
-            )
-        if found:
-            filtered.append(ai_int)
-    if not filtered:
-        return np.array([], dtype=anchor_indices.dtype)
-    return np.asarray(filtered, dtype=anchor_indices.dtype)
-
-
 def _backtest_pattern(
     df: pd.DataFrame,
     pip: float,
@@ -441,20 +396,25 @@ def _backtest_pattern(
     if pattern_name not in signals_df.columns:
         return {"signals": 0, "wins": 0, "win_pct": 0.0, "cum_net": 0.0, "trades": []}
 
-    anchor_series = signals_df[pattern_name]
-    anchor_indices = np.where(anchor_series.to_numpy() != 0)[0]
-    filtered_idx = _filter_anchor_by_complement(
-        anchor_indices, signals_df, complement, connector, window=10,
+    if direction_val == 1:
+        direction_str = "long"
+    elif direction_val == -1:
+        direction_str = "short"
+    else:
+        direction_str = "both"
+
+    sig_array = detect_signal(
+        signals_df,
+        pattern_name,
+        complement,
+        connector,
+        direction_str,
+        window=10,
     )
-    keep = {int(i) for i in filtered_idx}
-    sig_arr = anchor_series.to_numpy().copy()
-    for i in range(len(sig_arr)):
-        if sig_arr[i] != 0 and i not in keep:
-            sig_arr[i] = 0
-    filtered_series = pd.Series(sig_arr, index=anchor_series.index)
+    signals_series = pd.Series(sig_array, index=signals_df.index)
 
     trades = _simulate_trades(
-        df, filtered_series, atr, pip,
+        df, signals_series, atr, pip,
         sl_mult, tp_mult, timeout, session, indicator_fn, direction_val,
         instrument=instrument,
     )
