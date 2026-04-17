@@ -20,7 +20,7 @@ from psycopg2.extras import RealDictCursor
 from data import get_ohlc, INSTRUMENTS, _oanda_instrument_id
 from backtest import compute_atr
 from patterns import detect_all, PATTERNS
-from signal_engine import PATTERN_IDS, detect_signal
+from signal_engine import PATTERN_IDS, PATTERN_SLUG_TO_NAME, detect_signal
 from cache import cache_set, cache_get
 from scheduler import start_scheduler
 from poll_log import init_candlelab_poll_log_table, read_poll_log_pg, read_poll_log_view_rows, _pattern_slug
@@ -1457,11 +1457,12 @@ def _executor_signals_df_from_candle_history(ch: list) -> pd.DataFrame | None:
     rows_data: list[dict] = []
     for c in ch:
         patterns_raw = c.get("patterns") or []
-        fired_slugs = {_pattern_slug(str(x)) for x in patterns_raw}
-        row_dict = {}
-        for name in cols:
-            slug = _pattern_slug(name)
-            row_dict[name] = 1 if slug in fired_slugs else 0
+        row_dict = {name: 0 for name in cols}
+        for p in patterns_raw:
+            slug = _pattern_slug(str(p))
+            disp = PATTERN_SLUG_TO_NAME.get(slug)
+            if disp is not None and disp in row_dict:
+                row_dict[disp] = 1
         rows_data.append(row_dict)
     idx = pd.RangeIndex(len(rows_data))
     return pd.DataFrame(rows_data, index=idx)

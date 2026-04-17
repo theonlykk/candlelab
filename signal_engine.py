@@ -25,6 +25,31 @@ PATTERN_IDS: dict[str, int] = {
 }
 
 
+def _pattern_slug(label: str) -> str:
+    """
+    Stable slug for pattern labels — same rules as ``poll_log._pattern_slug``:
+    lowercase, ``/`` → ``_``, space → ``_``, ``-`` → ``_``, collapse ``__``, strip ``_``.
+    """
+    raw = str(label or "").strip()
+    if not raw:
+        return ""
+    s = (
+        raw.lower()
+        .replace(".", "")
+        .replace("/", "_")
+        .replace(" ", "_")
+        .replace("-", "_")
+    )
+    while "__" in s:
+        s = s.replace("__", "_")
+    return s.strip("_")
+
+
+PATTERN_SLUG_TO_NAME: dict[str, str] = {
+    _pattern_slug(name): name for name in PATTERN_IDS
+}
+
+
 def get_pass_order(anchor: str, complement: str) -> tuple[str, str]:
     """Return (first_pattern, second_pattern) sorted by PATTERN_IDS ascending."""
     id_a = PATTERN_IDS[anchor]
