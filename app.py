@@ -483,6 +483,20 @@ def _task_pattern_multi_timeout(args):
     return pattern_name, r
 
 
+def _task_pattern_single_backtest(args):
+    """ProcessPool wrapper: one-pattern ``_backtest_pattern`` (``detect_signal`` path)."""
+    df, pip, pattern_name, direction_val, instrument = args
+    r = _backtest_pattern(
+        df,
+        pip,
+        pattern_name,
+        timeout=TIMEOUT,
+        instrument=instrument,
+        direction_val=direction_val,
+    )
+    return pattern_name, r
+
+
 def _complement_task(args):
     (comp_name, connector,
      df, signals_df, anchor_indices, atr, anchor_signals, anchor_win_pct) = args
@@ -590,7 +604,7 @@ def _get_ai_tips(patterns_data: list, instrument: str) -> dict:
     try:
         client = anthropic.Anthropic()
         names_and_rates = "\n".join(
-            f"- {p['name']}: {p['win_pct_5']}% win rate at 5 candles ({p['signals']} signals)"
+            f"- {p['name']}: {p.get('win_pct', p.get('win_pct_5', 0))}% win rate ({p['signals']} signals)"
             for p in patterns_data
         )
         prompt = (
@@ -629,7 +643,7 @@ def api_patterns():
     Return ranked patterns for the selected market/timeframe.
 
     Implementation notes:
-    - Uses a ProcessPool so each pattern's multi-timeout backtest runs in parallel.
+    - Uses a ProcessPool so each pattern's ``_backtest_pattern`` (``detect_signal``) run is parallel.
     - Uses Redis to cache the resulting JSON for a short TTL.
     """
     instrument_raw = request.args.get("instrument", "EUR/USD")
@@ -658,12 +672,18 @@ def api_patterns():
 
     pattern_names = _patterns_for_direction(direction)
 
-    tasks = [(df, pip, name, None, 1.0, 3.0, instrument) for name in pattern_names]
+    direction_val = 0
+    if direction == "long":
+        direction_val = 1
+    elif direction == "short":
+        direction_val = -1
+
+    tasks = [(df, pip, name, direction_val, instrument) for name in pattern_names]
 
     # ProcessPool is used to parallelize per-pattern simulations. On Windows this uses
     # "spawn", so the task payload must be picklable and entrypoints must be top-level.
     with concurrent.futures.ProcessPoolExecutor(max_workers=4, mp_context=ctx) as executor:
-        futures = {executor.submit(_task_pattern_multi_timeout, t): t[2] for t in tasks}
+        futures = {executor.submit(_task_pattern_single_backtest, t): t[2] for t in tasks}
         raw = {}
         for fut in concurrent.futures.as_completed(futures):
             name, r = fut.result()
@@ -672,16 +692,19 @@ def api_patterns():
     patterns_data = []
     for name in pattern_names:
         r = raw.get(name, {})
+        wp = float(r.get("win_pct", 0.0))
+        sig = int(r.get("signals", 0))
         patterns_data.append({
             "name":       name,
-            "signals":    r.get("signals", 0),
-            "win_pct_5":  r.get("win_pct_5", 0.0),
-            "win_pct_10": r.get("win_pct_10", 0.0),
-            "win_pct_20": r.get("win_pct_20", 0.0),
+            "signals":    sig,
+            "win_pct":    wp,
+            "win_pct_5":  wp,
+            "win_pct_10": wp,
+            "win_pct_20": wp,
             "tip":        "",
         })
 
-    patterns_data.sort(key=lambda x: x["win_pct_5"], reverse=True)
+    patterns_data.sort(key=lambda x: x["win_pct"], reverse=True)
 
     tips = _get_ai_tips(patterns_data, instrument)
     for p in patterns_data:
