@@ -114,10 +114,30 @@ def check_rsi_extreme(
     return bool(np.any(window > float(overbought)))
 
 
+def _ma_stable_progressive_closes(close: np.ndarray, end: int, direction: str) -> bool:
+    """
+    Last 7 closes before `end` give 6 consecutive step comparisons.
+    Long: count steps where close[i] > close[i-1]. Short: close[i] < close[i-1].
+    Require at least 4 of 6.
+    """
+    if end < 7:
+        return False
+    window = close[end - 7 : end]
+    d = str(direction).strip().lower()
+    if d == "long":
+        n_prog = int(np.sum(window[1:] > window[:-1]))
+    else:
+        n_prog = int(np.sum(window[1:] < window[:-1]))
+    return n_prog >= 4
+
+
 def check_ma_stable(df: pd.DataFrame, signal_idx: int, direction: str) -> bool:
     """
-    Returns True if both the 5-period and 20-period SMA are sloping
-    in the direction of the trade for ALL LOOKBACK candles before signal_idx.
+    Returns True if both:
+    - the 5-period and 20-period SMA are sloping in the direction of the trade
+      for ALL LOOKBACK candles before signal_idx, and
+    - at least 4 of the last 6 close-to-close steps (from 7 closes ending at the
+      bar before signal_idx) are progressive in the trade direction.
     """
     close = df["close"].to_numpy(dtype=float)
     end = signal_idx
@@ -138,6 +158,11 @@ def check_ma_stable(df: pd.DataFrame, signal_idx: int, direction: str) -> bool:
     s5v = s5[valid]
     s20v = s20[valid]
 
-    if direction == "long":
-        return bool(np.all(np.diff(s5v) > 0) and np.all(np.diff(s20v) > 0))
-    return bool(np.all(np.diff(s5v) < 0) and np.all(np.diff(s20v) < 0))
+    d = str(direction).strip().lower()
+    if d == "long":
+        ma_ok = bool(np.all(np.diff(s5v) > 0) and np.all(np.diff(s20v) > 0))
+    else:
+        ma_ok = bool(np.all(np.diff(s5v) < 0) and np.all(np.diff(s20v) < 0))
+    if not ma_ok:
+        return False
+    return _ma_stable_progressive_closes(close, end, direction)

@@ -1716,6 +1716,14 @@ function selectComplement(idx) {
 function buildIndicatorStep() {
   const container = document.getElementById("indicator-cards");
   container.innerHTML = "";
+  const paramsPanel = document.getElementById("indicator-params-panel");
+  if (paramsPanel) {
+    paramsPanel.style.display = "none";
+    const rsiF = document.getElementById("indicator-rsi-fields");
+    const maF = document.getElementById("indicator-ma-fields");
+    if (rsiF) rsiF.style.display = "none";
+    if (maF) maF.style.display = "none";
+  }
   state.indicator = null;
 
   const options = state.direction === "trend"
