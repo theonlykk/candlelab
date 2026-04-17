@@ -1390,7 +1390,6 @@ const state = {
   indicator: null,
   rsiOversold: 30,
   rsiOverbought: 70,
-  maCrossDirection: "auto",
   session: "All",
   slMult: 1.0,
   tpMult: 3.0,
@@ -1402,6 +1401,12 @@ const state = {
   deviceUuid: null,
   currentStep: 1,
 };
+
+function normalizeConnector(c) {
+  const v = String(c == null ? "ordered" : c).trim() || "ordered";
+  if (v === "optional") return "any-order";
+  return v;
+}
 
 // ── Device UUID ───────────────────────────────────────────────────────────────
 // CandleLab uses a per-device UUID as a lightweight identity for "My Strategies".
@@ -1640,9 +1645,8 @@ function renderComplements(data) {
           ${[
             ["ordered",   "•——•›", "In sequence",   "Pattern 2 fires after Pattern 1 within the window"],
             ["any-order", "•——•",  "Either order",   "Both patterns fire close together, any sequence"],
-            ["optional",  "◦——•",  "As confirmation","Trade fires without Pattern 2, but wins more often with it"],
           ].map(([cn, icon, title, sub]) =>
-            `<button class="connector-radio${cn === (c.connector || "ordered") ? " active" : ""}"
+            `<button class="connector-radio${cn === normalizeConnector(c.connector || "ordered") ? " active" : ""}"
                data-value="${cn}">
                <span class="conn-icon">${icon}</span><span class="conn-title">${title}</span>
                <span class="conn-sub">${sub}</span>
@@ -1659,7 +1663,7 @@ function renderComplements(data) {
         const btn = e.target.closest(".connector-radio");
         if (!btn) return;
         e.stopPropagation();
-        const val     = btn.dataset.value;
+        const val     = normalizeConnector(btn.dataset.value);
         const cardIdx = parseInt(radiosEl.dataset.card);
         state.complementData[cardIdx].connector = val;
         radiosEl.querySelectorAll(".connector-radio").forEach(b => {
@@ -1703,7 +1707,7 @@ function renderComplements(data) {
 
 function selectComplement(idx) {
   state.complement = state.complementData[idx].complement;
-  state.connector = state.complementData[idx].connector || "ordered";
+  state.connector = normalizeConnector(state.complementData[idx].connector || "ordered");
   document.querySelectorAll(".comp-card").forEach(c => {
     c.classList.toggle("selected", parseInt(c.dataset.idx) === idx);
   });
@@ -1720,9 +1724,7 @@ function buildIndicatorStep() {
   if (paramsPanel) {
     paramsPanel.style.display = "none";
     const rsiF = document.getElementById("indicator-rsi-fields");
-    const maF = document.getElementById("indicator-ma-fields");
     if (rsiF) rsiF.style.display = "none";
-    if (maF) maF.style.display = "none";
   }
   state.indicator = null;
 
@@ -1758,33 +1760,20 @@ function buildIndicatorStep() {
           <input type="number" id="rsi-oversold" min="1" max="99" step="1" style="width:64px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);"></label>
         <label style="display:inline-flex;align-items:center;gap:6px;">Overbought (short)
           <input type="number" id="rsi-overbought" min="1" max="99" step="1" style="width:64px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);"></label>
-      </div>
-      <div id="indicator-ma-fields" style="display:none;margin-top:8px;">
-        <label style="display:flex;flex-direction:column;gap:4px;max-width:320px;">MA cross direction
-          <select id="ma-cross-dir" style="padding:6px 8px;border-radius:6px;border:1px solid var(--border);">
-            <option value="auto">Auto — long: bullish cross, short: bearish cross</option>
-            <option value="bullish">Bullish (5 crosses above 20)</option>
-            <option value="bearish">Bearish (5 crosses below 20)</option>
-          </select>
-        </label>
       </div>`;
     container.parentNode.insertBefore(panel, container.nextSibling);
     ["rsi-oversold", "rsi-overbought"].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.addEventListener("change", syncIndicatorThresholdsFromDom);
     });
-    const msel = document.getElementById("ma-cross-dir");
-    if (msel) msel.addEventListener("change", syncIndicatorThresholdsFromDom);
   }
 }
 
 function syncIndicatorThresholdsFromDom() {
   const os = document.getElementById("rsi-oversold");
   const ob = document.getElementById("rsi-overbought");
-  const md = document.getElementById("ma-cross-dir");
   if (os) state.rsiOversold = Math.min(99, Math.max(1, parseFloat(os.value) || 30));
   if (ob) state.rsiOverbought = Math.min(99, Math.max(1, parseFloat(ob.value) || 70));
-  if (md) state.maCrossDirection = md.value || "auto";
 }
 
 function buildIndicatorFilterObject() {
@@ -1799,10 +1788,7 @@ function buildIndicatorFilterObject() {
     };
   }
   if (t === "ma_cross") {
-    const md = document.getElementById("ma-cross-dir");
-    const v = md ? md.value : (state.maCrossDirection || "auto");
-    if (v === "auto") return { type: "ma_cross", direction: null };
-    return { type: "ma_cross", direction: v };
+    return { type: "ma_cross", direction: null };
   }
   if (t === "ma_stable") return { type: "ma_stable" };
   return { type: t };
@@ -1811,20 +1797,12 @@ function buildIndicatorFilterObject() {
 function updateIndicatorParamPanel(key) {
   const panel = document.getElementById("indicator-params-panel");
   const rsiF = document.getElementById("indicator-rsi-fields");
-  const maF = document.getElementById("indicator-ma-fields");
-  if (!panel || !rsiF || !maF) return;
+  if (!panel || !rsiF) return;
   rsiF.style.display = key === "rsi" ? "flex" : "none";
-  maF.style.display = key === "ma_cross" ? "block" : "none";
   const os = document.getElementById("rsi-oversold");
   const ob = document.getElementById("rsi-overbought");
-  const md = document.getElementById("ma-cross-dir");
   if (os) os.value = String(state.rsiOversold != null ? state.rsiOversold : 30);
   if (ob) ob.value = String(state.rsiOverbought != null ? state.rsiOverbought : 70);
-  if (md) {
-    const want = state.maCrossDirection === "bullish" || state.maCrossDirection === "bearish"
-      ? state.maCrossDirection : "auto";
-    md.value = want;
-  }
 }
 
 function toggleIndicator(card, key) {
@@ -1845,7 +1823,7 @@ function toggleIndicator(card, key) {
       body: JSON.stringify({
         anchor: state.anchor,
         complement: state.complement,
-        connector: state.connector,
+        connector: normalizeConnector(state.connector || "ordered"),
         direction: state.direction,
         instrument: state.instrument,
         interval: state.interval,
@@ -1854,9 +1832,10 @@ function toggleIndicator(card, key) {
     })
       .then(r => r.json())
       .then(d => {
-        const sign = d.delta >= 0 ? "+" : "";
-        deltaEl.className = "toggle-delta " + (d.delta >= 0 ? "delta-pos" : "delta-neg");
-        deltaEl.textContent = `${sign}${d.delta}% win rate (${d.filtered_win_pct}% filtered)`;
+        const pos = (d.filtered_win_pct ?? 0) >= (d.base_win_pct ?? 0);
+        deltaEl.className = "toggle-delta " + (pos ? "delta-pos" : "delta-neg");
+        deltaEl.textContent =
+          `Before: ${d.base_signals} sig · ${d.base_win_pct}% → After: ${d.filtered_signals} sig · ${d.filtered_win_pct}%`;
       })
       .catch(() => {
         deltaEl.textContent = "";
@@ -1995,7 +1974,7 @@ function buildConfig(preview) {
     direction: state.direction,
     anchor: state.anchor,
     complement: state.complement,
-    connector: state.connector,
+    connector: normalizeConnector(state.connector || "ordered"),
     session_filter: state.session !== "All" ? state.session : null,
     sl_multiplier: state.slMult,
     tp_multiplier: state.tpMult,
@@ -2074,7 +2053,7 @@ function loadSummary() {
         <div class="stat-row"><span class="stat-label">Instrument</span><span class="stat-value">${state.instrument}</span></div>
         <div class="stat-row"><span class="stat-label">Timeframe</span><span class="stat-value">${state.interval}</span></div>
         <div class="stat-row"><span class="stat-label">Anchor pattern</span><span class="stat-value">${state.anchor}</span></div>
-        ${state.complement ? `<div class="stat-row"><span class="stat-label">Complement</span><span class="stat-value">${state.complement} (${state.connector})</span></div>` : ""}
+        ${state.complement ? `<div class="stat-row"><span class="stat-label">Complement</span><span class="stat-value">${state.complement} (${normalizeConnector(state.connector)})</span></div>` : ""}
         ${state.indicator ? `<div class="stat-row"><span class="stat-label">Indicator</span><span class="stat-value" style="word-break:break-all;">${JSON.stringify(buildIndicatorFilterObject())}</span></div>` : ""}
         ${state.session !== "All" ? `<div class="stat-row"><span class="stat-label">Session</span><span class="stat-value">${state.session}</span></div>` : ""}
         <div class="stat-row"><span class="stat-label">SL / TP</span><span class="stat-value">${state.slMult}× / ${state.tpMult}×</span></div>
@@ -2521,7 +2500,7 @@ function quickTryTimeframe(ivl) {
     instrument: savedInst, interval: ivl,
     anchor: null, anchorTip: "", complement: null, connector: "ordered",
     indicator: null,
-    rsiOversold: 30, rsiOverbought: 70, maCrossDirection: "auto",
+    rsiOversold: 30, rsiOverbought: 70,
     session: "All", slMult: 1.0, tpMult: 3.0,
     patternsData: [], complementData: [], finalResult: null, atr: null,
   });
@@ -2680,7 +2659,7 @@ function restartWizard() {
     instrument: savedInst, interval: savedIvl,
     anchor: null, anchorTip: "", complement: null, connector: "ordered",
     indicator: null,
-    rsiOversold: 30, rsiOverbought: 70, maCrossDirection: "auto",
+    rsiOversold: 30, rsiOverbought: 70,
     session: "All", slMult: 1.0, tpMult: 3.0,
     patternsData: [], complementData: [], finalResult: null, atr: null,
   });
@@ -2795,13 +2774,12 @@ function applyRowToState(row) {
   state.anchor = row.anchor || null;
   state.anchorTip = "";
   state.complement = row.complement || null;
-  state.connector = row.connector || "ordered";
+  state.connector = normalizeConnector(row.connector || "ordered");
   state.session = (row.session && row.session !== "All") ? row.session : "All";
   state.slMult = parseFloat(row.sl_mult) || 1;
   state.tpMult = parseFloat(row.tp_mult) || 3;
   state.timeout = parseInt(row.timeout, 10) || 1000;
   const rawInd = row.indicator_filter;
-  state.maCrossDirection = "auto";
   state.rsiOversold = 30;
   state.rsiOverbought = 70;
   if (rawInd && typeof rawInd === "object" && rawInd.type) {
@@ -2809,9 +2787,6 @@ function applyRowToState(row) {
     if (rawInd.type === "rsi") {
       if (rawInd.oversold != null) state.rsiOversold = Number(rawInd.oversold);
       if (rawInd.overbought != null) state.rsiOverbought = Number(rawInd.overbought);
-    }
-    if (rawInd.type === "ma_cross") {
-      state.maCrossDirection = rawInd.direction == null ? "auto" : rawInd.direction;
     }
   } else if (typeof rawInd === "string" && rawInd.trim()) {
     state.indicator = rawInd.trim();
@@ -2878,7 +2853,7 @@ function buildStrategyLifecycleBody(nameOverride) {
     interval: state.interval,
     anchor: state.anchor,
     complement: state.complement,
-    connector: state.connector || "ordered",
+    connector: normalizeConnector(state.connector || "ordered"),
     session: state.session || "All",
     sl_mult: state.slMult,
     tp_mult: state.tpMult,
@@ -3419,7 +3394,7 @@ function fetchStratPnl(s, card) {
     interval:     s.interval || "5m",
     anchor:       s.anchor,
     complement:   s.complement || null,
-    connector:    s.connector || "ordered",
+    connector:    normalizeConnector(s.connector || "ordered"),
     session_filter: s.session !== "All" ? s.session : null,
     sl_multiplier: s.sl_mult,
     tp_multiplier: s.tp_mult,

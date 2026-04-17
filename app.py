@@ -820,6 +820,10 @@ def api_indicator_check():
         "filtered_win_pct":   filtered_r["win_pct"],
         "delta":              round(filtered_r["win_pct"] - base_r["win_pct"], 1),
         "signals":            filtered_r["signals"],
+        "base_signals":       base_r["signals"],
+        "base_win_pct":       base_r["win_pct"],
+        "filtered_signals":   filtered_r["signals"],
+        "filtered_win_pct":   filtered_r["win_pct"],
     })
 
 
