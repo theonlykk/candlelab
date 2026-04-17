@@ -827,6 +827,78 @@ def api_indicator_check():
     })
 
 
+@app.route("/api/session-check", methods=["POST"])
+def api_session_check():
+    """
+    Backtest the current strategy config under each named session window (and all sessions).
+    Request body mirrors `/api/finalise` fields used for the core pattern backtest.
+    """
+    body = request.get_json(force=True) or {}
+    instrument_raw = body.get("instrument", "EUR/USD")
+    interval = body.get("interval", "5m")
+    anchor = body.get("anchor", "")
+    complement = body.get("complement")
+    direction = body.get("direction", "both")
+    has_complement = complement is not None and str(complement).strip() != ""
+    connector = (body.get("connector") or "ordered") if has_complement else None
+    sl_mult = float(body.get("sl_multiplier", 1.0))
+    tp_mult = float(body.get("tp_multiplier", 3.0))
+    timeout = int(body.get("timeout", TIMEOUT))
+    timeout = max(5, min(timeout, 1000))
+    indicator_filter = body.get("indicator_filter")
+
+    if tp_mult <= sl_mult:
+        return jsonify({"error": "tp_multiplier must be greater than sl_multiplier"}), 400
+
+    instrument = _norm_instrument(instrument_raw)
+    if instrument not in INSTRUMENTS:
+        return jsonify({"error": "Unknown instrument"}), 400
+
+    pip = INSTRUMENTS[instrument]["pip"]
+
+    direction_val = 0
+    if direction == "long":
+        direction_val = 1
+    elif direction == "short":
+        direction_val = -1
+
+    indicator_fn = _make_indicator_fn(indicator_filter) if indicator_filter else None
+
+    try:
+        df = get_ohlc(instrument, days=30, interval=interval)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    if df.empty:
+        return jsonify({"error": "No data"}), 500
+
+    def _one(sess):
+        r = _backtest_pattern(
+            df,
+            pip,
+            anchor,
+            timeout=timeout,
+            session=sess,
+            indicator_fn=indicator_fn,
+            direction_val=direction_val,
+            sl_mult=sl_mult,
+            tp_mult=tp_mult,
+            instrument=instrument,
+            complement=complement if has_complement else None,
+            connector=connector if has_complement else None,
+        )
+        return {"signals": int(r["signals"]), "win_pct": float(r["win_pct"])}
+
+    out = {
+        "london": _one("London"),
+        "new_york": _one("New York"),
+        "asian": _one("Asian"),
+        "overlap": _one("Overlap"),
+        "all": _one(None),
+    }
+    return jsonify(out)
+
+
 @app.route("/api/finalise", methods=["POST"])
 def api_finalise():
     body = request.get_json(force=True)

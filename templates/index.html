@@ -380,6 +380,13 @@
     padding: 14px 12px;
   }
   .session-all { grid-column: 1 / -1; }
+  .session-card-stat {
+    display: block;
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 6px;
+    line-height: 1.3;
+  }
 
   /* Sliders */
   .slider-row {
@@ -1102,22 +1109,27 @@
       <button class="big-btn" data-session="London" onclick="selectSession(this)">
         <span class="big-btn-title">London</span>
         <span class="big-btn-sub">08:00 – 17:00 UTC</span>
+        <span class="session-card-stat" data-stat-key="london">...</span>
       </button>
       <button class="big-btn" data-session="New York" onclick="selectSession(this)">
         <span class="big-btn-title">New York</span>
         <span class="big-btn-sub">13:00 – 22:00 UTC</span>
+        <span class="session-card-stat" data-stat-key="new_york">...</span>
       </button>
       <button class="big-btn" data-session="Asian" onclick="selectSession(this)">
         <span class="big-btn-title">Asian</span>
         <span class="big-btn-sub">00:00 – 09:00 UTC</span>
+        <span class="session-card-stat" data-stat-key="asian">...</span>
       </button>
       <button class="big-btn" data-session="Overlap" onclick="selectSession(this)">
         <span class="big-btn-title">Overlap</span>
         <span class="big-btn-sub">13:00 – 17:00 UTC</span>
+        <span class="session-card-stat" data-stat-key="overlap">...</span>
       </button>
       <button class="big-btn session-all selected" data-session="All" onclick="selectSession(this)">
         <span class="big-btn-title">✓ All Sessions</span>
         <span class="big-btn-sub">Recommended starting point</span>
+        <span class="session-card-stat" data-stat-key="all">...</span>
       </button>
     </div>
     <p style="font-size:12px; color:var(--muted); margin-top:14px; line-height:1.55;">
@@ -1617,14 +1629,14 @@ function continueToComplement() {
     .then(r => r.json())
     .then(data => {
       state.complementData = data;
-      renderComplements(data);
+      renderComplements(data, false);
     })
     .catch(() => {
       content.innerHTML = `<div style="color:var(--red); padding:20px;">Analysis failed.</div>`;
     });
 }
 
-function renderComplements(data) {
+function renderComplements(data, isBackNav = false) {
   const content = document.getElementById("complement-content");
   content.innerHTML = "";
 
@@ -1702,6 +1714,14 @@ function renderComplements(data) {
     skipBtn.textContent = "Skip — use anchor only";
     skipBtn.onclick = () => { state.complement = null; buildIndicatorStep(); goStep(6); };
     actionsEl.appendChild(skipBtn);
+  }
+
+  if (isBackNav && state.complement && data && data.length) {
+    const idx = data.findIndex(x => x.complement === state.complement);
+    if (idx >= 0) {
+      state.complementData[idx].connector = normalizeConnector(state.connector || "ordered");
+      selectComplement(idx);
+    }
   }
 }
 
@@ -1852,10 +1872,63 @@ function toggleIndicator(card, key) {
 }
 
 // ── Step 7: Session ───────────────────────────────────────────────────────────
+function buildSessionCheckBody() {
+  const body = {
+    instrument: state.instrument,
+    interval: state.interval,
+    direction: state.direction,
+    anchor: state.anchor,
+    complement: state.complement,
+    connector: normalizeConnector(state.connector || "ordered"),
+    sl_multiplier: state.slMult,
+    tp_multiplier: state.tpMult,
+    timeout: state.timeout,
+  };
+  const indObj = buildIndicatorFilterObject();
+  if (indObj) body.indicator_filter = indObj;
+  return body;
+}
+
+function setSessionStatLoading() {
+  document.querySelectorAll("#step-7 .session-card-stat").forEach(el => {
+    el.textContent = "...";
+  });
+}
+
+function applySessionStatsPayload(d) {
+  if (!d || d.error) return;
+  document.querySelectorAll("#step-7 .big-btn").forEach(btn => {
+    const el = btn.querySelector(".session-card-stat");
+    if (!el) return;
+    const key = el.dataset.statKey;
+    if (!key || !d[key]) return;
+    const n = Number(d[key].signals) || 0;
+    const wp = d[key].win_pct != null ? Number(d[key].win_pct).toFixed(1) : "0.0";
+    el.textContent = `${n} sig · ${wp}%`;
+  });
+}
+
+function fetchSessionStats() {
+  setSessionStatLoading();
+  apiFetch("/api/session-check", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(buildSessionCheckBody()),
+  })
+    .then(r => r.json())
+    .then(applySessionStatsPayload)
+    .catch(() => {
+      document.querySelectorAll("#step-7 .session-card-stat").forEach(el => {
+        el.textContent = "—";
+      });
+    });
+}
+
 function selectSession(btn) {
   document.querySelectorAll("#step-7 .big-btn").forEach(b => b.classList.remove("selected"));
   btn.classList.add("selected");
   state.session = btn.dataset.session;
+  fetchSessionStats();
 }
 
 // ── Step 8: Sliders ───────────────────────────────────────────────────────────
@@ -2697,6 +2770,12 @@ function goStep(n) {
   window.scrollTo(0, 0);
   updateStepActions(n);
 
+  if (n === 5 && goingBack && Array.isArray(state.complementData)) {
+    renderComplements(state.complementData, true);
+  }
+  if (n === 7) {
+    fetchSessionStats();
+  }
   if (n === 8) {
     updateTimeoutLabels();
     document.getElementById("sl-slider").value = Math.round(state.slMult * 10);
