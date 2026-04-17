@@ -14,13 +14,16 @@ from datetime import datetime, timezone
 from flask import Flask, request, jsonify, render_template
 
 import anthropic
-from data import get_ohlc, INSTRUMENTS
+import psycopg2
+from psycopg2.extras import RealDictCursor
+
+from data import get_ohlc, INSTRUMENTS, _oanda_instrument_id
 from backtest import compute_atr
 from patterns import detect_all, PATTERNS
-from signal_engine import detect_signal
+from signal_engine import PATTERN_IDS, detect_signal
 from cache import cache_set, cache_get
 from scheduler import start_scheduler
-from poll_log import init_candlelab_poll_log_table, read_poll_log_pg, read_poll_log_view_rows
+from poll_log import init_candlelab_poll_log_table, read_poll_log_pg, read_poll_log_view_rows, _pattern_slug
 from strategy_store import (
     save_strategy,
     get_strategies_by_device,
@@ -1406,6 +1409,375 @@ def api_strategy_pnl():
         "cum_net": result.get("cum_net", 0.0),
         "signals": result.get("signals", 0),
         "win_pct": result.get("win_pct", 0.0),
+    })
+
+
+def _executor_read_poll_rows_since(oanda_instrument: str, go_live_ts: pd.Timestamp) -> list[dict]:
+    """
+    Rows from the executor poll table (``candlelab_poll_log`` in this codebase)
+    for one OANDA instrument (e.g. EUR_USD), oldest first.
+    """
+    url = os.environ.get("DATABASE_URL")
+    if not url:
+        return []
+    inst = (oanda_instrument or "").strip()
+    if not inst:
+        return []
+    try:
+        ts_db = go_live_ts.to_pydatetime() if hasattr(go_live_ts, "to_pydatetime") else go_live_ts
+    except Exception:
+        ts_db = go_live_ts
+    conn = None
+    raw: list = []
+    try:
+        conn = psycopg2.connect(url)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT ts, open, high, low, close, candle_history
+                FROM candlelab_poll_log
+                WHERE instrument = %s AND ts >= %s
+                ORDER BY ts ASC
+                """,
+                (inst, ts_db),
+            )
+            raw = cur.fetchall()
+    except Exception:
+        log.exception("executor_pnl: poll log query failed")
+        return []
+    finally:
+        if conn is not None:
+            conn.close()
+    return [dict(r) for r in raw]
+
+
+def _executor_signals_df_from_candle_history(ch: list) -> pd.DataFrame | None:
+    if not isinstance(ch, list) or not ch:
+        return None
+    cols = list(PATTERN_IDS.keys())
+    rows_data: list[dict] = []
+    for c in ch:
+        patterns_raw = c.get("patterns") or []
+        fired_slugs = {_pattern_slug(str(x)) for x in patterns_raw}
+        row_dict = {}
+        for name in cols:
+            slug = _pattern_slug(name)
+            row_dict[name] = 1 if slug in fired_slugs else 0
+        rows_data.append(row_dict)
+    idx = pd.RangeIndex(len(rows_data))
+    return pd.DataFrame(rows_data, index=idx)
+
+
+def _executor_ohlc_df_from_candle_history(ch: list) -> pd.DataFrame | None:
+    if not isinstance(ch, list) or not ch:
+        return None
+    o, h, l, cl, ts = [], [], [], [], []
+    for i, c in enumerate(ch):
+        oh = c.get("ohlc") or {}
+        try:
+            o.append(float(oh["o"]))
+            h.append(float(oh["h"]))
+            l.append(float(oh["l"]))
+            cl.append(float(oh["c"]))
+        except (KeyError, TypeError, ValueError):
+            return None
+        ct = c.get("candle_time")
+        try:
+            ts.append(pd.Timestamp(ct, tz="UTC") if ct else pd.Timestamp.utcnow() + pd.Timedelta(seconds=i))
+        except Exception:
+            ts.append(pd.Timestamp.utcnow() + pd.Timedelta(seconds=i))
+    return pd.DataFrame({"open": o, "high": h, "low": l, "close": cl}, index=pd.DatetimeIndex(ts))
+
+
+def _executor_session_ok(ts_raw, session_filter: str | None) -> bool:
+    if not session_filter or session_filter in ("All", "All Sessions"):
+        return True
+    try:
+        ts = pd.Timestamp(ts_raw)
+        if ts.tzinfo is None:
+            ts = ts.tz_localize("UTC")
+        else:
+            ts = ts.tz_convert("UTC")
+    except Exception:
+        return True
+    return bool(_session_mask(pd.DatetimeIndex([ts]), session_filter)[0])
+
+
+def _executor_simulate_trade_pnl(
+    entry: float,
+    direction: int,
+    sl: float,
+    tp: float,
+    trade_atr: float,
+    sl_mult: float,
+    tp_mult: float,
+    pip: float,
+    instrument_label: str,
+    future_hi: np.ndarray,
+    future_lo: np.ndarray,
+    future_cl: np.ndarray,
+    future_op_next: np.ndarray,
+) -> tuple[bool, float]:
+    """
+    One-trade outcome and net PnL — same bar-walk and dollar math as ``_simulate_trades``,
+    using explicit SL/TP price levels (``sl`` / ``tp`` from SL/TP × ATR).
+    """
+    pip_val = PIP_VALUES.get(instrument_label, 10.0)
+    sl_dist_price = abs(float(entry) - float(sl))
+    sl_pips = sl_dist_price / pip if pip > 0 else 0.0
+    tp_pips = sl_pips * (tp_mult / sl_mult) if sl_mult > 0 else 0.0
+    lot_size = (RISK_DOLLARS / (sl_pips * pip_val)) if sl_pips > 0 and pip_val > 0 else 0.0
+
+    if len(future_hi) == 0:
+        return False, 0.0
+
+    outcome = "timeout_loss"
+    exit_price = float(future_cl[-1])
+    pnl_gross = 0.0
+
+    for j in range(len(future_hi)):
+        if direction == 1:
+            if future_hi[j] >= tp:
+                outcome = "win"
+                exit_price = float(tp)
+                pnl_gross = round(tp_pips * pip_val * lot_size, 2)
+                break
+            if future_cl[j] <= sl:
+                nx = float(future_op_next[j]) if np.isfinite(future_op_next[j]) else float(future_cl[j])
+                outcome = "loss"
+                slip_pips = direction * (float(nx) - float(sl)) / pip
+                pnl_gross = round((-RISK_DOLLARS) + (slip_pips * pip_val * lot_size), 2)
+                break
+        else:
+            if future_lo[j] <= tp:
+                outcome = "win"
+                exit_price = float(tp)
+                pnl_gross = round(tp_pips * pip_val * lot_size, 2)
+                break
+            if future_cl[j] >= sl:
+                nx = float(future_op_next[j]) if np.isfinite(future_op_next[j]) else float(future_cl[j])
+                outcome = "loss"
+                slip_pips = direction * (float(nx) - float(sl)) / pip
+                pnl_gross = round((-RISK_DOLLARS) + (slip_pips * pip_val * lot_size), 2)
+                break
+    else:
+        exit_pips = direction * (exit_price - entry) / pip
+        pnl_gross = round(exit_pips * pip_val * lot_size, 2)
+        outcome = "timeout_win" if exit_pips > 0 else "timeout_loss"
+
+    pnl_net = round(pnl_gross, 2)
+    is_win = outcome in ("win", "timeout_win")
+    return is_win, pnl_net
+
+
+def _executor_aggregate_trades(trades: list[tuple[bool, float]]) -> dict:
+    n = len(trades)
+    if n == 0:
+        return {"signals": 0, "wins": 0, "win_pct": 0.0, "cum_net": 0.0}
+    wins = sum(1 for w, _ in trades if w)
+    cum_net = round(sum(p for _, p in trades), 2)
+    return {
+        "signals": n,
+        "wins": wins,
+        "win_pct": round(wins / n * 100, 1),
+        "cum_net": cum_net,
+    }
+
+
+def _executor_compute_from_poll_rows(
+    rows: list[dict],
+    anchor: str,
+    complement: str | None,
+    connector: str | None,
+    direction_str: str,
+    session_filter: str | None,
+    sl_mult: float,
+    tp_mult: float,
+    timeout: int,
+    tick_size: float,
+    pip: float,
+    instrument_label: str,
+) -> tuple[list[tuple[bool, float]], list[tuple[bool, float]]]:
+    """Returns (all_trades, clean_only_trades) as lists of (win, pnl_net)."""
+    all_trades: list[tuple[bool, float]] = []
+    clean_trades: list[tuple[bool, float]] = []
+    n = len(rows)
+    if n == 0:
+        return all_trades, clean_trades
+
+    for r in range(n):
+        row = rows[r]
+        if not _executor_session_ok(row.get("ts"), session_filter):
+            continue
+        ch = row.get("candle_history")
+        if not isinstance(ch, list) or len(ch) < 2:
+            continue
+
+        sig_df = _executor_signals_df_from_candle_history(ch)
+        if sig_df is None or anchor not in sig_df.columns:
+            continue
+
+        sig_array = detect_signal(
+            sig_df,
+            anchor,
+            complement,
+            connector,
+            direction_str,
+            window=10,
+        )
+        if sig_array is None or len(sig_array) < 1 or int(sig_array[-1]) == 0:
+            continue
+
+        direction_val = int(sig_array[-1])
+        ohlc_df = _executor_ohlc_df_from_candle_history(ch)
+        if ohlc_df is None or len(ohlc_df) < ATR_PERIOD:
+            continue
+
+        atr_s = compute_atr(ohlc_df)
+        trade_atr = float(atr_s.iloc[-1])
+        if not np.isfinite(trade_atr) or trade_atr <= 0:
+            continue
+
+        last = ch[-1]
+        oh = last.get("ohlc") or {}
+        try:
+            last_open = float(oh["o"])
+            last_close = float(oh["c"])
+        except (KeyError, TypeError, ValueError):
+            continue
+
+        entry = last_open + direction_val * 0.5 * tick_size
+        sl = entry - direction_val * sl_mult * trade_atr
+        tp = entry + direction_val * tp_mult * trade_atr
+        clean = abs(last_close - entry) <= 3.0 * tick_size
+
+        end = min(r + 1 + int(timeout), n)
+        if end <= r + 1:
+            continue
+
+        fh, fl, fc, fo = [], [], [], []
+        ok = True
+        for k in range(r + 1, end):
+            rw = rows[k]
+            try:
+                fh.append(float(rw["high"]))
+                fl.append(float(rw["low"]))
+                fc.append(float(rw["close"]))
+                fo.append(float(rw["open"]))
+            except (TypeError, ValueError, KeyError):
+                ok = False
+                break
+        if not ok or not fh:
+            continue
+
+        future_hi = np.asarray(fh, dtype=float)
+        future_lo = np.asarray(fl, dtype=float)
+        future_cl = np.asarray(fc, dtype=float)
+        L = len(fh)
+        op_next = np.empty(L, dtype=float)
+        for j in range(L):
+            if j + 1 < L:
+                op_next[j] = float(fo[j + 1])
+            else:
+                op_next[j] = float(fc[j])
+
+        win, pnl_n = _executor_simulate_trade_pnl(
+            entry,
+            direction_val,
+            sl,
+            tp,
+            trade_atr,
+            sl_mult,
+            tp_mult,
+            pip,
+            instrument_label,
+            future_hi,
+            future_lo,
+            future_cl,
+            op_next,
+        )
+        all_trades.append((win, pnl_n))
+        if clean:
+            clean_trades.append((win, pnl_n))
+
+    return all_trades, clean_trades
+
+
+@app.route("/api/strategy/executor-pnl", methods=["POST"])
+def api_strategy_executor_pnl():
+    """
+    Live executor stats from ``candlelab_poll_log`` (5m poll snapshots), since ``go_live_at``.
+    """
+    body = request.get_json(force=True)
+    instrument = body.get("instrument", "EURUSD")
+    anchor = body.get("anchor")
+    complement = body.get("complement")
+    if complement is not None and str(complement).strip() == "":
+        complement = None
+    connector = None
+    if complement is not None:
+        connector = body.get("connector") or "ordered"
+    direction = body.get("direction", "both")
+    session_filter = body.get("session_filter")
+    sl_mult = float(body.get("sl_multiplier", 1.0))
+    tp_mult = float(body.get("tp_multiplier", 3.0))
+    timeout = int(body.get("timeout", TIMEOUT))
+    go_live_at = body.get("go_live_at")
+    tick_size = float(body.get("tick_size") or 0.0001)
+
+    if not anchor:
+        return jsonify({"error": "missing anchor"}), 400
+    if not go_live_at:
+        return jsonify({"error": "missing go_live_at"}), 400
+
+    meta = None
+    instrument_label = None
+    for label, cfg in INSTRUMENTS.items():
+        if cfg["symbol"].replace("/", "") == instrument or label == instrument:
+            meta = cfg
+            instrument_label = label
+            break
+    if meta is None:
+        return jsonify({"error": "unknown instrument"}), 400
+
+    pip = float(meta["pip"])
+
+    direction_str = "both"
+    if direction == "long":
+        direction_str = "long"
+    elif direction == "short":
+        direction_str = "short"
+
+    try:
+        go_live_ts = pd.Timestamp(go_live_at, tz="UTC")
+    except Exception:
+        return jsonify({"error": "bad go_live_at"}), 400
+
+    oanda_id = _oanda_instrument_id(instrument_label)
+    rows = _executor_read_poll_rows_since(oanda_id, go_live_ts)
+    all_t, clean_t = _executor_compute_from_poll_rows(
+        rows,
+        anchor,
+        complement,
+        connector,
+        direction_str,
+        session_filter,
+        sl_mult,
+        tp_mult,
+        timeout,
+        tick_size,
+        pip,
+        instrument_label,
+    )
+
+    agg_all = _executor_aggregate_trades(all_t)
+    agg_clean = _executor_aggregate_trades(clean_t)
+    insufficient = agg_all["signals"] < 10
+
+    return jsonify({
+        "all": agg_all,
+        "clean": agg_clean,
+        "insufficient": insufficient,
     })
 
 

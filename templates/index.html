@@ -737,7 +737,8 @@
   #strategies-panel {
     position: fixed;
     top: 0; right: 0; bottom: 0;
-    width: min(380px, 100vw);
+    width: 480px;
+    max-width: 100%;
     background: var(--bg);
     border-left: 1px solid var(--border);
     z-index: 301;
@@ -797,6 +798,14 @@
   }
   .strat-card-name { font-size: 15px; font-weight: 700; }
   .strat-card-meta { font-size: 11px; color: var(--muted); margin-bottom: 8px; }
+  .live-strat-stat-rows { font-size: 0.78rem; margin-top: 6px; line-height: 1.35; }
+  .live-strat-stat-row {
+    display: flex; justify-content: space-between; align-items: baseline;
+    gap: 8px; margin-top: 3px;
+  }
+  .live-strat-stat-row > span:first-child { color: var(--muted); flex-shrink: 0; }
+  .live-strat-stat-vals { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; min-width: 0; }
   .strat-card-stats {
     display: flex; gap: 16px; font-size: 12px; align-items: center;
     margin-bottom: 10px;
@@ -3318,13 +3327,21 @@ function buildLiveStratCard(l) {
   card.className = "strat-card";
   card.dataset.liveId = l.id;
   const when = l.go_live_at ? new Date(l.go_live_at).toLocaleString() : "—";
+  const indDisp = typeof l.indicator_filter === "object" && l.indicator_filter !== null
+    ? (l.indicator_filter.type || "—")
+    : (l.indicator_filter || "—");
   card.innerHTML = `
     <div style="cursor:pointer;" class="live-card-main">
       <div class="strat-card-top">
         <div class="strat-dot strat-dot-green" style="margin-top:5px;"></div>
         <div class="strat-card-name">${(l.strategy_name || "Live").replace(/</g, "")}</div>
       </div>
-      <div class="strat-card-meta">${(l.instrument || "").replace(/</g, "")} · Live since ${when}</div>
+      <div class="strat-card-meta">${(l.instrument || "").replace(/</g, "")} · Live since ${when} · Ind ${String(indDisp).replace(/</g, "")}</div>
+      <div class="live-strat-stat-rows" aria-live="polite">
+        <div class="live-strat-stat-row"><span>Backtest</span><span class="live-strat-stat-vals live-stat-bt">Calculating…</span></div>
+        <div class="live-strat-stat-row"><span>Since live · all entries</span><span class="live-strat-stat-vals live-stat-all">—</span></div>
+        <div class="live-strat-stat-row"><span>Since live · clean only</span><span class="live-strat-stat-vals live-stat-clean">—</span></div>
+      </div>
     </div>
     <div style="margin-top:10px;">
       <button type="button" class="btn-danger-outline" onclick="closeLiveStrat(${l.id}, this)">Close out</button>
@@ -3377,9 +3394,18 @@ function closeLiveStrat(liveId, btn) {
     });
 }
 
+function formatLiveStatPnlLine(d) {
+  const n = d.signals ?? 0;
+  const wp = d.win_pct ?? 0;
+  const pnl = d.cum_net ?? 0;
+  const pnlText = pnl > 0 ? `+$${pnl.toFixed(0)}` : pnl < 0 ? `-$${Math.abs(pnl).toFixed(0)}` : "$0";
+  return `${n} sig · ${Number(wp).toFixed(1)}% · ${pnlText}`;
+}
+
 function fetchStratPnl(s, card) {
   const inst = INSTRUMENTS.find(i => i.label === s.instrument || i.code === s.instrument);
   const instCode = inst ? inst.code : "EURUSD";
+  const tickSize = PIP_SIZES[instCode] != null ? PIP_SIZES[instCode] : 0.0001;
   const payload = {
     instrument:   instCode,
     interval:     s.interval || "5m",
@@ -3395,6 +3421,10 @@ function fetchStratPnl(s, card) {
     saved_at:     s.saved_at || s.go_live_at,
   };
 
+  const btEl = card.querySelector(".live-stat-bt");
+  const allEl = card.querySelector(".live-stat-all");
+  const cleanEl = card.querySelector(".live-stat-clean");
+
   apiFetch("/api/strategy-pnl", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -3402,22 +3432,71 @@ function fetchStratPnl(s, card) {
   })
     .then(r => r.json())
     .then(d => {
-      const pnlEl = card.querySelector(".strat-pnl");
-      if (!pnlEl) return;
-      const pnl = d.cum_net ?? 0;
-      const pnlText = pnl > 0 ? `+$${pnl.toFixed(0)}` : pnl < 0 ? `-$${Math.abs(pnl).toFixed(0)}` : "$0";
-      const pnlColor = pnl > 0 ? "var(--green)" : pnl < 0 ? "var(--red)" : "var(--muted)";
-      pnlEl.textContent = `Since save: ${pnlText}`;
+      if (d && d.error) {
+        if (btEl) { btEl.textContent = "—"; btEl.style.color = "var(--muted)"; }
+        if (allEl) { allEl.textContent = "—"; allEl.style.color = "var(--muted)"; }
+        if (cleanEl) { cleanEl.textContent = "—"; cleanEl.style.color = "var(--muted)"; }
+        return null;
+      }
+      if (btEl) {
+        btEl.textContent = formatLiveStatPnlLine(d);
+        const pnl = d.cum_net ?? 0;
+        btEl.style.color = pnl > 0 ? "var(--green)" : pnl < 0 ? "var(--red)" : "var(--muted)";
+      }
       const dot = card.querySelector(".strat-dot");
       if (dot) {
+        const pnl = d.cum_net ?? 0;
         dot.classList.remove("strat-dot-amber", "strat-dot-green", "strat-dot-red");
         dot.classList.add(pnl > 0 ? "strat-dot-green" : pnl < 0 ? "strat-dot-red" : "strat-dot-amber");
       }
-      pnlEl.style.color = pnlColor;
-      const sigEl = card.querySelector(".strat-sigs");
-      if (sigEl) sigEl.textContent = `${d.signals || 0} signals`;
+      const execPayload = Object.assign({}, payload, {
+        go_live_at: s.go_live_at || null,
+        tick_size: tickSize,
+      });
+      return apiFetch("/api/strategy/executor-pnl", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(execPayload),
+      }).then(r => r.json());
     })
-    .catch(() => {});
+    .then(ex => {
+      if (ex == null) return;
+      if (!allEl || !cleanEl) return;
+      if (!ex || ex.error) {
+        allEl.textContent = "—";
+        cleanEl.textContent = "—";
+        allEl.style.color = "var(--muted)";
+        cleanEl.style.color = "var(--muted)";
+        return;
+      }
+      if (ex.insufficient) {
+        allEl.textContent = "Collecting data…";
+        cleanEl.textContent = "Collecting data…";
+        allEl.style.color = "var(--muted)";
+        cleanEl.style.color = "var(--muted)";
+        return;
+      }
+      const fmt = (blk) => {
+        const line = formatLiveStatPnlLine(blk || {});
+        const pnl = (blk || {}).cum_net ?? 0;
+        const col = pnl > 0 ? "var(--green)" : pnl < 0 ? "var(--red)" : "var(--muted)";
+        return { line, col };
+      };
+      const a = fmt(ex.all);
+      const c = fmt(ex.clean);
+      allEl.textContent = a.line;
+      allEl.style.color = a.col;
+      cleanEl.textContent = c.line;
+      cleanEl.style.color = c.col;
+    })
+    .catch(() => {
+      if (btEl && btEl.textContent === "Calculating…") {
+        btEl.textContent = "—";
+        btEl.style.color = "var(--muted)";
+      }
+      if (allEl) { allEl.textContent = "—"; allEl.style.color = "var(--muted)"; }
+      if (cleanEl) { cleanEl.textContent = "—"; cleanEl.style.color = "var(--muted)"; }
+    });
 }
 
 function buildStratCard(s) {
