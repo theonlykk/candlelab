@@ -3469,9 +3469,10 @@ function fetchStratPnl(s, card) {
         cleanEl.style.color = "var(--muted)";
         return;
       }
-      if (ex.insufficient) {
-        allEl.textContent = "Collecting data…";
-        cleanEl.textContent = "Collecting data…";
+      const noExecSignals = !ex.all || Number(ex.all.signals) === 0;
+      if (noExecSignals) {
+        allEl.textContent = "No trades yet";
+        cleanEl.textContent = "No trades yet";
         allEl.style.color = "var(--muted)";
         cleanEl.style.color = "var(--muted)";
         return;
