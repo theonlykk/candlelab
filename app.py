@@ -8,6 +8,7 @@ import html
 import logging
 import multiprocessing
 import concurrent.futures
+import threading
 import numpy as np
 import pandas as pd
 from datetime import datetime, timezone
@@ -45,6 +46,9 @@ log = logging.getLogger(__name__)
 ctx = multiprocessing.get_context("spawn")
 
 app = Flask(__name__)
+
+_startup_lock = threading.Lock()
+_startup_done = False
 
 # ── Instrument normalisation ──────────────────────────────────────────────────
 
@@ -1986,9 +1990,12 @@ def api_strategy_my_strategies():
         return jsonify({"error": str(e)}), 500
 
 
-init_strategy_tables()
-init_candlelab_poll_log_table()
-start_scheduler()
+with _startup_lock:
+    if not _startup_done:
+        init_strategy_tables()
+        init_candlelab_poll_log_table()
+        start_scheduler()
+        _startup_done = True
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
