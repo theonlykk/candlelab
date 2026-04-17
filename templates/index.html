@@ -1377,6 +1377,9 @@ const state = {
   complement: null,
   connector: "ordered",
   indicator: null,
+  activeIndicators: null,
+  _indicatorBaselineForDisplay: null,
+  _indicatorFilteredSnapshot: {},
   rsiOversold: 30,
   rsiOverbought: 70,
   session: "All",
@@ -1674,7 +1677,15 @@ function renderComplements(data, isBackNav = false) {
         scope.querySelectorAll(".connector-radio").forEach(b => {
           b.classList.toggle("active", b === btn);
         });
-        selectComplement(cardIdx);
+        const targetCard = document.querySelector(
+          `#complement-content .comp-card[data-idx="${cardIdx}"]`
+        );
+        if (targetCard && targetCard.classList.contains("selected")) {
+          selectComplement(cardIdx);
+        } else {
+          state.complementData[cardIdx].connector = val;
+          state.connector = val;
+        }
         card.classList.add("flash");
       });
 
@@ -1745,6 +1756,9 @@ function buildIndicatorStep() {
     if (rsiF) rsiF.style.display = "none";
   }
   state.indicator = null;
+  state.activeIndicators = new Set();
+  state._indicatorBaselineForDisplay = null;
+  state._indicatorFilteredSnapshot = {};
 
   const options = state.direction === "trend"
     ? [{ key: "ma_stable", title: "MA Stable", desc: "Moving averages aligned with your trade direction for the last 10 candles." }]
@@ -1796,6 +1810,8 @@ function syncIndicatorThresholdsFromDom() {
 
 function buildIndicatorFilterObject() {
   if (!state.indicator) return null;
+  // TODO: when backend supports stacked filters (e.g. ma_cross + rsi), merge state.activeIndicators.
+  // For now the API accepts a single filter — use the most recently toggled indicator (state.indicator).
   const t = state.indicator;
   if (t === "rsi") {
     syncIndicatorThresholdsFromDom();
@@ -1828,7 +1844,13 @@ function toggleIndicator(card, key) {
   const deltaEl = document.getElementById("delta-" + key);
 
   if (isOn) {
-    state.indicator = key;
+    if (!state.activeIndicators) state.activeIndicators = new Set();
+    const baselineForBefore =
+      state.activeIndicators.size > 0 && state._indicatorBaselineForDisplay != null
+        ? state._indicatorBaselineForDisplay
+        : null;
+    state.activeIndicators.add(key);
+    state.indicator = key; // keep for backwards compat — most recently toggled ON
     updateIndicatorParamPanel(key);
     const panel = document.getElementById("indicator-params-panel");
     if (panel) panel.style.display = "block";
@@ -1850,22 +1872,48 @@ function toggleIndicator(card, key) {
     })
       .then(r => r.json())
       .then(d => {
-        const pos = (d.filtered_win_pct ?? 0) >= (d.base_win_pct ?? 0);
+        const baseSignals = baselineForBefore != null ? baselineForBefore.signals : d.base_signals;
+        const baseWin = baselineForBefore != null ? baselineForBefore.win_pct : d.base_win_pct;
+        const pos = (d.filtered_win_pct ?? 0) >= (baseWin ?? 0);
         deltaEl.className = "toggle-delta " + (pos ? "delta-pos" : "delta-neg");
         deltaEl.textContent =
-          `Before: ${d.base_signals} sig · ${d.base_win_pct}% → After: ${d.filtered_signals} sig · ${d.filtered_win_pct}%`;
+          `Before: ${baseSignals} sig · ${baseWin}% → After: ${d.filtered_signals} sig · ${d.filtered_win_pct}%`;
+        state._indicatorFilteredSnapshot[key] = {
+          signals: d.filtered_signals,
+          win_pct: d.filtered_win_pct,
+        };
+        state._indicatorBaselineForDisplay = {
+          signals: d.filtered_signals,
+          win_pct: d.filtered_win_pct,
+        };
       })
       .catch(() => {
         deltaEl.textContent = "";
       });
   } else {
-    state.indicator = null;
+    if (state.activeIndicators) state.activeIndicators.delete(key);
+    delete state._indicatorFilteredSnapshot[key];
+    state.indicator =
+      state.activeIndicators && state.activeIndicators.size > 0
+        ? [...state.activeIndicators][state.activeIndicators.size - 1]
+        : null;
+    const ids = state.activeIndicators ? [...state.activeIndicators] : [];
+    if (!ids.length) {
+      state._indicatorBaselineForDisplay = null;
+    } else {
+      const tip = ids[ids.length - 1];
+      state._indicatorBaselineForDisplay = state._indicatorFilteredSnapshot[tip] || null;
+    }
     const panel = document.getElementById("indicator-params-panel");
-    if (panel) panel.style.display = "none";
+    if (panel) {
+      if (!state.activeIndicators || state.activeIndicators.size === 0) {
+        panel.style.display = "none";
+      } else {
+        panel.style.display = "block";
+        updateIndicatorParamPanel(state.indicator);
+      }
+    }
     deltaEl.textContent = "";
-    // turn off all others
-    document.querySelectorAll(".toggle-card.on").forEach(c => c.classList.remove("on"));
-    card.classList.remove("on");
   }
 }
 
@@ -2620,6 +2668,9 @@ function quickTryTimeframe(ivl) {
     instrument: savedInst, interval: ivl,
     anchor: null, anchorTip: "", complement: null, connector: "ordered",
     indicator: null,
+    activeIndicators: null,
+    _indicatorBaselineForDisplay: null,
+    _indicatorFilteredSnapshot: {},
     rsiOversold: 30, rsiOverbought: 70,
     session: "All", slMult: 1.0, tpMult: 3.0,
     patternsData: [], complementData: [], finalResult: null, atr: null,
@@ -2779,6 +2830,9 @@ function restartWizard() {
     instrument: savedInst, interval: savedIvl,
     anchor: null, anchorTip: "", complement: null, connector: "ordered",
     indicator: null,
+    activeIndicators: null,
+    _indicatorBaselineForDisplay: null,
+    _indicatorFilteredSnapshot: {},
     rsiOversold: 30, rsiOverbought: 70,
     session: "All", slMult: 1.0, tpMult: 3.0,
     patternsData: [], complementData: [], finalResult: null, atr: null,
@@ -2910,14 +2964,19 @@ function applyRowToState(row) {
   const rawInd = row.indicator_filter;
   state.rsiOversold = 30;
   state.rsiOverbought = 70;
+  state.activeIndicators = new Set();
+  state._indicatorBaselineForDisplay = null;
+  state._indicatorFilteredSnapshot = {};
   if (rawInd && typeof rawInd === "object" && rawInd.type) {
     state.indicator = rawInd.type;
+    state.activeIndicators.add(rawInd.type);
     if (rawInd.type === "rsi") {
       if (rawInd.oversold != null) state.rsiOversold = Number(rawInd.oversold);
       if (rawInd.overbought != null) state.rsiOverbought = Number(rawInd.overbought);
     }
   } else if (typeof rawInd === "string" && rawInd.trim()) {
     state.indicator = rawInd.trim();
+    state.activeIndicators.add(state.indicator);
   } else {
     state.indicator = null;
   }
