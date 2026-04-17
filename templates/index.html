@@ -1668,17 +1668,23 @@ function renderComplements(data, isBackNav = false) {
         const btn = e.target.closest(".connector-radio");
         if (!btn) return;
         e.stopPropagation();
+
+        // Global UI reset — clear ALL cards first
+        document.querySelectorAll("#complement-content .comp-card")
+          .forEach(c => c.classList.remove("selected"));
+
         const cardIdx = parseInt(radiosEl.dataset.card, 10);
         const val = normalizeConnector(btn.dataset.value);
         state.complementData[cardIdx].connector = val;
         state.connector = val;
-        document.querySelectorAll("#complement-content .comp-card").forEach(c => {
-          c.classList.remove("selected");
-        });
+
+        // Now select only this card
         card.classList.add("selected");
+
         radiosEl.querySelectorAll(".connector-radio").forEach(b => {
           b.classList.toggle("active", b === btn);
         });
+
         selectComplement(cardIdx);
         card.classList.add("flash");
       });
