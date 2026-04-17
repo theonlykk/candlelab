@@ -1830,7 +1830,7 @@ def api_strategy_executor_pnl():
     agg_raw = _executor_aggregate_trades(raw_t)
     agg_all = _executor_aggregate_trades(all_t)
     agg_clean = _executor_aggregate_trades(clean_t)
-    insufficient = agg_all["signals"] == 0
+    insufficient = agg_raw["signals"] == 0
 
     return jsonify({
         "raw": agg_raw,

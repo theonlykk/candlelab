@@ -3338,7 +3338,7 @@ function buildLiveStratCard(l) {
       </div>
       <div class="strat-card-meta">${(l.instrument || "").replace(/</g, "")} · Live since ${when} · Ind ${String(indDisp).replace(/</g, "")}</div>
       <div class="live-strat-stat-rows" aria-live="polite">
-        <div class="live-strat-stat-row"><span>Since live · no spread adj</span><span class="live-strat-stat-vals live-stat-bt">Calculating…</span></div>
+        <div class="live-strat-stat-row"><span>Since live · signal replay</span><span class="live-strat-stat-vals live-stat-bt">Calculating…</span></div>
         <div class="live-strat-stat-row"><span>Since live · all entries</span><span class="live-strat-stat-vals live-stat-all">—</span></div>
         <div class="live-strat-stat-row"><span>Since live · clean only</span><span class="live-strat-stat-vals live-stat-clean">—</span></div>
       </div>
@@ -3434,15 +3434,15 @@ function fetchStratPnl(s, card) {
     .then(ex => {
       if (!btEl || !allEl || !cleanEl) return;
       if (!ex || ex.error) {
-        btEl.textContent = "—";
-        allEl.textContent = "—";
-        cleanEl.textContent = "—";
+        btEl.textContent = "Unavailable";
+        allEl.textContent = "Unavailable";
+        cleanEl.textContent = "Unavailable";
         btEl.style.color = "var(--muted)";
         allEl.style.color = "var(--muted)";
         cleanEl.style.color = "var(--muted)";
         return;
       }
-      const noExecSignals = !ex.all || Number(ex.all.signals) === 0;
+      const noExecSignals = ex.insufficient === true || !ex.raw || Number(ex.raw.signals) === 0;
       if (noExecSignals) {
         btEl.textContent = "No trades yet";
         allEl.textContent = "No trades yet";
@@ -3480,9 +3480,9 @@ function fetchStratPnl(s, card) {
       }
     })
     .catch(() => {
-      if (btEl) { btEl.textContent = "—"; btEl.style.color = "var(--muted)"; }
-      if (allEl) { allEl.textContent = "—"; allEl.style.color = "var(--muted)"; }
-      if (cleanEl) { cleanEl.textContent = "—"; cleanEl.style.color = "var(--muted)"; }
+      if (btEl) { btEl.textContent = "Unavailable"; btEl.style.color = "var(--muted)"; }
+      if (allEl) { allEl.textContent = "Unavailable"; allEl.style.color = "var(--muted)"; }
+      if (cleanEl) { cleanEl.textContent = "Unavailable"; cleanEl.style.color = "var(--muted)"; }
     });
 }
 
