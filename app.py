@@ -9,6 +9,7 @@ import logging
 import multiprocessing
 import concurrent.futures
 import threading
+from collections import defaultdict
 import numpy as np
 import pandas as pd
 from datetime import datetime, timezone
@@ -759,26 +760,58 @@ def api_complement():
     anchor_r = _backtest_pattern(df, pip, anchor, timeout=TIMEOUT, instrument=instrument)
     anchor_win_pct = anchor_r["win_pct"]
 
-    CONNECTORS = ["ordered", "any-order", "optional"]
-
     combo_tasks = [
         (comp, conn, df, signals_df, anchor_indices, atr, anchor_signals, anchor_win_pct)
         for comp in ALL_PATTERN_NAMES
-        for conn in CONNECTORS
+        for conn in ("ordered", "any-order")
         if comp != anchor
     ]
 
-    results = []
-    # Parallel evaluation of complement candidates.
+    raw = []
+    # Parallel evaluation: two connector modes per complement candidate.
     with concurrent.futures.ProcessPoolExecutor(max_workers=4, mp_context=ctx) as executor:
         futures = [executor.submit(_complement_task, t) for t in combo_tasks]
         for fut in concurrent.futures.as_completed(futures):
             r = fut.result()
-            if r and r["signals"] >= 3:
-                results.append(r)
+            if r:
+                raw.append(r)
 
-    results.sort(key=lambda x: x["delta"], reverse=True)
-    return jsonify(results[:3])
+    by_comp = defaultdict(dict)
+    for r in raw:
+        by_comp[r["complement"]][r["connector"]] = r
+
+    merged_list = []
+    for comp, sides in by_comp.items():
+        ro = sides.get("ordered")
+        ra = sides.get("any-order")
+        o_sig = int(ro["signals"]) if ro else 0
+        o_wp = float(ro["win_pct"]) if ro else 0.0
+        a_sig = int(ra["signals"]) if ra else 0
+        a_wp = float(ra["win_pct"]) if ra else 0.0
+        if max(o_sig, a_sig) < 3:
+            continue
+        candidates = []
+        if ro and ro["signals"] >= 3:
+            candidates.append(ro)
+        if ra and ra["signals"] >= 3:
+            candidates.append(ra)
+        if not candidates:
+            continue
+        best = max(candidates, key=lambda x: x["delta"])
+        merged_list.append({
+            "complement": comp,
+            "ordered_signals": o_sig,
+            "ordered_win_pct": round(o_wp, 1),
+            "any_order_signals": a_sig,
+            "any_order_win_pct": round(a_wp, 1),
+            "connector": best["connector"],
+            "delta": best["delta"],
+            "win_pct": best["win_pct"],
+            "signals": best["signals"],
+        })
+
+    merged_list.sort(key=lambda x: x["delta"], reverse=True)
+    return jsonify(merged_list[:3])
 
 
 @app.route("/api/indicator-check", methods=["POST"])

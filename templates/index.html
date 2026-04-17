@@ -1626,7 +1626,15 @@ function renderComplements(data, isBackNav = false) {
       card.dataset.idx = i;
       const nSig = Number(c.signals) || 0;
       const wpStr = c.win_pct != null ? Number(c.win_pct).toFixed(1) : "0.0";
-      const connStatLine = `${nSig} sig · ${wpStr}%`;
+      const connStatFallback = `${nSig} sig · ${wpStr}%`;
+      const orderedStat =
+        c.ordered_signals != null || c.ordered_win_pct != null
+          ? `${Number(c.ordered_signals) || 0} sig · ${c.ordered_win_pct != null ? Number(c.ordered_win_pct).toFixed(1) : "0.0"}%`
+          : connStatFallback;
+      const anyOrderStat =
+        c.any_order_signals != null || c.any_order_win_pct != null
+          ? `${Number(c.any_order_signals) || 0} sig · ${c.any_order_win_pct != null ? Number(c.any_order_win_pct).toFixed(1) : "0.0"}%`
+          : connStatFallback;
       card.innerHTML = `
         <div class="comp-card-top">
           <span style="font-size:15px; font-weight:600;">${c.complement}</span>
@@ -1637,14 +1645,15 @@ function renderComplements(data, isBackNav = false) {
           ${[
             ["ordered",   "•——•›", "In sequence",   "Pattern 2 fires after Pattern 1 within the window"],
             ["any-order", "•——•",  "Either order",   "Both patterns fire close together, any sequence"],
-          ].map(([cn, icon, title, sub]) =>
-            `<button class="connector-radio${cn === normalizeConnector(c.connector || "ordered") ? " active" : ""}"
+          ].map(([cn, icon, title, sub]) => {
+            const statLine = cn === "ordered" ? orderedStat : anyOrderStat;
+            return `<button class="connector-radio${cn === normalizeConnector(c.connector || "ordered") ? " active" : ""}"
                data-value="${cn}">
                <span class="conn-icon">${icon}</span><span class="conn-title">${title}</span>
                <span class="conn-sub">${sub}</span>
-               <span class="conn-stat">${connStatLine}</span>
-             </button>`
-          ).join("")}
+               <span class="conn-stat">${statLine}</span>
+             </button>`;
+          }).join("")}
         </div>`;
       card.onclick = e => {
         if (e.target.closest(".connector-radio")) return;
@@ -1659,6 +1668,7 @@ function renderComplements(data, isBackNav = false) {
         const val     = normalizeConnector(btn.dataset.value);
         const cardIdx = parseInt(radiosEl.dataset.card);
         state.complementData[cardIdx].connector = val;
+        state.connector = val;
         radiosEl.querySelectorAll(".connector-radio").forEach(b => {
           b.classList.toggle("active", b === btn);
         });
@@ -1708,8 +1718,8 @@ function renderComplements(data, isBackNav = false) {
 function selectComplement(idx) {
   state.complement = state.complementData[idx].complement;
   state.connector = normalizeConnector(state.complementData[idx].connector || "ordered");
-  document.querySelectorAll(".comp-card").forEach(c => {
-    c.classList.toggle("selected", parseInt(c.dataset.idx) === idx);
+  document.querySelectorAll(".comp-card").forEach(card => {
+    card.classList.toggle("selected", parseInt(card.dataset.idx, 10) === idx);
   });
   const btn = document.getElementById("comp-continue");
   if (btn) btn.disabled = false;
@@ -2814,6 +2824,7 @@ function goStep(n) {
     updateSlTpPipDisplay();
     clearTimeout(previewTimer);
     fetchTimeoutStats();
+    fetchPreview();
   }
   if (n === 9) {
     loadSummary();
