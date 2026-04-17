@@ -110,7 +110,9 @@ def _insert_poll_log_row(rec: dict) -> None:
         try:
             h = float(ohlc["h"])
             l = float(ohlc["l"])
-            spread_pips = round((h - l) * 10000, 4)
+            _sp = round((h - l) * 10000, 4)
+            # FX-style ranges only: *10000 pip scaling is meaningless for metals/indices/crypto.
+            spread_pips = _sp if _sp < 100 else None
             o_open = float(ohlc["o"])
             o_high = float(ohlc["h"])
             o_low = float(ohlc["l"])
