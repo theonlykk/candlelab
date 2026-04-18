@@ -137,6 +137,23 @@ def _parse_indicator_filter_config(raw) -> dict | None:
     return out
 
 
+def _indicator_type_string_for_chart(raw) -> str | None:
+    """Lowercase type string(s) for chart overlays (e.g. ``rsi``, ``ma_cross`` → contains ``ma``)."""
+    if raw is None or raw == "":
+        return None
+    if isinstance(raw, list):
+        parts: list[str] = []
+        for item in raw:
+            cfg = _parse_indicator_filter_config(item)
+            if cfg and cfg.get("type"):
+                parts.append(str(cfg["type"]).lower())
+        return " ".join(parts) if parts else None
+    cfg = _parse_indicator_filter_config(raw)
+    if not cfg or not cfg.get("type"):
+        return None
+    return str(cfg["type"]).lower()
+
+
 def _make_indicator_fn(indicator_filter):
     if isinstance(indicator_filter, list):
         parts = [_make_indicator_fn(item) for item in indicator_filter]
@@ -738,7 +755,18 @@ def strategy_chart(strategy_id):
             instrument=instrument_label,
         )
 
-        chart_b64 = render_trade_panels(df, trades, pip, instrument_label)
+        indicator_type_chart = _indicator_type_string_for_chart(row.get("indicator_filter"))
+        chart_b64 = render_trade_panels(
+            df,
+            trades,
+            pip,
+            instrument_label,
+            signals_df=signals_df,
+            anchor=anchor,
+            complement=complement or None,
+            indicator_type=indicator_type_chart,
+            go_live_at=go_live_ts,
+        )
 
     strategy_name = (row.get("strategy_name") or "Strategy").strip() or "Strategy"
     gl_str = ""

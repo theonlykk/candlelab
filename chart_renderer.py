@@ -18,6 +18,8 @@ import matplotlib.gridspec as gridspec
 import matplotlib.transforms as mtransforms
 from matplotlib.ticker import FixedLocator, FuncFormatter, MaxNLocator, NullFormatter, NullLocator
 
+from indicators import _rsi
+
 # Colour palette
 C_BULL        = "#26a69a"
 C_BEAR        = "#ef5350"
@@ -1398,12 +1400,57 @@ def render_chart_with_trades(
     return img_b64
 
 
-def render_trade_panels(df: pd.DataFrame, trades, pip: float, instrument: str) -> str:
+def render_trade_panels(
+    df: pd.DataFrame,
+    trades,
+    pip: float,
+    instrument: str,
+    signals_df: pd.DataFrame | None = None,
+    anchor: str | None = None,
+    complement: str | None = None,
+    indicator_type: str | None = None,
+    go_live_at: pd.Timestamp | None = None,
+) -> str:
     """
     Horizontal strip of OHLC panels, one column per trade, with L-shaped entry/exit overlay.
     ``pip`` / ``instrument`` kept for API parity with other chart entrypoints.
     """
     _ = pip, instrument
+
+    def _signal_nonzero(gi: int, col: str) -> bool:
+        if sig_df is None or col not in sig_df.columns:
+            return False
+        if gi < 0 or gi >= len(sig_df):
+            return False
+        try:
+            v = sig_df[col].iloc[gi]
+            if pd.isna(v):
+                return False
+            return float(v) != 0.0
+        except Exception:
+            return False
+
+    def _complement_label(name: str | None) -> str:
+        if not name:
+            return ""
+        words = re.findall(r"[A-Za-z]+", name)
+        if len(words) >= 2:
+            return (words[0][0] + words[1][0]).upper()
+        return name[:2].upper()
+
+    def _trade_is_live(ts_trade, gl: pd.Timestamp | None) -> bool:
+        if gl is None or ts_trade is None:
+            return False
+        try:
+            t = pd.Timestamp(ts_trade)
+            if t.tzinfo is None:
+                t = t.tz_localize("UTC")
+            else:
+                t = t.tz_convert("UTC")
+            glu = gl if gl.tzinfo is not None else gl.tz_localize("UTC")
+            return bool(t >= glu)
+        except Exception:
+            return False
 
     def _png_no_trades(msg: str = "No trades") -> str:
         fig, ax = plt.subplots(1, 1, figsize=(4, 2.5), facecolor=C_BG)
@@ -1429,6 +1476,10 @@ def render_trade_panels(df: pd.DataFrame, trades, pip: float, instrument: str) -
     n_df = len(df)
     if n_df == 0:
         return _png_no_trades()
+
+    sig_df = signals_df
+    if sig_df is not None and len(sig_df) != n_df:
+        sig_df = None
 
     valid: list[dict] = []
     for t in trades_list:
@@ -1487,6 +1538,118 @@ def render_trade_panels(df: pd.DataFrame, trades, pip: float, instrument: str) -
 
         entry_x = float(ei - start)
         exit_x = float(xi - start)
+
+        anch = (anchor or "").strip()
+        comp = (complement or "").strip() or None
+
+        hi_max = float(np.nanmax(highs))
+        lo_min = float(np.nanmin(lows))
+
+        if sig_df is not None and anch and anch in sig_df.columns:
+            for gi in range(start, end):
+                if not _signal_nonzero(gi, anch):
+                    continue
+                lx = gi - start
+                ax.axvspan(lx - 0.5, lx + 0.5, alpha=0.25, color="#4caf50", zorder=0)
+                ax.text(
+                    lx,
+                    hi_max,
+                    anch[:2].upper(),
+                    fontsize=6,
+                    color="#4caf50",
+                    ha="center",
+                    va="bottom",
+                    zorder=3,
+                )
+
+        if sig_df is not None and comp and comp in sig_df.columns:
+            comp_lbl = _complement_label(comp)
+            for gi in range(start, end):
+                if not _signal_nonzero(gi, comp):
+                    continue
+                lx = gi - start
+                ax.axvspan(lx - 0.5, lx + 0.5, alpha=0.25, color="#6495ed", zorder=0)
+                ax.text(
+                    lx,
+                    hi_max,
+                    comp_lbl,
+                    fontsize=6,
+                    color="#6495ed",
+                    ha="center",
+                    va="bottom",
+                    zorder=3,
+                )
+
+        anchor_positions: list[int] = []
+        complement_positions: list[int] = []
+        if sig_df is not None and anch and anch in sig_df.columns:
+            for gi in range(start, end):
+                if _signal_nonzero(gi, anch):
+                    anchor_positions.append(gi - start)
+        if sig_df is not None and comp and comp in sig_df.columns:
+            for gi in range(start, end):
+                if _signal_nonzero(gi, comp):
+                    complement_positions.append(gi - start)
+        if anchor_positions and complement_positions:
+            combo_x = anchor_positions + complement_positions
+            x_min_c = min(combo_x)
+            x_max_c = max(combo_x)
+            ax.axvspan(x_min_c - 0.5, x_max_c + 0.5, alpha=0.08, color="#ff9800", zorder=0)
+
+        ind = (indicator_type or "").lower()
+        if "rsi" in ind:
+            rsi_arr = _rsi(panel_df["close"].to_numpy(dtype=float), 14)
+            el = ei - start
+            if 0 <= el < len(rsi_arr):
+                rsi_val = rsi_arr[el]
+                if np.isfinite(rsi_val):
+                    ax.text(
+                        entry_x,
+                        lo_min * 0.9999,
+                        f"RSI {float(rsi_val):.0f}",
+                        fontsize=6,
+                        color="#888",
+                        ha="center",
+                        va="top",
+                        zorder=4,
+                    )
+        if "ma" in ind:
+            sma5 = panel_df["close"].rolling(5).mean()
+            sma20 = panel_df["close"].rolling(20).mean()
+            xv = np.arange(len(panel_df), dtype=float)
+            ax.plot(xv, sma5, color="#4caf50", linewidth=0.5, alpha=0.6, zorder=3)
+            ax.plot(xv, sma20, color="#ff9800", linewidth=0.5, alpha=0.6, zorder=3)
+
+        if _trade_is_live(trade.get("ts"), go_live_at):
+            ax.text(
+                0.5,
+                0.5,
+                "LIVE",
+                transform=ax.transAxes,
+                fontsize=24,
+                color="gray",
+                alpha=0.08,
+                ha="center",
+                va="center",
+                rotation=30,
+                fontweight="bold",
+                zorder=6,
+            )
+        else:
+            ax.text(
+                0.5,
+                0.5,
+                "BACKTEST",
+                transform=ax.transAxes,
+                fontsize=16,
+                color="gray",
+                alpha=0.08,
+                ha="center",
+                va="center",
+                rotation=30,
+                fontweight="bold",
+                zorder=6,
+            )
 
         ax.plot(
             [entry_x, exit_x],
