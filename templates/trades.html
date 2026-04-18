@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ strategy_name }} — Trades</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 24px 20px 60px;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: #ffffff;
+      color: #212121;
+      max-width: 1400px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+    a.back {
+      display: inline-block;
+      margin-bottom: 16px;
+      font-size: 15px;
+      color: #4caf50;
+      text-decoration: none;
+      font-weight: 600;
+    }
+    a.back:hover { text-decoration: underline; }
+    h1 { font-size: 1.35rem; font-weight: 600; margin: 8px 0 16px; }
+    .meta { font-size: 13px; color: #555; margin-bottom: 20px; line-height: 1.8; }
+    .meta span { display: inline-block; margin-right: 20px; }
+
+    /* Summary cards */
+    .summary {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 28px;
+    }
+    .summary-card {
+      background: #f5f5f5;
+      border-radius: 8px;
+      padding: 14px 18px;
+      min-width: 140px;
+    }
+    .summary-card .label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #888;
+      margin-bottom: 4px;
+    }
+    .summary-card .value {
+      font-size: 20px;
+      font-weight: 700;
+      color: #212121;
+    }
+    .summary-card .value.green { color: #4caf50; }
+    .summary-card .value.red   { color: #ef5350; }
+    .summary-card .value.amber { color: #f59e0b; }
+
+    /* Legend */
+    .legend {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 16px;
+      font-size: 12px;
+      color: #555;
+      flex-wrap: wrap;
+    }
+    .legend-item { display: flex; align-items: center; gap: 6px; }
+    .legend-dot {
+      width: 12px; height: 12px; border-radius: 2px; flex-shrink: 0;
+    }
+    .legend-dot.agree-win  { background: rgba(76,175,80,0.15); }
+    .legend-dot.agree-loss { background: rgba(239,83,80,0.12); }
+    .legend-dot.flipped    { background: rgba(245,158,11,0.18); }
+
+    /* Table */
+    .table-wrap {
+      overflow-x: auto;
+      border-radius: 8px;
+      border: 1px solid #e0e0e0;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      min-width: 900px;
+    }
+    thead tr {
+      background: #f5f5f5;
+      border-bottom: 2px solid #e0e0e0;
+    }
+    th {
+      padding: 10px 12px;
+      text-align: left;
+      font-weight: 600;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      color: #555;
+      white-space: nowrap;
+    }
+    td {
+      padding: 9px 12px;
+      border-bottom: 1px solid #f0f0f0;
+      white-space: nowrap;
+    }
+    tr:last-child td { border-bottom: none; }
+
+    /* Row tints */
+    tr.agree-win  td { background: rgba(76,175,80,0.06); }
+    tr.agree-loss td { background: rgba(239,83,80,0.05); }
+    tr.flipped    td { background: rgba(245,158,11,0.10); }
+
+    /* Result badges */
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .badge.tp { background: rgba(76,175,80,0.15); color: #2e7d32; }
+    .badge.sl { background: rgba(239,83,80,0.12); color: #c62828; }
+    .badge.to { background: rgba(0,0,0,0.07);     color: #555;    }
+
+    .dir-buy  { color: #4caf50; font-weight: 600; }
+    .dir-sell { color: #ef5350; font-weight: 600; }
+    .clean-yes { color: #4caf50; }
+    .clean-no  { color: #ef5350; }
+
+    .pnl-pos { color: #4caf50; font-weight: 600; }
+    .pnl-neg { color: #ef5350; font-weight: 600; }
+
+    .flip-note {
+      font-size: 11px;
+      color: #f59e0b;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+
+<a class="back" href="/chart/{{ strategy_id }}">← Chart</a>
+
+<h1>{{ strategy_name }}</h1>
+<div class="meta">
+  <span>{{ instrument }}</span>
+  <span>Anchor: {{ anchor }}</span>
+  <span>Complement: {{ complement }}</span>
+  <span>Live since: {{ go_live_at }}</span>
+</div>
+
+<!-- Summary cards -->
+<div class="summary">
+  <div class="summary-card">
+    <div class="label">Total signals</div>
+    <div class="value">{{ total }}</div>
+  </div>
+  <div class="summary-card">
+    <div class="label">Signal replay wins</div>
+    <div class="value {{ 'green' if replay_wins > total // 2 else 'red' }}">
+      {{ replay_wins }}/{{ total }}
+      {% if total > 0 %}({{ (replay_wins / total * 100)|round(1) }}%){% endif %}
+    </div>
+  </div>
+  <div class="summary-card">
+    <div class="label">All entries wins</div>
+    <div class="value {{ 'green' if all_wins > total // 2 else 'red' }}">
+      {{ all_wins }}/{{ total }}
+      {% if total > 0 %}({{ (all_wins / total * 100)|round(1) }}%){% endif %}
+    </div>
+  </div>
+  <div class="summary-card">
+    <div class="label">Replay P&L</div>
+    <div class="value {{ 'green' if replay_pnl_total > 0 else 'red' }}">
+      ${{ replay_pnl_total }}
+    </div>
+  </div>
+  <div class="summary-card">
+    <div class="label">All entries P&L</div>
+    <div class="value {{ 'green' if all_pnl_total > 0 else 'red' }}">
+      ${{ all_pnl_total }}
+    </div>
+  </div>
+  <div class="summary-card">
+    <div class="label">Outcome flips</div>
+    <div class="value {{ 'amber' if flipped > 0 else 'green' }}">{{ flipped }}</div>
+  </div>
+</div>
+
+<!-- Legend -->
+<div class="legend">
+  <div class="legend-item">
+    <div class="legend-dot agree-win"></div> Both agree: win
+  </div>
+  <div class="legend-item">
+    <div class="legend-dot agree-loss"></div> Both agree: loss
+  </div>
+  <div class="legend-item">
+    <div class="legend-dot flipped"></div>
+    Outcome flip — spread changed the result
+  </div>
+</div>
+
+<!-- Blotter table -->
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Time</th>
+        <th>Dir</th>
+        <th>Replay entry</th>
+        <th>All entry (ask/bid)</th>
+        <th>Spread</th>
+        <th>Clean</th>
+        <th>ATR (pips)</th>
+        <th>SL</th>
+        <th>TP</th>
+        <th>Exit</th>
+        <th>Replay</th>
+        <th>All entries</th>
+        <th>Replay P&L</th>
+        <th>All P&L</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for t in trades %}
+      {% if t.replay_result != t.all_result and t.all_result %}
+        {% set row_class = "flipped" %}
+      {% elif t.replay_result == "TP" %}
+        {% set row_class = "agree-win" %}
+      {% else %}
+        {% set row_class = "agree-loss" %}
+      {% endif %}
+      <tr class="{{ row_class }}">
+        <td>{{ t.ts }}</td>
+        <td class="{{ 'dir-buy' if t.direction == 'BUY' else 'dir-sell' }}">
+          {{ t.direction }}
+        </td>
+        <td>{{ t.replay_entry }}</td>
+        <td>{{ t.all_entry if t.all_entry else "—" }}</td>
+        <td>{{ t.spread_pips if t.spread_pips else "—" }}</td>
+        <td class="{{ 'clean-yes' if t.is_clean else 'clean-no' }}">
+          {{ "✓" if t.is_clean else "✗" }}
+        </td>
+        <td>{{ t.atr }}</td>
+        <td>{{ t.sl }}</td>
+        <td>{{ t.tp }}</td>
+        <td>{{ t.exit_price }}</td>
+        <td><span class="badge {{ t.replay_result|lower }}">{{ t.replay_result }}</span></td>
+        <td>
+          {% if t.all_result %}
+            <span class="badge {{ t.all_result|lower }}">{{ t.all_result }}</span>
+          {% else %}—{% endif %}
+        </td>
+        <td class="{{ 'pnl-pos' if t.replay_pnl > 0 else 'pnl-neg' }}">
+          ${{ t.replay_pnl }}
+        </td>
+        <td class="{{ 'pnl-pos' if t.all_pnl and t.all_pnl > 0 else 'pnl-neg' }}">
+          {{ "$" + t.all_pnl|string if t.all_pnl is not none else "—" }}
+        </td>
+        <td>
+          {% if t.replay_result != t.all_result and t.all_result %}
+            <span class="flip-note">⚡ spread flipped outcome</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      {% if not trades %}
+      <tr>
+        <td colspan="15" style="text-align:center; padding:32px; color:#888;">
+          No signals found since go live date.
+        </td>
+      </tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>
+
+</body>
+</html>

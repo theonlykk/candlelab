@@ -780,6 +780,102 @@ def strategy_chart(strategy_id):
     )
 
 
+@app.route("/trades/<int:strategy_id>")
+def strategy_trades(strategy_id):
+    """Trade blotter: per-trade detail comparing signal replay vs all entries."""
+    init_strategy_tables()
+    row = _fetch_live_strategy_row(strategy_id)
+    if row is None:
+        abort(404)
+
+    instrument_label = _norm_instrument(row.get("instrument") or "EUR/USD")
+    if instrument_label not in INSTRUMENTS:
+        abort(404)
+
+    anchor = (row.get("pattern_1") or row.get("anchor") or "").strip()
+    if not anchor or anchor not in PATTERNS:
+        abort(404)
+
+    raw_p2 = row.get("pattern_2") if row.get("pattern_2") is not None else row.get("complement")
+    raw_cont = row.get("continuation")
+    has_p2 = raw_p2 is not None and str(raw_p2).strip() != ""
+    has_cont = raw_cont is not None and str(raw_cont).strip() != ""
+    complement = raw_p2 if has_p2 else (raw_cont if has_cont else None)
+    connector = row.get("connector")
+    if connector is None:
+        connector = "any-order" if has_p2 else ("ordered" if has_cont else None)
+
+    sl_mult = float(row.get("sl_mult") or 1.0)
+    tp_mult = float(row.get("tp_mult") or 3.0)
+    timeout = int(row.get("timeout") or TIMEOUT)
+    pip = float(INSTRUMENTS[instrument_label]["pip"])
+    tick_size = pip
+
+    indicator_filter = row.get("indicator_filter")
+    indicator_fn = _make_indicator_fn(indicator_filter) if indicator_filter else None
+
+    session_filter = row.get("session")
+    if session_filter is not None:
+        sstr = str(session_filter).strip()
+        if not sstr or sstr.lower() in ("all", "all sessions"):
+            session_filter = None
+        else:
+            session_filter = sstr
+
+    try:
+        go_live_ts = pd.Timestamp(row.get("go_live_at"))
+        if go_live_ts.tzinfo is None:
+            go_live_ts = go_live_ts.tz_localize("UTC")
+        else:
+            go_live_ts = go_live_ts.tz_convert("UTC")
+    except Exception:
+        abort(404)
+
+    oanda_id = _oanda_instrument_id(instrument_label)
+    live_df = _executor_read_continuous_series(oanda_id, go_live_ts)
+
+    trades = []
+    if live_df is not None and not live_df.empty:
+        trades = _executor_compute_trade_detail(
+            live_df, anchor, complement, connector,
+            session_filter, sl_mult, tp_mult, timeout,
+            tick_size, pip, instrument_label, indicator_fn,
+        )
+
+    # Summary stats
+    replay_wins = sum(1 for t in trades if t["replay_result"] == "TP")
+    all_wins = sum(1 for t in trades if t["all_result"] == "TP")
+    total = len(trades)
+    replay_pnl_total = round(sum(t["replay_pnl"] for t in trades), 2)
+    all_pnl_total = round(sum(t["all_pnl"] for t in trades if t["all_pnl"] is not None), 2)
+    flipped = sum(1 for t in trades if t["replay_result"] != t["all_result"] and t["all_result"] is not None)
+
+    strategy_name = (row.get("strategy_name") or "Strategy").strip()
+    gl_str = ""
+    try:
+        gl_str = pd.Timestamp(row.get("go_live_at")).strftime("%Y-%m-%d %H:%M UTC")
+    except Exception:
+        gl_str = "—"
+
+    return render_template(
+        "trades.html",
+        strategy_name=strategy_name,
+        instrument=instrument_label,
+        anchor=anchor,
+        complement=complement or "—",
+        connector=connector or "—",
+        go_live_at=gl_str,
+        trades=trades,
+        total=total,
+        replay_wins=replay_wins,
+        all_wins=all_wins,
+        replay_pnl_total=replay_pnl_total,
+        all_pnl_total=all_pnl_total,
+        flipped=flipped,
+        strategy_id=strategy_id,
+    )
+
+
 @app.route("/api/patterns")
 def api_patterns():
     """
@@ -2256,6 +2352,181 @@ def _executor_compute_from_dataframe(
                 clean_trades.append((win_a, pnl_a))
 
     return raw_trades, all_trades, clean_trades, raw_spread_deduct_usd
+
+
+def _executor_compute_trade_detail(
+    df: pd.DataFrame,
+    anchor: str,
+    complement: str | None,
+    connector: str | None,
+    session_filter: str | None,
+    sl_mult: float,
+    tp_mult: float,
+    timeout: int,
+    tick_size: float,
+    pip: float,
+    instrument_label: str,
+    indicator_fn=None,
+) -> list[dict]:
+    """
+    Same signal detection and simulation as _executor_compute_from_dataframe
+    but returns per-trade detail dicts for the blotter page.
+
+    Each dict contains:
+        ts: timestamp of signal bar (ISO string)
+        direction: "BUY" or "SELL"
+        replay_entry: next bar open (float)
+        all_entry: actual ask (BUY) or bid (SELL) at signal close (float, None if no quote)
+        spread_pips: (ask-bid)/pip at signal bar (float, None if no quote)
+        is_clean: bool — spread within SPREAD_CLEAN_THRESHOLD
+        sl: stop loss price (float)
+        tp: take profit price (float)
+        exit_price: actual exit price (float)
+        replay_result: "TP" / "SL" / "TO"
+        all_result: "TP" / "SL" / "TO" / None (None if no real quote)
+        replay_pnl: net P&L in dollars for replay (float)
+        all_pnl: net P&L in dollars for all entries (float, None if no real quote)
+        atr: ATR value at signal bar (float)
+    """
+    trades = []
+    if df is None or df.empty or len(df) < ATR_PERIOD + 2:
+        return trades
+
+    need = ["open", "high", "low", "close", "bid", "ask"]
+    for c in need:
+        if c not in df.columns:
+            return trades
+
+    ohlc = df[["open", "high", "low", "close"]].astype(float).sort_index()
+    if anchor not in PATTERNS:
+        return trades
+
+    signals_df = detect_all(ohlc)
+    sig_array = detect_signal(
+        signals_df, anchor, complement, connector, "both", window=10,
+    )
+    n = len(ohlc)
+    atr_full = compute_atr(ohlc)
+
+    instr_key = instrument_label.replace("/", "_")
+    clean_threshold = SPREAD_CLEAN_THRESHOLD.get(instr_key, 4.0)
+    spread_cost_pips = SPREAD_COST_PIPS.get(instr_key, 1.0)
+
+    for i in range(n):
+        if i >= len(sig_array):
+            break
+        direction_val = int(sig_array[i])
+        if direction_val == 0:
+            continue
+        if not _executor_session_ok(ohlc.index[i], session_filter):
+            continue
+        if i + 1 >= n:
+            continue
+
+        trade_atr = float(atr_full.iloc[i])
+        if not np.isfinite(trade_atr) or trade_atr <= 0:
+            continue
+
+        if indicator_fn is not None:
+            dir_str = "long" if direction_val == 1 else "short"
+            if not indicator_fn(ohlc, i, dir_str):
+                continue
+
+        # Quotes at signal bar close (iloc[i])
+        ask_v = df["ask"].iloc[i]
+        bid_v = df["bid"].iloc[i]
+        has_quote = pd.notna(ask_v) and pd.notna(bid_v)
+        spread_pips_val = None
+        all_entry = None
+        is_clean = False
+        if has_quote:
+            ask_v = float(ask_v)
+            bid_v = float(bid_v)
+            spread_pips_val = round((ask_v - bid_v) / pip, 2)
+            all_entry = ask_v if direction_val == 1 else bid_v
+            is_clean = spread_pips_val <= clean_threshold
+
+        replay_entry = float(ohlc["open"].iloc[i + 1])
+        sl_r = replay_entry - direction_val * sl_mult * trade_atr
+        tp_r = replay_entry + direction_val * tp_mult * trade_atr
+
+        end = min(i + 1 + int(timeout), n)
+        sub = ohlc.iloc[i + 1 : end]
+        if len(sub) == 0:
+            continue
+
+        fh = sub["high"].to_numpy(dtype=float)
+        fl = sub["low"].to_numpy(dtype=float)
+        fc = sub["close"].to_numpy(dtype=float)
+        fo = sub["open"].to_numpy(dtype=float)
+        L = len(sub)
+        op_next = np.empty(L, dtype=float)
+        for j in range(L):
+            op_next[j] = float(fo[j + 1]) if j + 1 < L else float(fc[j])
+
+        win_r, pnl_r = _executor_simulate_trade_pnl(
+            replay_entry, direction_val, sl_r, tp_r, trade_atr,
+            sl_mult, tp_mult, pip, instrument_label, fh, fl, fc, op_next,
+        )
+        # Deduct flat spread cost from replay P&L
+        pip_val = PIP_VALUES.get(instrument_label, 10.0)
+        lot_size_r = (
+            (RISK_DOLLARS / ((sl_mult * trade_atr / pip) * pip_val))
+            if trade_atr > 0 and pip > 0 and pip_val > 0
+            else 0.0
+        )
+        replay_pnl = round(pnl_r - spread_cost_pips * pip_val * lot_size_r, 2)
+        replay_result = "TP" if win_r else "SL"
+
+        # Determine exit price from simulation
+        # Walk forward to find exit bar
+        exit_price = float(fc[-1])
+        for j in range(len(fh)):
+            if direction_val == 1:
+                if fh[j] >= tp_r:
+                    exit_price = tp_r
+                    break
+                if fc[j] <= sl_r:
+                    exit_price = op_next[j]
+                    break
+            else:
+                if fl[j] <= tp_r:
+                    exit_price = tp_r
+                    break
+                if fc[j] >= sl_r:
+                    exit_price = op_next[j]
+                    break
+
+        all_result = None
+        all_pnl = None
+        if has_quote:
+            sl_a = all_entry - direction_val * sl_mult * trade_atr
+            tp_a = all_entry + direction_val * tp_mult * trade_atr
+            win_a, pnl_a = _executor_simulate_trade_pnl(
+                all_entry, direction_val, sl_a, tp_a, trade_atr,
+                sl_mult, tp_mult, pip, instrument_label, fh, fl, fc, op_next,
+            )
+            all_result = "TP" if win_a else "SL"
+            all_pnl = round(pnl_a, 2)
+
+        trades.append({
+            "ts":           ohlc.index[i].strftime("%d/%m %H:%M"),
+            "direction":    "BUY" if direction_val == 1 else "SELL",
+            "replay_entry": round(replay_entry, 5),
+            "all_entry":    round(all_entry, 5) if all_entry else None,
+            "spread_pips":  spread_pips_val,
+            "is_clean":     is_clean,
+            "sl":           round(sl_r, 5),
+            "tp":           round(tp_r, 5),
+            "exit_price":   round(exit_price, 5),
+            "replay_result": replay_result,
+            "all_result":   all_result,
+            "replay_pnl":   replay_pnl,
+            "all_pnl":      all_pnl,
+            "atr":          round(trade_atr / pip, 1),
+        })
+
+    return trades
 
 
 def _fetch_true_pnl(strategy_name: str, go_live_ts: pd.Timestamp) -> dict | None:
