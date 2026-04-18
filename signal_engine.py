@@ -20,19 +20,47 @@ SPREAD_COST_PIPS = {
 }
 
 PATTERN_IDS: dict[str, int] = {
-    "Doji": 101,
     "Hammer/Hanging Man": 137,
     "Shooting Star/Inv. Hammer": 203,
     "Engulfing": 259,
     "Morning/Evening Star": 314,
-    "Harami": 372,
-    "Piercing/Dark Cloud": 418,
     "Three Soldiers/Crows": 463,
-    "Spinning Top": 521,
-    "Long-legged Doji": 574,
-    "Rising/Falling Three Methods": 629,
-    "Upside/Downside Tasuki Gap": 683,
 }
+
+PATTERN_TYPE: dict[str, str] = {
+    "Hammer/Hanging Man":       "reversal",
+    "Shooting Star/Inv. Hammer": "reversal",
+    "Engulfing":                "reversal",
+    "Morning/Evening Star":     "reversal",
+    "Three Soldiers/Crows":     "continuation",
+}
+
+PATTERN_DIRECTION: dict[str, tuple[str, str]] = {
+    "Hammer/Hanging Man":        ("long", "short"),
+    "Shooting Star/Inv. Hammer": ("long", "short"),
+    "Engulfing":                 ("long", "short"),
+    "Morning/Evening Star":      ("long", "short"),
+    "Three Soldiers/Crows":      ("long", "short"),
+}
+
+
+def get_pattern_direction(pattern: str, signal_value: int) -> str:
+    """
+    Given a pattern name and signal value (+1 bullish, -1 bearish),
+    return the implied trade direction: 'long' or 'short'.
+    Returns 'long' for unknown patterns with positive signal.
+    """
+    entry = PATTERN_DIRECTION.get(pattern)
+    if entry is None:
+        return "long" if signal_value > 0 else "short"
+    return entry[0] if signal_value > 0 else entry[1]
+
+
+def get_pattern_type(pattern: str) -> str:
+    """
+    Return 'reversal', 'continuation', or 'unknown' for a pattern name.
+    """
+    return PATTERN_TYPE.get(pattern, "unknown")
 
 
 def _pattern_slug(label: str) -> str:
