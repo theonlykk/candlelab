@@ -2230,7 +2230,8 @@ def _executor_compute_from_dataframe(
         if c not in df.columns:
             return raw_trades, all_trades, clean_trades, raw_spread_deduct_usd
 
-    ohlc = df[["open", "high", "low", "close"]].astype(float).sort_index()
+    df = df.sort_index()
+    ohlc = df[["open", "high", "low", "close"]].astype(float)
     if anchor not in PATTERNS:
         return raw_trades, all_trades, clean_trades, raw_spread_deduct_usd
 
@@ -2402,7 +2403,8 @@ def _executor_compute_trade_detail(
         if c not in df.columns:
             return trades
 
-    ohlc = df[["open", "high", "low", "close"]].astype(float).sort_index()
+    df = df.sort_index()
+    ohlc = df[["open", "high", "low", "close"]].astype(float)
     if anchor not in PATTERNS:
         return trades
 
