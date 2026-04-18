@@ -266,6 +266,14 @@
     margin-top: 6px;
     line-height: 1.45;
   }
+  .pattern-section-label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--muted);
+    margin: 16px 0 8px 2px;
+  }
   .type-badge {
     display: inline-block;
     font-size: 10px;
@@ -1598,13 +1606,13 @@ const WIZARD_ANCHOR_PATTERNS = [
 
 function instrumentCardLabel(inst) {
   const flags = {
-    EURUSD: "\u{1F1EA}\u{1F1FA} ",
-    GBPUSD: "\u{1F1EC}\u{1F1E7} ",
-    USDJPY: "\u{1F1EF}\u{1F1F5} ",
-    USDCAD: "\u{1F1E8}\u{1F1E6} ",
-    AUDUSD: "\u{1F1E6}\u{1F1FA} ",
-    NZDUSD: "\u{1F1F3}\u{1F1FF} ",
-    USDCHF: "\u{1F1E8}\u{1F1ED} ",
+    EURUSD: "\uD83C\uDDEA\uD83C\uDDFA ",
+    GBPUSD: "\uD83C\uDDEC\uD83C\uDDE7 ",
+    USDJPY: "\uD83C\uDDEF\uD83C\uDDF5 ",
+    USDCAD: "\uD83C\uDDE8\uD83C\uDDE6 ",
+    USDCHF: "\uD83C\uDDE8\uD83C\uDDED ",
+    NZDUSD: "\uD83C\uDDF3\uD83C\uDDFF ",
+    AUDUSD: "\uD83C\uDDE6\uD83C\uDDFA ",
   };
   const pre = flags[inst.code] || "";
   return pre + inst.label;
@@ -1664,10 +1672,28 @@ function selectInterval(btn) {
 
 // ── Steps 3–4: Anchor + optional second reversal ─────────────────────────────
 
+const PATTERN_TYPES = {
+  "Engulfing": "Reversal",
+  "Hammer/Hanging Man": "Reversal",
+  "Morning/Evening Star": "Reversal",
+  "Shooting Star/Inv. Hammer": "Reversal",
+  "Three Soldiers/Crows": "Continuation",
+};
+
 function patternMetaByName(name) {
   const row = state.patternsData.find(p => p.name === name);
-  const wp = row ? Number(row.win_pct).toFixed(0) : "—";
-  const sig = row ? row.signals : "—";
+  let wp = "—";
+  let sig = "—";
+  if (row) {
+    if (row.win_pct != null && row.win_pct !== "") {
+      wp = Number(row.win_pct).toFixed(0);
+    } else if (row.win_pct_5 != null && row.win_pct_5 !== "") {
+      wp = Number(row.win_pct_5).toFixed(0);
+    }
+    if (row.signals != null && row.signals !== "") {
+      sig = row.signals;
+    }
+  }
   const tip = row && row.tip ? row.tip : "";
   return { row, wp, sig, tip };
 }
@@ -1691,7 +1717,21 @@ function loadPatternsStep3() {
 function renderPatternGridStep3() {
   const list = document.getElementById("pattern-list");
   list.innerHTML = "";
+  let lastSectionType = null;
   WIZARD_ANCHOR_PATTERNS.forEach(def => {
+    const row = state.patternsData.find(p => p.name === def.name);
+    const rawType =
+      row && row.type != null && String(row.type).trim() !== ""
+        ? String(row.type).trim()
+        : (PATTERN_TYPES[def.name] || "Reversal");
+    const pType = /^continuation$/i.test(rawType) ? "Continuation" : "Reversal";
+    if (pType !== lastSectionType) {
+      const label = document.createElement("div");
+      label.className = "pattern-section-label";
+      label.textContent = pType;
+      list.appendChild(label);
+      lastSectionType = pType;
+    }
     const { wp, sig, tip } = patternMetaByName(def.name);
     const badgeClass = def.kind === "continuation" ? "continuation" : "reversal";
     const badgeLabel = def.kind === "continuation" ? "Continuation" : "Reversal";
@@ -3360,7 +3400,34 @@ function getStep9SaveDraftExtra() {
   return {};
 }
 
+function showToast(message) {
+  let el = document.getElementById("global-toast");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "global-toast";
+    el.setAttribute("role", "status");
+    el.style.cssText =
+      "position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:10001;" +
+      "background:var(--card);border:1px solid var(--accent);padding:12px 18px;border-radius:8px;" +
+      "font-size:14px;color:var(--text);box-shadow:0 4px 12px rgba(0,0,0,0.12);max-width:min(420px,92vw);" +
+      "display:none;text-align:center;";
+    document.body.appendChild(el);
+  }
+  el.textContent = message;
+  el.style.display = "block";
+  clearTimeout(window.__toastTimer);
+  window.__toastTimer = setTimeout(() => {
+    el.style.display = "none";
+  }, 4000);
+}
+
 function step9LifecycleSaveDraft(source) {
+  const credsGate = loadUserCreds();
+  if (!credsGate || !credsGate.username || !credsGate.pin) {
+    openStrategiesPanel();
+    showToast("Please log in or create an account first.");
+    return;
+  }
   step9ClearLifecycleErr(source);
   if (source === "form") step9ClearFormLifecycleMsg();
   if (source === "results") {
@@ -3394,6 +3461,12 @@ function step9LifecycleSaveDraft(source) {
 }
 
 function step9LifecyclePromoteLive(source) {
+  const credsGate = loadUserCreds();
+  if (!credsGate || !credsGate.username || !credsGate.pin) {
+    openStrategiesPanel();
+    showToast("Please log in or create an account first.");
+    return;
+  }
   step9ClearLifecycleErr(source);
   if (source === "form") step9ClearFormLifecycleMsg();
   const rc = document.getElementById("step9-results-promote-confirm");
@@ -3679,7 +3752,7 @@ function buildDraftCard(d) {
           <div class="strat-dot strat-dot-amber" style="margin-top:5px;"></div>
           <div class="strat-card-name">${(d.strategy_name || "Draft").replace(/</g, "")}</div>
         </div>
-        <div class="strat-card-meta">${(d.instrument || "").replace(/</g, "")} · ${d.interval || ""} · ${(d.anchor || "").replace(/</g, "")} · Saved ${when}</div>
+        <div class="strat-card-meta">${(d.instrument || "").replace(/</g, "")} · ${d.interval || ""} · ${(d.pattern_1 || d.anchor || "").replace(/</g, "")} · Saved ${when}</div>
       </div>
     </div>`;
   const main = card.querySelector(".draft-card-main");
