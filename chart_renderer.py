@@ -1671,6 +1671,28 @@ def render_trade_panels(
         ax.scatter([exit_x], [xp], s=80, c=exit_col, edgecolors="black", linewidths=0.5, zorder=5)
         ax.scatter([entry_x], [ep], s=25, c="black", zorder=5)
 
+        direction = int(trade.get("signal", 0) or 0)
+        ix = int(round(entry_x))
+        if 0 <= ix < len(panel_df):
+            entry_low = float(panel_df["low"].iloc[ix])
+            entry_high = float(panel_df["high"].iloc[ix])
+            if direction == 1:
+                ax.annotate(
+                    "",
+                    xy=(entry_x, entry_low * 0.9998),
+                    xytext=(entry_x, entry_low * 0.9994),
+                    arrowprops=dict(arrowstyle="->", color="black", lw=1.2),
+                    zorder=5,
+                )
+            elif direction == -1:
+                ax.annotate(
+                    "",
+                    xy=(entry_x, entry_high * 1.0002),
+                    xytext=(entry_x, entry_high * 1.0006),
+                    arrowprops=dict(arrowstyle="->", color="black", lw=1.2),
+                    zorder=5,
+                )
+
         try:
             ts = df.index[ei]
             if not isinstance(ts, pd.Timestamp):
