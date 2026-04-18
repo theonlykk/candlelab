@@ -1704,6 +1704,9 @@ def api_strategy_pnl():
     if complement is not None:
         connector = body.get("connector") or "ordered"
 
+    indicator_filter = body.get("indicator_filter")
+    indicator_fn = _make_indicator_fn(indicator_filter) if indicator_filter else None
+
     if not anchor:
         return jsonify({"error": "missing anchor"}), 400
 
@@ -1745,6 +1748,7 @@ def api_strategy_pnl():
         anchor,
         timeout=timeout,
         session=session_filter,
+        indicator_fn=indicator_fn,
         sl_mult=sl_mult,
         tp_mult=tp_mult,
         instrument=instrument_label,

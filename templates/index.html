@@ -3872,10 +3872,11 @@ function fetchStratPnl(s, card) {
     session_filter: s.session !== "All" ? s.session : null,
     sl_multiplier: s.sl_mult,
     tp_multiplier: s.tp_mult,
-    timeout:      s.timeout || 1000,
-    direction:    "both",
-    go_live_at:   s.go_live_at || null,
-    tick_size:    tickSize,
+    timeout:          s.timeout || 1000,
+    direction:        "both",
+    go_live_at:       s.go_live_at || null,
+    tick_size:        tickSize,
+    indicator_filter: s.indicator_filter || null,
   };
 
   const btEl = card.querySelector(".live-stat-bt");
