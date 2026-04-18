@@ -702,6 +702,21 @@ def strategy_chart(strategy_id):
         df = df[~df.index.duplicated(keep="last")]
         df = df.sort_index()
 
+    total_candles = len(df)
+    go_live_idx = 0
+    if total_candles > 0:
+        for i, ts in enumerate(df.index):
+            t = pd.Timestamp(ts)
+            if t.tzinfo is None:
+                t = t.tz_localize("UTC")
+            else:
+                t = t.tz_convert("UTC")
+            if t >= go_live_ts:
+                go_live_idx = i
+                break
+        else:
+            go_live_idx = total_candles
+
     chart_b64 = ""
     comp_disp = "—"
     conn_disp = "—"
@@ -772,6 +787,8 @@ def strategy_chart(strategy_id):
         connector=conn_disp,
         go_live_at=gl_str,
         chart_b64=chart_b64,
+        go_live_idx=go_live_idx,
+        total_candles=total_candles,
     )
 
 

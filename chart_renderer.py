@@ -1350,7 +1350,7 @@ def render_chart_with_trades(
     Anchor/complement triangle layers omitted (caller args kept for API compatibility).
     Returns base64 PNG string only.
     """
-    candles_per_inch = 6.0
+    candles_per_inch = 20.0
     n = len(df)
     if n == 0:
         img_b64, _ = render_chart(
@@ -1370,10 +1370,14 @@ def render_chart_with_trades(
     trades_list = list(trades or [])
 
     def overlay(ax_price, x, highs, lows, window_df):
+        price_min = float(pd.to_numeric(window_df["low"], errors="coerce").min()) * 0.9998
+        price_max = float(pd.to_numeric(window_df["high"], errors="coerce").max()) * 1.0002
+        if np.isfinite(price_min) and np.isfinite(price_max) and price_min < price_max:
+            ax_price.set_ylim(price_min, price_max)
         _draw_trade_l_arrows(ax_price, trades_list, n)
 
     combo = np.asarray(combo_sigs, dtype=np.int8).ravel()
-    fig_width = max(30.0, float(n) / candles_per_inch)
+    fig_width = max(20.0, float(n) / candles_per_inch)
     fig_height = 8.0
 
     img_b64, _ = render_chart(
