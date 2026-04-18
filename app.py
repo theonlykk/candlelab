@@ -295,12 +295,10 @@ def _simulate_trades(
     timeout: int,
     session: str = None,
     indicator_fn=None,
-    direction_val: int = 0,
     instrument: str = "EUR/USD",
 ) -> list:
     """
     Simulate all trades for a single pattern.
-    direction_val: 0=both, 1=longs only, -1=shorts only.
     indicator_fn: callable(df, signal_idx, direction_str) -> bool
     """
     # Session filtering is applied at signal time (not entry time) to keep the rule simple.
@@ -311,8 +309,6 @@ def _simulate_trades(
     for i in range(n - 1):
         sig = signals_series.iloc[i]
         if sig == 0:
-            continue
-        if direction_val != 0 and int(sig) != direction_val:
             continue
         if not sess_mask[i]:
             continue
@@ -440,7 +436,6 @@ def _backtest_pattern(
     timeout: int = TIMEOUT,
     session: str = None,
     indicator_fn=None,
-    direction_val: int = 0,
     sl_mult: float = 1.0,
     tp_mult: float = 3.0,
     instrument: str = "EUR/USD",
@@ -461,12 +456,7 @@ def _backtest_pattern(
     if pattern_name not in signals_df.columns:
         return {"signals": 0, "wins": 0, "win_pct": 0.0, "cum_net": 0.0, "trades": []}
 
-    if direction_val == 1:
-        direction_str = "long"
-    elif direction_val == -1:
-        direction_str = "short"
-    else:
-        direction_str = "both"
+    direction_str = "both"
 
     sig_array = detect_signal(
         signals_df,
@@ -480,7 +470,7 @@ def _backtest_pattern(
 
     trades = _simulate_trades(
         df, signals_series, atr, pip,
-        sl_mult, tp_mult, timeout, session, indicator_fn, direction_val,
+        sl_mult, tp_mult, timeout, session, indicator_fn,
         instrument=instrument,
     )
 
@@ -547,14 +537,13 @@ def _task_pattern_multi_timeout(args):
 
 def _task_pattern_single_backtest(args):
     """ProcessPool wrapper: one-pattern ``_backtest_pattern`` (``detect_signal`` path)."""
-    df, pip, pattern_name, direction_val, instrument = args
+    df, pip, pattern_name, instrument = args
     r = _backtest_pattern(
         df,
         pip,
         pattern_name,
         timeout=TIMEOUT,
         instrument=instrument,
-        direction_val=direction_val,
     )
     return pattern_name, r
 
@@ -676,16 +665,8 @@ def strategy_chart(strategy_id):
         connector = row.get("connector") or "ordered"
 
     interval = row.get("interval") or "5m"
-    direction_raw = (row.get("direction") or "both").strip().lower()
-    if direction_raw in ("reversal", "trend"):
-        direction_raw = "both"
-    direction_str = direction_raw if direction_raw in ("long", "short", "both") else "both"
-
-    direction_val = 0
-    if direction_str == "long":
-        direction_val = 1
-    elif direction_str == "short":
-        direction_val = -1
+    direction = row.get("direction") or "both"
+    # direction now derived from pattern signal value — not passed to backtest
 
     session_filter = row.get("session")
     if session_filter is not None:
@@ -742,7 +723,7 @@ def strategy_chart(strategy_id):
             anchor,
             complement,
             connector,
-            direction_str,
+            "both",
             window=10,
         )
 
@@ -763,7 +744,6 @@ def strategy_chart(strategy_id):
             timeout,
             session=session_filter,
             indicator_fn=None,
-            direction_val=direction_val,
             instrument=instrument_label,
         )
 
@@ -818,6 +798,7 @@ def api_patterns():
     instrument_raw = request.args.get("instrument", "EUR/USD")
     interval = request.args.get("interval", "5m")
     direction = request.args.get("direction", "both")
+    # direction now derived from pattern signal value — not passed to backtest
 
     instrument = _norm_instrument(instrument_raw)
     if instrument not in INSTRUMENTS:
@@ -841,13 +822,7 @@ def api_patterns():
 
     pattern_names = _patterns_for_direction(direction)
 
-    direction_val = 0
-    if direction == "long":
-        direction_val = 1
-    elif direction == "short":
-        direction_val = -1
-
-    tasks = [(df, pip, name, direction_val, instrument) for name in pattern_names]
+    tasks = [(df, pip, name, instrument) for name in pattern_names]
 
     # ProcessPool is used to parallelize per-pattern simulations. On Windows this uses
     # "spawn", so the task payload must be picklable and entrypoints must be top-level.
@@ -894,6 +869,7 @@ def api_complement():
     body = request.get_json(force=True)
     anchor = body.get("anchor")
     direction = body.get("direction", "both")
+    # direction now derived from pattern signal value — not passed to backtest
     instrument_raw = body.get("instrument", "EUR/USD")
     interval = body.get("interval", "5m")
 
@@ -987,6 +963,7 @@ def api_indicator_check():
     has_complement = complement is not None and str(complement).strip() != ""
     connector = (body.get("connector") or "ordered") if has_complement else None
     direction = body.get("direction", "both")
+    # direction now derived from pattern signal value — not passed to backtest
     instrument_raw = body.get("instrument", "EUR/USD")
     interval = body.get("interval", "5m")
     indicator = body.get("indicator")
@@ -1058,6 +1035,7 @@ def api_session_check():
     anchor = body.get("anchor", "")
     complement = body.get("complement")
     direction = body.get("direction", "both")
+    # direction now derived from pattern signal value — not passed to backtest
     has_complement = complement is not None and str(complement).strip() != ""
     connector = (body.get("connector") or "ordered") if has_complement else None
     sl_mult = float(body.get("sl_multiplier", 1.0))
@@ -1074,12 +1052,6 @@ def api_session_check():
         return jsonify({"error": "Unknown instrument"}), 400
 
     pip = INSTRUMENTS[instrument]["pip"]
-
-    direction_val = 0
-    if direction == "long":
-        direction_val = 1
-    elif direction == "short":
-        direction_val = -1
 
     indicator_fn = _make_indicator_fn(indicator_filter) if indicator_filter else None
 
@@ -1099,7 +1071,6 @@ def api_session_check():
             timeout=timeout,
             session=sess,
             indicator_fn=indicator_fn,
-            direction_val=direction_val,
             sl_mult=sl_mult,
             tp_mult=tp_mult,
             instrument=instrument,
@@ -1721,6 +1692,7 @@ def api_strategy_pnl():
     tp_mult = float(body.get("tp_multiplier", 3.0))
     timeout = int(body.get("timeout", TIMEOUT))
     direction = body.get("direction", "both")
+    # direction now derived from pattern signal value — not passed to backtest
     session_filter = body.get("session_filter")
     complement = body.get("complement")
     if complement is not None and str(complement).strip() == "":
@@ -1764,12 +1736,6 @@ def api_strategy_pnl():
     if df.empty:
         return jsonify({"cum_net": 0.0, "signals": 0})
 
-    direction_val = 0
-    if direction == "long":
-        direction_val = 1
-    if direction == "short":
-        direction_val = -1
-
     result = _backtest_pattern(
         df,
         pip,
@@ -1778,7 +1744,6 @@ def api_strategy_pnl():
         session=session_filter,
         sl_mult=sl_mult,
         tp_mult=tp_mult,
-        direction_val=direction_val,
         instrument=instrument_label,
         complement=complement,
         connector=connector,
@@ -2135,7 +2100,6 @@ def _executor_compute_from_dataframe(
     anchor: str,
     complement: str | None,
     connector: str | None,
-    direction_str: str,
     session_filter: str | None,
     sl_mult: float,
     tp_mult: float,
@@ -2169,7 +2133,7 @@ def _executor_compute_from_dataframe(
         anchor,
         complement,
         connector,
-        direction_str,
+        "both",
         window=10,
     )
     n = len(ohlc)
@@ -2278,6 +2242,7 @@ def api_strategy_executor_pnl():
     if complement is not None:
         connector = body.get("connector") or "ordered"
     direction = body.get("direction", "both")
+    # direction now derived from pattern signal value — not passed to backtest
     session_filter = body.get("session_filter")
     sl_mult = float(body.get("sl_multiplier", 1.0))
     tp_mult = float(body.get("tp_multiplier", 3.0))
@@ -2302,12 +2267,6 @@ def api_strategy_executor_pnl():
 
     pip = float(meta["pip"])
 
-    direction_str = "both"
-    if direction == "long":
-        direction_str = "long"
-    elif direction == "short":
-        direction_str = "short"
-
     try:
         go_live_ts = pd.Timestamp(go_live_at, tz="UTC")
     except Exception:
@@ -2320,7 +2279,6 @@ def api_strategy_executor_pnl():
         anchor,
         complement,
         connector,
-        direction_str,
         session_filter,
         sl_mult,
         tp_mult,
