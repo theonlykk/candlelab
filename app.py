@@ -1912,17 +1912,19 @@ def _executor_read_continuous_series(oanda_instrument: str, go_live_ts: pd.Times
         ),
         quotes AS (
             SELECT DISTINCT ON (
-                date_trunc('minute', ts - interval '1 second')
+                date_trunc('minute', ts) - interval '5 minutes'
             )
-                date_trunc('minute', ts - interval '1 second') AS candle_time,
+                date_trunc('minute', ts) - interval '5 minutes' AS candle_time,
                 bid,
                 ask
             FROM executor_poll_log
             WHERE instrument = %s
-            AND ts >= %s
+            AND ts >= %s - interval '6 minutes'
             AND bid IS NOT NULL
             AND ask IS NOT NULL
-            ORDER BY date_trunc('minute', ts - interval '1 second') ASC, ts ASC
+            ORDER BY 
+                date_trunc('minute', ts) - interval '5 minutes' ASC,
+                ts ASC
         )
         SELECT
             c.candle_time,
