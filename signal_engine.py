@@ -19,6 +19,11 @@ SPREAD_COST_PIPS = {
     "AUD_USD": 0.8,
 }
 
+# Signal detection window constants (candle counts, M5 default)
+WINDOW_REVERSAL_PAIR = 10      # any-order search for two reversal patterns
+WINDOW_ORDERED = 10            # ordered search: reversal → continuation
+WINDOW_CONTINUATION_TAIL = 5  # continuation window after a confirmed reversal pair
+
 PATTERN_IDS: dict[str, int] = {
     "Hammer/Hanging Man": 137,
     "Shooting Star/Inv. Hammer": 203,
