@@ -23,7 +23,7 @@ from data import get_ohlc, INSTRUMENTS, _oanda_instrument_id
 from chart_renderer import render_trade_panels
 from backtest import compute_atr
 from patterns import detect_all, PATTERNS
-from signal_engine import detect_signal
+from signal_engine import detect_signal, SPREAD_COST_PIPS
 from cache import cache_set, cache_get
 from scheduler import start_scheduler
 from poll_log import init_candlelab_poll_log_table, read_poll_log_pg, read_poll_log_view_rows
@@ -398,8 +398,15 @@ def _simulate_trades(
             outcome   = "timeout_win" if exit_pips > 0 else "timeout_loss"
             exit_idx = i + nf
 
-        pnl_net = round(pnl_gross, 2)
-        is_win = outcome in ("win", "timeout_win")
+        pnl_pips_gross = (
+            (pnl_gross / (pip_val * lot_size)) if lot_size > 0 and pip_val > 0 else 0.0
+        )
+        instr_key = instrument.replace("/", "_")
+        spread = float(SPREAD_COST_PIPS.get(instr_key, 1.0))
+        net_pnl_pips = pnl_pips_gross - spread
+        result = "tp" if net_pnl_pips > 0 else "sl"
+        pnl_net = round(net_pnl_pips * pip_val * lot_size, 2)
+        is_win = net_pnl_pips > 0
 
         trades.append({
             "ts":        df.index[i],
@@ -417,6 +424,9 @@ def _simulate_trades(
             "win":       is_win,
             "pnl_gross": round(pnl_gross, 2),
             "pnl_net":   pnl_net,
+            "pnl_pips": round(net_pnl_pips, 1),
+            "spread_cost_pips": spread,
+            "result": result,
         })
 
     return trades

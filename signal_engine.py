@@ -9,6 +9,16 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+SPREAD_COST_PIPS = {
+    "GBP_USD": 1.2,
+    "USD_CAD": 1.1,
+    "USD_JPY": 1.0,
+    "USD_CHF": 1.0,
+    "NZD_USD": 1.0,
+    "EUR_USD": 0.9,
+    "AUD_USD": 0.8,
+}
+
 PATTERN_IDS: dict[str, int] = {
     "Doji": 101,
     "Hammer/Hanging Man": 137,
