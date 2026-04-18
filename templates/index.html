@@ -3520,7 +3520,12 @@ function buildLiveStratCard(l) {
         <div class="live-strat-stat-row"><span>Since live · clean only</span><span class="live-strat-stat-vals live-stat-clean">—</span></div>
       </div>
     </div>
-    <div style="margin-top:10px;">
+    <div style="margin-top:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      <a href="/chart/${l.id}" target="_blank"
+         style="font-size:12px; color:var(--accent);
+                text-decoration:none; padding:6px 10px;
+                border:1px solid var(--accent);
+                border-radius:6px;">Chart</a>
       <button type="button" class="btn-danger-outline" onclick="closeLiveStrat(${l.id}, this)">Close out</button>
     </div>`;
   const main = card.querySelector(".live-card-main");

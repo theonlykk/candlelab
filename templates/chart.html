@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ strategy_name }} — Chart</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 24px 20px 40px;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: #ffffff;
+      color: #212121;
+      max-width: 1200px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+    h1 {
+      font-size: 1.35rem;
+      font-weight: 600;
+      margin: 8px 0 16px;
+      color: #212121;
+    }
+    .meta {
+      font-size: 14px;
+      color: #555;
+      line-height: 1.6;
+      margin-bottom: 20px;
+    }
+    .meta span { display: block; }
+    a.back {
+      display: inline-block;
+      margin-bottom: 16px;
+      font-size: 15px;
+      color: #4caf50;
+      text-decoration: none;
+      font-weight: 600;
+    }
+    a.back:hover { text-decoration: underline; }
+    .chart-wrap {
+      width: 100%;
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1px solid #e0e0e0;
+    }
+    .chart-wrap img {
+      display: block;
+      width: 100%;
+      height: auto;
+      vertical-align: top;
+    }
+    .empty-note { color: #888; font-size: 14px; padding: 24px; text-align: center; }
+  </style>
+</head>
+<body>
+  <a class="back" href="javascript:history.back()">← Back</a>
+  <h1>{{ strategy_name }}</h1>
+  <div class="meta">
+    <span><strong>Instrument</strong> — {{ instrument }}</span>
+    <span><strong>Anchor</strong> — {{ anchor }}</span>
+    <span><strong>Complement</strong> — {{ complement }}</span>
+    <span><strong>Connector</strong> — {{ connector }}</span>
+    <span><strong>Go live</strong> — {{ go_live_at }}</span>
+  </div>
+  {% if chart_b64 %}
+  <div class="chart-wrap">
+    <img src="data:image/png;base64,{{ chart_b64 | safe }}" alt="Strategy chart" />
+  </div>
+  {% else %}
+  <p class="empty-note">Not enough OHLC data to render a chart yet.</p>
+  {% endif %}
+</body>
+</html>

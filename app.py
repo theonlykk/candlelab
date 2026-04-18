@@ -13,13 +13,14 @@ from collections import defaultdict
 import numpy as np
 import pandas as pd
 from datetime import datetime, timezone
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, abort
 
 import anthropic
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
 from data import get_ohlc, INSTRUMENTS, _oanda_instrument_id
+from chart_renderer import render_chart_with_trades
 from backtest import compute_atr
 from patterns import detect_all, PATTERNS
 from signal_engine import detect_signal
@@ -328,16 +329,23 @@ def _simulate_trades(
         if len(future_hi) == 0:
             continue
 
+        entry_idx = i + 1
+        nf = len(future_hi)
+        exit_idx = entry_idx
+
         outcome    = "timeout_loss"
         exit_price = float(future_cl[-1])
         pnl_gross  = 0.0
 
+        broke = False
         for j in range(len(future_hi)):
             if direction == 1:
                 if future_hi[j] >= tp:
                     outcome    = "win"
                     exit_price = float(tp)
                     pnl_gross  = round(tp_pips * pip_val * lot_size, 2)
+                    exit_idx = i + 1 + j
+                    broke = True
                     break
                 if future_cl[j] <= sl:
                     nx         = float(future_op_next[j]) if np.isfinite(future_op_next[j]) else float(future_cl[j])
@@ -346,12 +354,16 @@ def _simulate_trades(
                     sl_pips_actual = sl_pips  # already floored
                     slip_pips = direction * (float(nx) - float(sl)) / pip  # extra beyond SL level, negative = worse
                     pnl_gross = round((-RISK_DOLLARS) + (slip_pips * pip_val * lot_size), 2)
+                    exit_idx = i + 1 + j
+                    broke = True
                     break
             else:
                 if future_lo[j] <= tp:
                     outcome    = "win"
                     exit_price = float(tp)
                     pnl_gross  = round(tp_pips * pip_val * lot_size, 2)
+                    exit_idx = i + 1 + j
+                    broke = True
                     break
                 if future_cl[j] >= sl:
                     nx         = float(future_op_next[j]) if np.isfinite(future_op_next[j]) else float(future_cl[j])
@@ -360,11 +372,14 @@ def _simulate_trades(
                     sl_pips_actual = sl_pips  # already floored
                     slip_pips = direction * (float(nx) - float(sl)) / pip  # extra beyond SL level, negative = worse
                     pnl_gross = round((-RISK_DOLLARS) + (slip_pips * pip_val * lot_size), 2)
+                    exit_idx = i + 1 + j
+                    broke = True
                     break
-        else:
+        if not broke:
             exit_pips = direction * (exit_price - entry) / pip
             pnl_gross = round(exit_pips * pip_val * lot_size, 2)
             outcome   = "timeout_win" if exit_pips > 0 else "timeout_loss"
+            exit_idx = i + nf
 
         pnl_net = round(pnl_gross, 2)
         is_win = outcome in ("win", "timeout_win")
@@ -373,6 +388,9 @@ def _simulate_trades(
             "ts":        df.index[i],
             "signal":    direction,
             "entry":     entry,
+            "entry_idx": entry_idx,
+            "exit_idx":  exit_idx,
+            "entry_price": round(entry, 5),
             "atr":       trade_atr,
             "tp":        tp,
             "sl":        sl,
@@ -577,11 +595,183 @@ def _get_ai_tips(patterns_data: list, instrument: str) -> dict:
     return {}
 
 
+def _fetch_live_strategy_row(strategy_id: int) -> dict | None:
+    url = os.environ.get("DATABASE_URL")
+    if not url:
+        return None
+    conn = None
+    try:
+        conn = psycopg2.connect(url)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                "SELECT * FROM candlelab_strategies_live WHERE id = %s",
+                (int(strategy_id),),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+    except Exception:
+        log.exception("fetch live strategy %s", strategy_id)
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.route("/")
 def index():
     return render_template("index.html")
+
+
+@app.route("/chart/<int:strategy_id>")
+def strategy_chart(strategy_id):
+    init_strategy_tables()
+    row = _fetch_live_strategy_row(strategy_id)
+    if row is None:
+        abort(404)
+
+    instrument_label = _norm_instrument(row.get("instrument") or "EUR/USD")
+    if instrument_label not in INSTRUMENTS:
+        abort(404)
+
+    anchor = (row.get("anchor") or "").strip()
+    if not anchor or anchor not in PATTERNS:
+        abort(404)
+
+    complement = row.get("complement")
+    if complement is not None and str(complement).strip() == "":
+        complement = None
+    connector = None
+    if complement is not None:
+        connector = row.get("connector") or "ordered"
+
+    interval = row.get("interval") or "5m"
+    direction_raw = (row.get("direction") or "both").strip().lower()
+    if direction_raw in ("reversal", "trend"):
+        direction_raw = "both"
+    direction_str = direction_raw if direction_raw in ("long", "short", "both") else "both"
+
+    direction_val = 0
+    if direction_str == "long":
+        direction_val = 1
+    elif direction_str == "short":
+        direction_val = -1
+
+    session_filter = row.get("session")
+    if session_filter is not None:
+        sstr = str(session_filter).strip()
+        if not sstr or sstr.lower() in ("all", "all sessions"):
+            session_filter = None
+        else:
+            session_filter = sstr
+
+    sl_mult = float(row.get("sl_mult") or 1.0)
+    tp_mult = float(row.get("tp_mult") or 3.0)
+    timeout = int(row.get("timeout") or TIMEOUT)
+
+    pip = float(INSTRUMENTS[instrument_label]["pip"])
+
+    try:
+        go_live_ts = pd.Timestamp(row.get("go_live_at"))
+        if go_live_ts.tzinfo is None:
+            go_live_ts = go_live_ts.tz_localize("UTC")
+        else:
+            go_live_ts = go_live_ts.tz_convert("UTC")
+    except Exception:
+        abort(404)
+
+    oanda_id = _oanda_instrument_id(instrument_label)
+    live_df = _executor_read_continuous_series(oanda_id, go_live_ts)
+
+    try:
+        pre_live_df = get_ohlc(instrument_label, days=30, interval=interval)
+    except Exception:
+        pre_live_df = pd.DataFrame()
+
+    frames = []
+    if pre_live_df is not None and not pre_live_df.empty:
+        frames.append(pre_live_df)
+    if live_df is not None and not live_df.empty:
+        frames.append(live_df)
+
+    df = pd.DataFrame()
+    if frames:
+        df = pd.concat(frames)
+        df = df[~df.index.duplicated(keep="last")]
+        df = df.sort_index()
+
+    chart_b64 = ""
+    comp_disp = "—"
+    conn_disp = "—"
+
+    if not df.empty:
+        signals_df = detect_all(df)
+        sig_array = detect_signal(
+            signals_df,
+            anchor,
+            complement,
+            connector,
+            direction_str,
+            window=10,
+        )
+
+        anchor_signals = (
+            signals_df[anchor].to_numpy(dtype=np.int8, copy=True)
+            if anchor in signals_df.columns
+            else np.zeros(len(df), dtype=np.int8)
+        )
+        if complement and complement in signals_df.columns:
+            complement_signals = signals_df[complement].to_numpy(dtype=np.int8, copy=True)
+            comp_disp = complement
+            conn_disp = connector or "ordered"
+        else:
+            complement_signals = np.zeros(len(df), dtype=np.int8)
+
+        atr = compute_atr(df)
+        signals_series = pd.Series(np.asarray(sig_array, dtype=np.int8), index=df.index)
+
+        trades = _simulate_trades(
+            df,
+            signals_series,
+            atr,
+            pip,
+            sl_mult,
+            tp_mult,
+            timeout,
+            session=session_filter,
+            indicator_fn=None,
+            direction_val=direction_val,
+            instrument=instrument_label,
+        )
+
+        chart_b64 = render_chart_with_trades(
+            df,
+            anchor_signals,
+            complement_signals,
+            sig_array,
+            trades,
+            pip,
+        )
+
+    strategy_name = (row.get("strategy_name") or "Strategy").strip() or "Strategy"
+    gl_str = ""
+    raw_gl = row.get("go_live_at")
+    try:
+        gl_str = pd.Timestamp(raw_gl).strftime("%Y-%m-%d %H:%M UTC") if raw_gl else "—"
+    except Exception:
+        gl_str = str(raw_gl or "—")
+
+    return render_template(
+        "chart.html",
+        strategy_name=strategy_name,
+        instrument=instrument_label,
+        anchor=anchor,
+        complement=comp_disp,
+        connector=conn_disp,
+        go_live_at=gl_str,
+        chart_b64=chart_b64,
+    )
 
 
 @app.route("/api/patterns")

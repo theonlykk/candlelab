@@ -509,6 +509,80 @@ def _draw_trade_entry_markers(
             )
 
 
+def _draw_muted_direction_triangles(
+    ax,
+    x: np.ndarray,
+    highs: np.ndarray,
+    lows: np.ndarray,
+    sig,
+    pip: float | None,
+    rgba: tuple[float, float, float, float],
+) -> None:
+    """Small muted triangles at anchor/complement fires (+1 below, −1 above)."""
+    n = len(x)
+    arr = np.asarray(sig, dtype=np.int8).ravel()
+    if len(arr) < n:
+        arr = np.pad(arr, (0, n - len(arr)), constant_values=0)
+    else:
+        arr = arr[:n]
+    if pip is not None and pip > 0:
+        off = 3.0 * float(pip)
+    else:
+        rng = float(np.nanmax(highs) - np.nanmin(lows))
+        off = max(rng * 0.002, 1e-12)
+    for i in range(n):
+        s = int(arr[i])
+        if s == 1:
+            ax.scatter(
+                float(x[i]),
+                float(lows[i] - off),
+                marker="^",
+                s=72,
+                facecolors=rgba,
+                edgecolors="none",
+                linewidths=0,
+                zorder=4,
+            )
+        elif s == -1:
+            ax.scatter(
+                float(x[i]),
+                float(highs[i] + off),
+                marker="v",
+                s=72,
+                facecolors=rgba,
+                edgecolors="none",
+                linewidths=0,
+                zorder=4,
+            )
+
+
+def _draw_trade_l_arrows(ax, trades: list, n_bars: int) -> None:
+    """Black dotted L-shape entry→exit with circle at exit (green win / red loss)."""
+    for t in trades or []:
+        try:
+            ei = int(t.get("entry_idx", -1))
+            xi = int(t.get("exit_idx", -1))
+            ep = float(t.get("entry_price", t.get("entry", 0)))
+            xp = float(t.get("exit_price", 0))
+            win = bool(t.get("win", False))
+        except (TypeError, ValueError):
+            continue
+        ei = max(0, min(ei, n_bars - 1))
+        xi = max(0, min(xi, n_bars - 1))
+        ax.plot([ei, xi], [ep, ep], linestyle=":", color="black", linewidth=1.0, zorder=6)
+        ax.plot([xi, xi], [ep, xp], linestyle=":", color="black", linewidth=1.0, zorder=6)
+        col = "#4caf50" if win else "#ef5350"
+        ax.scatter(
+            [float(xi)],
+            [xp],
+            s=49,
+            facecolors=col,
+            edgecolors="black",
+            linewidths=0.6,
+            zorder=7,
+        )
+
+
 def render_equity_chart(
     full_df: pd.DataFrame,
     equity_x: np.ndarray,
@@ -693,12 +767,14 @@ def render_chart(window_df: pd.DataFrame,
                  full_len: int = 0,
                  show_volume: bool = True,
                  signals: np.ndarray | None = None,
-                 pip: float | None = None) -> tuple[str, dict]:
+                 pip: float | None = None,
+                 overlay_callback=None) -> tuple[str, dict]:
     """
     Price, indicators, and optional volume. No equity panel.
     When full_len > 1, a subtle axes-fraction band on the price panel shows
     where [window_start, window_end) sits in the full backtest.
     Optional `signals` (per-bar int8, window length) draws entry markers; `pip` scales offset.
+    Optional ``overlay_callback(ax_price, x, highs, lows, window_df)`` runs after price markers.
     Returns (image_base64, candle_map).
 
     Layout: Price (8), then each active indicator panel (3 each), optional volume (2).
@@ -1178,6 +1254,9 @@ def render_chart(window_df: pd.DataFrame,
     if bottom_dt is not ax_price:
         ax_price.tick_params(axis="x", labelbottom=False)
 
+    if overlay_callback is not None:
+        overlay_callback(ax_price, x, highs, lows, window_df)
+
     # ── Extract candle_map ───────────────────────────────────────────────────
     fig.canvas.draw()
     candle_map = {}
@@ -1203,3 +1282,56 @@ def render_chart(window_df: pd.DataFrame,
     image_b64 = base64.b64encode(buf.read()).decode("utf-8")
     plt.close(fig)
     return image_b64, candle_map
+
+
+def render_chart_with_trades(
+    df: pd.DataFrame,
+    anchor_sigs,
+    complement_sigs,
+    combo_sigs,
+    trades,
+    pip: float | None,
+) -> str:
+    """
+    Price chart with combo entry markers, muted anchor/complement triangles, and trade L-arrows.
+    Returns base64 PNG string only.
+    """
+    n = len(df)
+    if n == 0:
+        img_b64, _ = render_chart(
+            df,
+            [],
+            [],
+            window_start=0,
+            window_end=0,
+            full_len=0,
+            show_volume=False,
+            signals=None,
+            pip=pip,
+            overlay_callback=None,
+        )
+        return img_b64
+    trades_list = list(trades or [])
+    muted_green = (76 / 255, 175 / 255, 80 / 255, 0.4)
+    muted_blue = (100 / 255, 149 / 255, 237 / 255, 0.4)
+
+    def overlay(ax_price, x, highs, lows, window_df):
+        _draw_muted_direction_triangles(ax_price, x, highs, lows, anchor_sigs, pip, muted_green)
+        _draw_muted_direction_triangles(ax_price, x, highs, lows, complement_sigs, pip, muted_blue)
+        _draw_trade_l_arrows(ax_price, trades_list, n)
+
+    combo = np.asarray(combo_sigs, dtype=np.int8).ravel()
+    ne = max(1, n)
+    img_b64, _ = render_chart(
+        df,
+        [],
+        [],
+        window_start=0,
+        window_end=ne,
+        full_len=ne,
+        show_volume="volume" in df.columns,
+        signals=combo,
+        pip=pip,
+        overlay_callback=overlay,
+    )
+    return img_b64
