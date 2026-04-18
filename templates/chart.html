@@ -60,6 +60,9 @@
     <span><strong>Anchor</strong> — {{ anchor }}</span>
     <span><strong>Complement</strong> — {{ complement }}</span>
     <span><strong>Connector</strong> — {{ connector }}</span>
+    {% if indicator_type %}
+    <p><strong>Indicator</strong> — {{ indicator_type }}</p>
+    {% endif %}
     <span><strong>Go live</strong> — {{ go_live_at }}</span>
   </div>
   {% if chart_b64 %}

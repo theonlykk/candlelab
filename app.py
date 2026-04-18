@@ -722,6 +722,7 @@ def strategy_chart(strategy_id):
     chart_b64 = ""
     comp_disp = "—"
     conn_disp = "—"
+    indicator_type = _indicator_type_string_for_chart(row.get("indicator_filter"))
 
     if not df.empty:
         signals_df = detect_all(df)
@@ -755,7 +756,6 @@ def strategy_chart(strategy_id):
             instrument=instrument_label,
         )
 
-        indicator_type_chart = _indicator_type_string_for_chart(row.get("indicator_filter"))
         ma_live_map = _executor_read_ma_live_map_from_poll_log(oanda_id, go_live_ts)
         ma_fast_series, ma_slow_series = _chart_ma_series_aligned(
             df, pre_live_df, ma_live_map
@@ -768,7 +768,7 @@ def strategy_chart(strategy_id):
             signals_df=signals_df,
             anchor=anchor,
             complement=complement or None,
-            indicator_type=indicator_type_chart,
+            indicator_type=indicator_type,
             go_live_at=go_live_ts,
             ma_fast_series=ma_fast_series,
             ma_slow_series=ma_slow_series,
@@ -789,6 +789,7 @@ def strategy_chart(strategy_id):
         anchor=anchor,
         complement=comp_disp,
         connector=conn_disp,
+        indicator_type=indicator_type,
         go_live_at=gl_str,
         chart_b64=chart_b64,
     )
