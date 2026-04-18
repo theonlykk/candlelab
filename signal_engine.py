@@ -60,7 +60,7 @@ def get_pass_order(anchor: str, complement: str) -> tuple[str, str]:
 
 
 def _connector_is_any_order(connector: str | None) -> bool:
-    """True for bidirectional window pairing; ordered uses backward-only pairing."""
+    """True when Pass 2 should run (reverse pairing); ordered uses Pass 1 only."""
     if connector is None or str(connector).strip() == "":
         return False
     c = str(connector).strip().lower().replace("_", "-")
@@ -101,11 +101,11 @@ def run_ring_buffer(
     (detect_signal reorders via get_pass_order before calling.)
 
     connector \"ordered\": complement bar at m pairs only with the other pattern at
-    an earlier bar t < m (backward ring scan).
+    an earlier bar t < m (backward ring scan). Pass 1 only.
 
-    connector \"any-order\" / \"optional\": allow pairing within the window before
-    or after m — backward scan plus a forward scan on the raw pattern arrays (the
-    ring buffer only holds history behind m).
+    connector \"any-order\" / \"optional\": Pass 1 + Pass 2 (roles reversed). Both
+    patterns must already appear in history before the signal bar; no sequence
+    requirement between pattern IDs beyond what each pass encodes.
     """
     n = anchor_arr.shape[0]
     out = np.zeros(n, dtype=np.int8)
@@ -153,74 +153,41 @@ def run_ring_buffer(
                         paired = True
                         break
                 k += 1
-            if not paired and any_order:
-                k = 1
-                while k <= window:
-                    t = m + k
-                    if t >= n:
-                        break
-                    if w_first[t] != 0:
-                        pass1_sig[m] = sv
-                        w_first[t] = 0
-                        w_second[m] = 0
-                        j = t % window
-                        if last_t[j] == t:
-                            buf[j] = 0
-                            last_t[j] = -1
-                        paired = True
-                        break
-                    k += 1
         m += 1
 
-    buf2 = np.zeros(window, dtype=np.int8)
-    last_t2 = np.full(window, -1, dtype=np.int32)
     pass2_sig = np.zeros(n, dtype=np.int8)
+    if any_order:
+        buf2 = np.zeros(window, dtype=np.int8)
+        last_t2 = np.full(window, -1, dtype=np.int32)
 
-    m = 0
-    while m < n:
-        idx = m % window
-        buf2[idx] = w_second[m]
-        last_t2[idx] = m
+        m = 0
+        while m < n:
+            idx = m % window
+            buf2[idx] = w_second[m]
+            last_t2[idx] = m
 
-        fv = w_first[m]
-        p1 = pass1_sig[m]
-        if fv != 0 and p1 == 0:
-            paired = False
-            k = 1
-            while k <= window:
-                t = m - k
-                if t < 0:
-                    break
-                j = t % window
-                if last_t2[j] == t:
-                    bv = buf2[j]
-                    if bv != 0:
-                        pass2_sig[m] = fv
-                        buf2[j] = 0
-                        last_t2[j] = -1
-                        w_second[t] = 0
-                        w_first[m] = 0
-                        paired = True
-                        break
-                k += 1
-            if not paired and any_order:
+            fv = w_first[m]
+            p1 = pass1_sig[m]
+            if fv != 0 and p1 == 0:
+                paired = False
                 k = 1
                 while k <= window:
-                    t = m + k
-                    if t >= n:
+                    t = m - k
+                    if t < 0:
                         break
-                    if w_second[t] != 0:
-                        pass2_sig[m] = fv
-                        w_second[t] = 0
-                        w_first[m] = 0
-                        j = t % window
-                        if last_t2[j] == t:
+                    j = t % window
+                    if last_t2[j] == t:
+                        bv = buf2[j]
+                        if bv != 0:
+                            pass2_sig[m] = fv
                             buf2[j] = 0
                             last_t2[j] = -1
-                        paired = True
-                        break
+                            w_second[t] = 0
+                            w_first[m] = 0
+                            paired = True
+                            break
                     k += 1
-        m += 1
+            m += 1
 
     i = 0
     while i < n:
