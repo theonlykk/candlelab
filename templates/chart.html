@@ -65,25 +65,7 @@
   {% if chart_b64 %}
   <div style="overflow-x:auto; overflow-y:hidden; width:100%;">
     <img src="data:image/png;base64,{{ chart_b64 | safe }}" alt="Strategy chart"
-         data-live-start="{{ go_live_idx }}" data-total="{{ total_candles }}"
-         style="height:600px; width:auto; display:block; max-width:none;" />
-    <script>
-      (function () {
-        const img = document.querySelector("img[data-live-start]");
-        if (!img) return;
-        function scrollToLive() {
-          const liveStart = parseInt(img.dataset.liveStart, 10);
-          const totalCandles = parseInt(img.dataset.total, 10);
-          if (!Number.isFinite(liveStart) || !Number.isFinite(totalCandles) || totalCandles <= 0) return;
-          const imgWidth = img.naturalWidth;
-          if (!imgWidth) return;
-          const scrollX = Math.max(0, (liveStart / totalCandles) * imgWidth - 200);
-          if (img.parentElement) img.parentElement.scrollLeft = scrollX;
-        }
-        if (img.complete) scrollToLive();
-        else img.addEventListener("load", scrollToLive);
-      })();
-    </script>
+         style="height:400px; width:auto; display:block; max-width:none;" />
   </div>
   {% else %}
   <p class="empty-note">Not enough OHLC data to render a chart yet.</p>

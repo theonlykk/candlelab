@@ -1396,3 +1396,140 @@ def render_chart_with_trades(
         x_axis_daily_only=True,
     )
     return img_b64
+
+
+def render_trade_panels(df: pd.DataFrame, trades, pip: float, instrument: str) -> str:
+    """
+    Horizontal strip of OHLC panels, one column per trade, with L-shaped entry/exit overlay.
+    ``pip`` / ``instrument`` kept for API parity with other chart entrypoints.
+    """
+    _ = pip, instrument
+
+    def _png_no_trades(msg: str = "No trades") -> str:
+        fig, ax = plt.subplots(1, 1, figsize=(4, 2.5), facecolor=C_BG)
+        ax.set_facecolor(C_BG)
+        ax.text(
+            0.5,
+            0.5,
+            msg,
+            ha="center",
+            va="center",
+            transform=ax.transAxes,
+            fontsize=14,
+            color=C_TEXT,
+        )
+        ax.axis("off")
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", dpi=EXPORT_DPI, facecolor=C_BG)
+        buf.seek(0)
+        plt.close(fig)
+        return base64.b64encode(buf.read()).decode("utf-8")
+
+    trades_list = list(trades or [])
+    n_df = len(df)
+    if n_df == 0:
+        return _png_no_trades()
+
+    valid: list[dict] = []
+    for t in trades_list:
+        try:
+            ei = int(t["entry_idx"])
+            xi = int(t["exit_idx"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if ei < 0 or xi < 0 or ei >= n_df or xi >= n_df:
+            continue
+        valid.append(t)
+
+    if not valid:
+        return _png_no_trades()
+
+    pre_candles = 25
+    post_candles = 10
+    panel_width = 3.5
+    n_trades = len(valid)
+    fig_width = n_trades * panel_width
+    fig_height = 4.0
+    fig, axes = plt.subplots(1, n_trades, figsize=(fig_width, fig_height), facecolor=C_BG)
+    if n_trades == 1:
+        axes = [axes]
+
+    for ax, trade in zip(axes, valid):
+        ei = int(trade["entry_idx"])
+        xi = int(trade["exit_idx"])
+        ep = float(trade.get("entry_price", trade.get("entry", 0)))
+        xp = float(trade.get("exit_price", 0))
+        win = bool(trade.get("win", False))
+
+        start = max(0, ei - pre_candles)
+        end = min(n_df, xi + post_candles)
+        if start >= end:
+            start = max(0, min(ei, n_df - 1))
+            end = min(n_df, xi + 1)
+        panel_df = df.iloc[start:end]
+        if panel_df.empty:
+            ax.axis("off")
+            continue
+
+        opens = panel_df["open"].to_numpy(dtype=float)
+        highs = panel_df["high"].to_numpy(dtype=float)
+        lows = panel_df["low"].to_numpy(dtype=float)
+        closes = panel_df["close"].to_numpy(dtype=float)
+
+        bg = (
+            (76 / 255, 175 / 255, 80 / 255, 0.05)
+            if win
+            else (239 / 255, 83 / 255, 80 / 255, 0.05)
+        )
+        ax.set_facecolor(bg)
+
+        _draw_candles(ax, opens, highs, lows, closes)
+
+        entry_x = float(ei - start)
+        exit_x = float(xi - start)
+
+        ax.plot(
+            [entry_x, exit_x],
+            [ep, ep],
+            color="black",
+            linestyle=":",
+            linewidth=1,
+            zorder=4,
+        )
+        ax.plot(
+            [exit_x, exit_x],
+            [ep, xp],
+            color="black",
+            linestyle=":",
+            linewidth=1,
+            zorder=4,
+        )
+        exit_col = "#4caf50" if win else "#ef5350"
+        ax.scatter([exit_x], [xp], s=80, c=exit_col, edgecolors="black", linewidths=0.5, zorder=5)
+        ax.scatter([entry_x], [ep], s=25, c="black", zorder=5)
+
+        try:
+            ts = df.index[ei]
+            if not isinstance(ts, pd.Timestamp):
+                ts = pd.Timestamp(ts)
+            ax.set_title(ts.strftime("%d/%m %H:%M"), fontsize=10, color=C_TEXT)
+        except Exception:
+            pass
+
+        lo = float(np.nanmin(lows))
+        hi = float(np.nanmax(highs))
+        span = hi - lo
+        pad = span * 0.1 if span > 0 else max(abs(hi) * 0.001, 1e-9)
+        ax.set_ylim(lo - pad, hi + pad)
+
+        ax.set_xlim(-0.5, len(panel_df) - 0.5)
+        ax.tick_params(axis="x", labelbottom=False)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+
+    plt.tight_layout(pad=0.5)
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=EXPORT_DPI, facecolor=C_BG)
+    buf.seek(0)
+    plt.close(fig)
+    return base64.b64encode(buf.read()).decode("utf-8")

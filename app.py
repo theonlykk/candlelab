@@ -20,7 +20,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 
 from data import get_ohlc, INSTRUMENTS, _oanda_instrument_id
-from chart_renderer import render_chart_with_trades
+from chart_renderer import render_trade_panels
 from backtest import compute_atr
 from patterns import detect_all, PATTERNS
 from signal_engine import detect_signal
@@ -626,7 +626,7 @@ def index():
 
 @app.route("/chart/<int:strategy_id>")
 def strategy_chart(strategy_id):
-    """Live strategy PNG: wide scrollable candles, combo signals, trade overlays (`render_chart_with_trades`)."""
+    """Live strategy PNG: per-trade OHLC panels (`render_trade_panels`)."""
     init_strategy_tables()
     row = _fetch_live_strategy_row(strategy_id)
     if row is None:
@@ -702,21 +702,6 @@ def strategy_chart(strategy_id):
         df = df[~df.index.duplicated(keep="last")]
         df = df.sort_index()
 
-    total_candles = len(df)
-    go_live_idx = 0
-    if total_candles > 0:
-        for i, ts in enumerate(df.index):
-            t = pd.Timestamp(ts)
-            if t.tzinfo is None:
-                t = t.tz_localize("UTC")
-            else:
-                t = t.tz_convert("UTC")
-            if t >= go_live_ts:
-                go_live_idx = i
-                break
-        else:
-            go_live_idx = total_candles
-
     chart_b64 = ""
     comp_disp = "—"
     conn_disp = "—"
@@ -732,17 +717,9 @@ def strategy_chart(strategy_id):
             window=10,
         )
 
-        anchor_signals = (
-            signals_df[anchor].to_numpy(dtype=np.int8, copy=True)
-            if anchor in signals_df.columns
-            else np.zeros(len(df), dtype=np.int8)
-        )
         if complement and complement in signals_df.columns:
-            complement_signals = signals_df[complement].to_numpy(dtype=np.int8, copy=True)
             comp_disp = complement
             conn_disp = connector or "ordered"
-        else:
-            complement_signals = np.zeros(len(df), dtype=np.int8)
 
         atr = compute_atr(df)
         signals_series = pd.Series(np.asarray(sig_array, dtype=np.int8), index=df.index)
@@ -761,14 +738,7 @@ def strategy_chart(strategy_id):
             instrument=instrument_label,
         )
 
-        chart_b64 = render_chart_with_trades(
-            df,
-            anchor_signals,
-            complement_signals,
-            sig_array,
-            trades,
-            pip,
-        )
+        chart_b64 = render_trade_panels(df, trades, pip, instrument_label)
 
     strategy_name = (row.get("strategy_name") or "Strategy").strip() or "Strategy"
     gl_str = ""
@@ -787,8 +757,6 @@ def strategy_chart(strategy_id):
         connector=conn_disp,
         go_live_at=gl_str,
         chart_b64=chart_b64,
-        go_live_idx=go_live_idx,
-        total_candles=total_candles,
     )
 
 
