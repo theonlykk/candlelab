@@ -2265,8 +2265,10 @@ def _executor_compute_from_dataframe(
 
         # Raw entry: next bar open, no spread adjustment
         entry_raw = float(ohlc["open"].iloc[i + 1])
-        sl_r = entry_raw - direction_val * sl_mult * trade_atr
-        tp_r = entry_raw + direction_val * tp_mult * trade_atr
+        sl_dist = _sl_distance_price(trade_atr, pip)
+        tp_dist = sl_dist * (tp_mult / sl_mult)
+        sl_r = entry_raw - direction_val * sl_dist
+        tp_r = entry_raw + direction_val * tp_dist
 
         # All entries: use actual ask (BUY) or bid (SELL) at bar i+1
         # Use i+1 quote — this is the bar we actually transact on
