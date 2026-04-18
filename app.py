@@ -236,9 +236,10 @@ def _patterns_for_direction(direction: str) -> list:
 
 _SESSION_HOURS = {
     "London":   (8, 17),
-    "New York": (13, 22),
+    "New York": (13, 21),
     "Asian":    (0, 9),
     "Overlap":  (13, 17),
+    "NY Close": (21, 23),
 }
 
 
@@ -1112,6 +1113,7 @@ def api_session_check():
         "new_york": _one("New York"),
         "asian": _one("Asian"),
         "overlap": _one("Overlap"),
+        "ny_close": _one("NY Close"),
         "all": _one(None),
     }
     return jsonify(out)

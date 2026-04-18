@@ -380,6 +380,14 @@
     padding: 14px 12px;
   }
   .session-all { grid-column: 1 / -1; }
+  .session-warning {
+    border-color: #f59e0b;
+    background: rgba(245, 158, 11, 0.06);
+  }
+  .session-warning.selected {
+    background: #f59e0b;
+    color: #fff;
+  }
   .session-card-stat {
     display: block;
     font-size: 11px;
@@ -1085,7 +1093,7 @@
   <!-- Step 7: Session filter -->
   <div class="step" id="step-7">
     <div class="step-title">Choose a session</div>
-    <div class="step-subtitle">Most traders choose All Sessions to start, and that's fine. Once you have some results you can come back and narrow to specific sessions to sharpen the edge.</div>
+    <div class="step-subtitle">Most traders choose All Sessions to start, and that's fine. NY Close (21:00–23:00 UTC) is flagged — spreads widen significantly at that hour and signal quality drops.</div>
     <div class="session-grid">
       <button class="big-btn" data-session="London" onclick="selectSession(this)">
         <span class="big-btn-title">London</span>
@@ -1094,7 +1102,7 @@
       </button>
       <button class="big-btn" data-session="New York" onclick="selectSession(this)">
         <span class="big-btn-title">New York</span>
-        <span class="big-btn-sub">13:00 – 22:00 UTC</span>
+        <span class="big-btn-sub">13:00 – 21:00 UTC</span>
         <span class="session-card-stat" data-stat-key="new_york">...</span>
       </button>
       <button class="big-btn" data-session="Asian" onclick="selectSession(this)">
@@ -1106,6 +1114,11 @@
         <span class="big-btn-title">Overlap</span>
         <span class="big-btn-sub">13:00 – 17:00 UTC</span>
         <span class="session-card-stat" data-stat-key="overlap">...</span>
+      </button>
+      <button class="big-btn session-warning" data-session="NY Close" onclick="selectSession(this)">
+        <span class="big-btn-title">NY Close</span>
+        <span class="big-btn-sub">21:00 – 23:00 UTC · Wide spreads</span>
+        <span class="session-card-stat" data-stat-key="ny_close">...</span>
       </button>
       <button class="big-btn session-all selected" data-session="All" onclick="selectSession(this)">
         <span class="big-btn-title">✓ All Sessions</span>
