@@ -87,10 +87,11 @@ def _ensure_draft_live_tables(cur) -> None:
             strategy_name VARCHAR(200),
             instrument VARCHAR(20),
             interval VARCHAR(10),
-            anchor VARCHAR(100),
-            complement VARCHAR(100),
+            strategy_type VARCHAR(20),
+            pattern_1 VARCHAR(100),
+            pattern_2 VARCHAR(100),
+            continuation VARCHAR(100),
             connector VARCHAR(20),
-            direction VARCHAR(10),
             session VARCHAR(20),
             sl_mult DOUBLE PRECISION,
             tp_mult DOUBLE PRECISION,
@@ -100,6 +101,15 @@ def _ensure_draft_live_tables(cur) -> None:
             closed_at TIMESTAMPTZ,
             saved_at TIMESTAMPTZ DEFAULT NOW()
         );
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE candlelab_strategies_live
+            ADD COLUMN IF NOT EXISTS strategy_type VARCHAR(20),
+            ADD COLUMN IF NOT EXISTS pattern_1 VARCHAR(100),
+            ADD COLUMN IF NOT EXISTS pattern_2 VARCHAR(100),
+            ADD COLUMN IF NOT EXISTS continuation VARCHAR(100);
         """
     )
     cur.execute(
@@ -113,10 +123,11 @@ def _ensure_draft_live_tables(cur) -> None:
             strategy_name VARCHAR(200),
             instrument VARCHAR(20),
             interval VARCHAR(10),
-            anchor VARCHAR(100),
-            complement VARCHAR(100),
+            strategy_type VARCHAR(20),
+            pattern_1 VARCHAR(100),
+            pattern_2 VARCHAR(100),
+            continuation VARCHAR(100),
             connector VARCHAR(20),
-            direction VARCHAR(10),
             session VARCHAR(20),
             sl_mult DOUBLE PRECISION,
             tp_mult DOUBLE PRECISION,
@@ -127,24 +138,15 @@ def _ensure_draft_live_tables(cur) -> None:
         );
         """
     )
-    for _tbl in ("candlelab_strategies_draft", "candlelab_strategies_live"):
-        for _col, _typ in (
-            ("strategy_type", "VARCHAR(20)"),
-            ("pattern_1", "VARCHAR(100)"),
-            ("pattern_2", "VARCHAR(100)"),
-            ("continuation", "VARCHAR(100)"),
-        ):
-            cur.execute(
-                """
-                SELECT 1 FROM information_schema.columns
-                WHERE table_schema = 'public' AND table_name = %s AND column_name = %s
-                """,
-                (_tbl, _col),
-            )
-            if not cur.fetchone():
-                cur.execute(
-                    f'ALTER TABLE {_tbl} ADD COLUMN {_col} {_typ}'
-                )
+    cur.execute(
+        """
+        ALTER TABLE candlelab_strategies_draft
+            ADD COLUMN IF NOT EXISTS strategy_type VARCHAR(20),
+            ADD COLUMN IF NOT EXISTS pattern_1 VARCHAR(100),
+            ADD COLUMN IF NOT EXISTS pattern_2 VARCHAR(100),
+            ADD COLUMN IF NOT EXISTS continuation VARCHAR(100);
+        """
+    )
 
 
 def _verify_user_pin(cur, username: str, pin: str) -> bool:
@@ -316,28 +318,14 @@ def lifecycle_promote_live(body: dict) -> tuple[dict, int]:
         if not dr:
             return {"error": "draft_not_found"}, 404
         dr = dict(dr)
-        pattern_1 = dr.get("pattern_1") or dr.get("anchor") or ""
-        pattern_2 = dr.get("pattern_2") if dr.get("pattern_2") is not None else dr.get("complement")
-        continuation = dr.get("continuation")
-        strategy_type = dr.get("strategy_type")
-        if not strategy_type:
-            d0 = str(dr.get("direction") or "").strip().lower()
-            strategy_type = "continuation" if d0 == "trend" else "reversal"
-        else:
-            strategy_type = str(strategy_type).strip()
-        conn_store = dr.get("connector") or _derive_connector(pattern_2, continuation) or _connector_for_persist(
-            pattern_2 or continuation, dr.get("connector")
-        )
-        comp_legacy = pattern_2 if _complement_present(pattern_2) else continuation
         ind = dr.get("indicator_filter")
         cur.execute(
             """
             INSERT INTO candlelab_strategies_live (
                 username, strategy_name, instrument, interval,
                 strategy_type, pattern_1, pattern_2, continuation,
-                connector, session, sl_mult, tp_mult, timeout, indicator_filter,
-                anchor, complement, direction
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                connector, session, sl_mult, tp_mult, timeout, indicator_filter
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             RETURNING id
             """,
             (
@@ -345,19 +333,16 @@ def lifecycle_promote_live(body: dict) -> tuple[dict, int]:
                 dr.get("strategy_name"),
                 dr.get("instrument"),
                 dr.get("interval"),
-                strategy_type,
-                pattern_1,
-                pattern_2,
-                continuation,
-                conn_store,
+                dr.get("strategy_type") or "reversal",
+                dr.get("pattern_1") or "",
+                dr.get("pattern_2"),
+                dr.get("continuation"),
+                _derive_connector(dr.get("pattern_2"), dr.get("continuation")),
                 dr.get("session") or "All",
                 float(dr.get("sl_mult") or 1.0),
                 float(dr.get("tp_mult") or 3.0),
                 int(dr.get("timeout") or 1000),
                 Json(ind) if ind is not None else None,
-                pattern_1,
-                comp_legacy,
-                strategy_type,
             ),
         )
         live_row = cur.fetchone()
@@ -440,7 +425,7 @@ def lifecycle_list_my_strategies(username: str, pin: str) -> tuple[dict, int]:
             """
             SELECT id, username, strategy_name, instrument, interval,
                    strategy_type, pattern_1, pattern_2, continuation,
-                   anchor, complement, connector, direction, session, sl_mult, tp_mult, timeout,
+                   connector, session, sl_mult, tp_mult, timeout,
                    indicator_filter, saved_at, edited_from_live_id
             FROM candlelab_strategies_draft
             WHERE username=%s
@@ -453,7 +438,7 @@ def lifecycle_list_my_strategies(username: str, pin: str) -> tuple[dict, int]:
             """
             SELECT id, username, strategy_name, instrument, interval,
                    strategy_type, pattern_1, pattern_2, continuation,
-                   anchor, complement, connector, direction, session, sl_mult, tp_mult, timeout,
+                   connector, session, sl_mult, tp_mult, timeout,
                    indicator_filter, go_live_at, closed_at, saved_at
             FROM candlelab_strategies_live
             WHERE username=%s AND closed_at IS NULL
@@ -479,8 +464,8 @@ def list_open_live_for_instrument(instrument_label: str) -> list[dict]:
         cur.execute(
             """
             SELECT id, strategy_name,
-                   pattern_1, pattern_2, continuation, anchor, complement,
-                   connector, direction, interval
+                   strategy_type, pattern_1, pattern_2, continuation,
+                   connector, interval
             FROM candlelab_strategies_live
             WHERE closed_at IS NULL AND instrument = %s
             ORDER BY id ASC
