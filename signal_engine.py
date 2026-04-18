@@ -246,6 +246,67 @@ def run_ring_buffer(
     return out
 
 
+def run_ring_buffer_type4(
+    pattern1_arr: np.ndarray,
+    pattern2_arr: np.ndarray,
+    continuation_arr: np.ndarray,
+    window_pair: int = WINDOW_REVERSAL_PAIR,
+    window_tail: int = WINDOW_CONTINUATION_TAIL,
+) -> np.ndarray:
+    """
+    Type 4 signal: two reversals (any-order) within window_pair candles,
+    then continuation within window_tail candles AFTER the pair completes.
+
+    Stage 1: run any-order ring buffer on pattern1/pattern2 to find pair
+             completion bars and their direction (+1/-1).
+    Stage 2: forward scan — continuation must appear strictly after the
+             completion bar (pv == 0 guard), within window_tail candles.
+             Continuation sign must match pair direction exactly.
+             Most recent pair completion takes precedence (overwrites window).
+             Once continuation fires, window resets — no double-firing.
+
+    Cython-friendly: no int() casts inside loop, no list comprehensions,
+    no dicts, explicit while loops only. np.int8 values compared directly.
+    """
+    n = pattern1_arr.shape[0]
+    out = np.zeros(n, dtype=np.int8)
+
+    # Stage 1: any-order reversal pair completions
+    pair_completions = run_ring_buffer(
+        pattern1_arr,
+        pattern2_arr,
+        connector="any-order",
+        window=window_pair,
+    )
+
+    # Stage 2: continuation tail scan
+    pending_end = -1
+    pending_dir = 0
+
+    i = 0
+    while i < n:
+        pv = pair_completions[i]
+        if pv != 0:
+            # New pair completion — reset tail window
+            # Most recent completion takes precedence
+            pending_end = i + window_tail
+            pending_dir = pv  # np.int8, no int() cast
+
+        # Continuation must fire strictly after the completion bar (pv == 0)
+        # and within the active tail window
+        if pending_end >= i and pending_dir != 0 and pv == 0:
+            cv = continuation_arr[i]
+            if cv != 0 and cv == pending_dir:  # sign must match, no int() cast
+                out[i] = pending_dir
+                # Reset — prevent same completion firing twice
+                pending_end = -1
+                pending_dir = 0
+
+        i += 1
+
+    return out
+
+
 def detect_signal(
     signals_df: pd.DataFrame,
     anchor: str,
@@ -253,10 +314,15 @@ def detect_signal(
     connector: str | None,
     direction: str,
     window: int = 10,
+    continuation: str | None = None,
 ) -> np.ndarray:
     """
     Public entry: build arrays, run ring buffer, apply direction filter.
     Returns int8 array aligned to signals_df rows.
+
+    continuation: if provided alongside complement, activates Type 4 detection
+    (run_ring_buffer_type4). window maps to window_pair; tail window uses
+    WINDOW_CONTINUATION_TAIL constant.
     """
     anchor_arr, complement_arr = build_signal_arrays(signals_df, anchor, complement)
     if complement_arr is None:
@@ -270,6 +336,17 @@ def detect_signal(
             first_arr = complement_arr
             second_arr = anchor_arr
         raw = run_ring_buffer(first_arr, second_arr, connector, window)
+
+        # Type 4: if continuation pattern provided, run two-stage detection
+        if continuation is not None and continuation in signals_df.columns:
+            cont_arr = signals_df[continuation].to_numpy(dtype=np.int8, copy=True)
+            raw = run_ring_buffer_type4(
+                first_arr,
+                second_arr,
+                cont_arr,
+                window_pair=window,               # pass dynamic window arg
+                window_tail=WINDOW_CONTINUATION_TAIL,
+            )
 
     n = raw.shape[0]
     if direction == "long":
