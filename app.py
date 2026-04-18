@@ -848,6 +848,7 @@ def strategy_trades(strategy_id):
     total = len(trades)
     replay_pnl_total = round(sum(t["replay_pnl"] for t in trades), 2)
     all_pnl_total = round(sum(t["all_pnl"] for t in trades if t["all_pnl"] is not None), 2)
+    clean_pnl_total = round(sum(t["clean_pnl"] for t in trades if t.get("clean_pnl") is not None), 2)
     flipped = sum(1 for t in trades if t["replay_result"] != t["all_result"] and t["all_result"] is not None)
 
     strategy_name = (row.get("strategy_name") or "Strategy").strip()
@@ -871,6 +872,7 @@ def strategy_trades(strategy_id):
         all_wins=all_wins,
         replay_pnl_total=replay_pnl_total,
         all_pnl_total=all_pnl_total,
+        clean_pnl_total=clean_pnl_total,
         flipped=flipped,
         strategy_id=strategy_id,
     )
@@ -2435,6 +2437,8 @@ def _executor_compute_trade_detail(
             if not indicator_fn(ohlc, i, dir_str):
                 continue
 
+        signal_close = float(ohlc["close"].iloc[i])
+
         # Quotes at signal bar close (iloc[i])
         ask_v = df["ask"].iloc[i]
         bid_v = df["bid"].iloc[i]
@@ -2519,21 +2523,40 @@ def _executor_compute_trade_detail(
             all_result = "TP" if win_a else "SL"
             all_pnl = round(pnl_a, 2)
 
+        slippage_pips = None
+        if has_quote and all_entry is not None:
+            if direction_val == 1:
+                slippage_pips = round((float(all_entry) - signal_close) / pip, 2)
+            else:
+                slippage_pips = round((signal_close - float(all_entry)) / pip, 2)
+
+        atr_actual = round(trade_atr / pip, 1)
+        atr_used = round(sl_dist / pip, 1) if pip > 0 else None
+
+        clean_pnl = None
+        if is_clean and has_quote and all_pnl is not None:
+            clean_pnl = all_pnl
+
         trades.append({
-            "ts":           ohlc.index[i].strftime("%d/%m %H:%M"),
-            "direction":    "BUY" if direction_val == 1 else "SELL",
-            "replay_entry": round(replay_entry, 5),
-            "all_entry":    round(all_entry, 5) if all_entry else None,
-            "spread_pips":  spread_pips_val,
-            "is_clean":     is_clean,
-            "sl":           round(sl_r, 5),
-            "tp":           round(tp_r, 5),
-            "exit_price":   round(exit_price, 5),
-            "replay_result": replay_result,
-            "all_result":   all_result,
-            "replay_pnl":   replay_pnl,
-            "all_pnl":      all_pnl,
-            "atr":          round(trade_atr / pip, 1),
+            "ts":             ohlc.index[i].strftime("%d/%m %H:%M"),
+            "direction":      "BUY" if direction_val == 1 else "SELL",
+            "close":          round(signal_close, 5),
+            "replay_entry":   round(replay_entry, 5),
+            "all_entry":      round(all_entry, 5) if all_entry else None,
+            "slippage_pips":  slippage_pips,
+            "spread_pips":    spread_pips_val,
+            "is_clean":       is_clean,
+            "sl":             round(sl_r, 5),
+            "tp":             round(tp_r, 5),
+            "exit_price":     round(exit_price, 5),
+            "replay_result":  replay_result,
+            "all_result":     all_result,
+            "replay_pnl":     replay_pnl,
+            "all_pnl":        all_pnl,
+            "atr_actual":     atr_actual,
+            "atr_used":       atr_used,
+            "atr":            atr_actual,
+            "clean_pnl":      clean_pnl,
         })
 
     return trades

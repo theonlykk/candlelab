@@ -185,6 +185,12 @@
     </div>
   </div>
   <div class="summary-card">
+    <div class="label">Clean P&L</div>
+    <div class="value {{ 'green' if clean_pnl_total > 0 else 'red' }}">
+      ${{ clean_pnl_total }}
+    </div>
+  </div>
+  <div class="summary-card">
     <div class="label">Outcome flips</div>
     <div class="value {{ 'amber' if flipped > 0 else 'green' }}">{{ flipped }}</div>
   </div>
@@ -211,67 +217,55 @@
       <tr>
         <th>Time</th>
         <th>Dir</th>
+        <th>Close</th>
         <th>Replay entry</th>
-        <th>All entry (ask/bid)</th>
-        <th>Spread</th>
-        <th>Clean</th>
-        <th>ATR (pips)</th>
+        <th>Executor entry</th>
+        <th title="abs difference between executor fill and signal close. Positive = worse fill (cost), Negative = better fill (improvement)">Slippage (pips)</th>
+        <th>ATR actual</th>
+        <th>ATR used</th>
         <th>SL</th>
         <th>TP</th>
-        <th>Exit</th>
-        <th>Replay</th>
-        <th>All entries</th>
         <th>Replay P&L</th>
-        <th>All P&L</th>
-        <th></th>
+        <th>All entries P&L</th>
+        <th title="P&amp;L using executor entry, excluding trades where spread exceeded the clean threshold for this instrument. — means this trade was excluded.">Clean P&amp;L</th>
       </tr>
     </thead>
     <tbody>
       {% for t in trades %}
-      {% if t.replay_result != t.all_result and t.all_result %}
-        {% set row_class = "flipped" %}
-      {% elif t.replay_result == "TP" %}
+      {% if t.replay_result == "TP" and t.all_result == "TP" %}
         {% set row_class = "agree-win" %}
-      {% else %}
+      {% elif t.replay_result == "SL" and t.all_result == "SL" %}
         {% set row_class = "agree-loss" %}
+      {% elif t.replay_result != t.all_result and t.all_result is not none %}
+        {% set row_class = "flipped" %}
+      {% else %}
+        {% set row_class = "" %}
       {% endif %}
-      <tr class="{{ row_class }}">
+      <tr{% if row_class %} class="{{ row_class }}"{% endif %}>
         <td>{{ t.ts }}</td>
-        <td class="{{ 'dir-buy' if t.direction == 'BUY' else 'dir-sell' }}">
-          {{ t.direction }}
-        </td>
+        <td class="{{ 'dir-buy' if t.direction == 'BUY' else 'dir-sell' }}">{{ t.direction }}</td>
+        <td>{{ t.close }}</td>
         <td>{{ t.replay_entry }}</td>
-        <td>{{ t.all_entry if t.all_entry else "—" }}</td>
-        <td>{{ t.spread_pips if t.spread_pips else "—" }}</td>
-        <td class="{{ 'clean-yes' if t.is_clean else 'clean-no' }}">
-          {{ "✓" if t.is_clean else "✗" }}
+        <td>{% if t.all_entry is not none %}{{ t.all_entry }}{% else %}—{% endif %}</td>
+        <td style="{% if t.slippage_pips is none %}color:#888{% elif t.slippage_pips > 0 %}color:#ef5350{% elif t.slippage_pips < 0 %}color:#4caf50{% else %}color:#888{% endif %}">
+          {% if t.slippage_pips is none %}—{% elif t.slippage_pips == 0 %}0.0{% else %}{{ t.slippage_pips }}{% endif %}
         </td>
-        <td>{{ t.atr }}</td>
+        <td>{{ t.atr_actual }}</td>
+        <td>{{ t.atr_used }}</td>
         <td>{{ t.sl }}</td>
         <td>{{ t.tp }}</td>
-        <td>{{ t.exit_price }}</td>
-        <td><span class="badge {{ t.replay_result|lower }}">{{ t.replay_result }}</span></td>
-        <td>
-          {% if t.all_result %}
-            <span class="badge {{ t.all_result|lower }}">{{ t.all_result }}</span>
-          {% else %}—{% endif %}
+        <td class="{{ 'pnl-pos' if t.replay_pnl > 0 else 'pnl-neg' }}">${{ t.replay_pnl }}</td>
+        <td class="{{ 'pnl-pos' if t.all_pnl is not none and t.all_pnl > 0 else ('pnl-neg' if t.all_pnl is not none else '') }}"{% if t.all_pnl is none %} style="color:#888"{% endif %}>
+          {% if t.all_pnl is not none %}${{ t.all_pnl }}{% else %}—{% endif %}
         </td>
-        <td class="{{ 'pnl-pos' if t.replay_pnl > 0 else 'pnl-neg' }}">
-          ${{ t.replay_pnl }}
-        </td>
-        <td class="{{ 'pnl-pos' if t.all_pnl and t.all_pnl > 0 else 'pnl-neg' }}">
-          {{ "$" + t.all_pnl|string if t.all_pnl is not none else "—" }}
-        </td>
-        <td>
-          {% if t.replay_result != t.all_result and t.all_result %}
-            <span class="flip-note">⚡ spread flipped outcome</span>
-          {% endif %}
+        <td style="{% if t.clean_pnl is none %}color:#888{% elif t.clean_pnl > 0 %}color:#4caf50;font-weight:600{% elif t.clean_pnl < 0 %}color:#ef5350;font-weight:600{% else %}color:#888{% endif %}">
+          {% if t.clean_pnl is none %}—{% else %}${{ t.clean_pnl }}{% endif %}
         </td>
       </tr>
       {% endfor %}
       {% if not trades %}
       <tr>
-        <td colspan="15" style="text-align:center; padding:32px; color:#888;">
+        <td colspan="13" style="text-align:center; padding:32px; color:#888;">
           No signals found since go live date.
         </td>
       </tr>
