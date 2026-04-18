@@ -216,21 +216,68 @@
   .badge-amber { background: rgba(255,241,118,0.15); color: var(--amber); }
   .badge-red   { background: rgba(239,68,68,0.15);   color: var(--red); }
 
-  /* Pattern card extras */
+  /* Pattern wizard cards */
   .pattern-card {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 18px 20px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px;
+    cursor: pointer;
+    margin-bottom: 10px;
+    transition: border-color 0.15s, background 0.15s;
   }
-  .pattern-rates {
+  .pattern-card:hover { border-color: var(--accent); }
+  .pattern-card.selected {
+    border-color: var(--accent);
+    background: rgba(76,175,80,0.08);
+  }
+  .pattern-card.disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    pointer-events: none;
+  }
+  .skip-pattern-card { margin-top: 6px; }
+  .pattern-illustration {
+    width: 40px;
+    height: 50px;
+    margin-right: 14px;
+    flex-shrink: 0;
+  }
+  .pattern-card-title-row {
     display: flex;
+    align-items: center;
+    flex-wrap: wrap;
     gap: 6px;
-    font-size: 11px;
+  }
+  .pattern-name {
+    font-size: 15px;
+    font-weight: 700;
+  }
+  .pattern-stats-line {
+    font-size: 13px;
     color: var(--muted);
     margin-top: 4px;
   }
-  .pattern-rates span { white-space: nowrap; }
+  .pattern-tip-line {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 6px;
+    line-height: 1.45;
+  }
+  .type-badge {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 20px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-left: 6px;
+  }
+  .type-badge.reversal  { background: rgba(76,175,80,0.15);  color: var(--accent); }
+  .type-badge.continuation { background: rgba(33,150,243,0.15); color: #2196f3; }
 
   /* AI tip box */
   #ai-tip-box {
@@ -245,6 +292,28 @@
     display: none;
   }
   #ai-tip-box.visible { display: block; }
+  .ai-tip-box {
+    background: rgba(76,175,80,0.06);
+    border-left: 3px solid var(--accent);
+    border-radius: 6px;
+    padding: 10px 14px;
+    font-size: 13px;
+    color: var(--text);
+    margin-top: 14px;
+    line-height: 1.55;
+  }
+
+  .advanced-toggle {
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-size: 13px;
+    cursor: pointer;
+    padding: 8px 0;
+    text-decoration: underline;
+  }
+  .advanced-content { display: none; padding-top: 12px; }
+  .advanced-content.open { display: block; }
 
   /* Spinner */
   .spinner-wrap {
@@ -1018,7 +1087,7 @@
   <button id="back-btn" onclick="goBack()">← Back</button>
   <div id="header-logo">CandleLab</div>
   <div style="display:flex;align-items:center;gap:10px;">
-    <div id="step-indicator">1 / 9</div>
+    <div id="step-indicator">1 / 7</div>
     <button id="my-strats-btn" onclick="openStrategiesPanel()">My Strategies</button>
   </div>
 </div>
@@ -1050,50 +1119,40 @@
     </button>
   </div>
 
-  <!-- Step 3: Direction -->
+  <!-- Step 3: Anchor pattern -->
   <div class="step" id="step-3">
-    <div class="step-title">What's your strategy?</div>
-    <div class="step-subtitle">Every strategy starts with a direction. Are you looking to catch a turning point, or ride a move that's already underway?</div>
-    <button class="big-btn" data-direction="reversal" onclick="selectDirection(this)">
-      <span class="big-btn-title">Buy on a reversal</span>
-      <span class="big-btn-sub">Catch a turning point</span>
-    </button>
-    <button class="big-btn" data-direction="trend" onclick="selectDirection(this)">
-      <span class="big-btn-title">Ride an existing trend</span>
-      <span class="big-btn-sub">Join momentum</span>
-    </button>
-    <button class="big-btn" data-direction="both" onclick="selectDirection(this)">
-      <span class="big-btn-title">Either</span>
-      <span class="big-btn-sub">Test both approaches</span>
-    </button>
+    <div class="step-title">Pick your pattern</div>
+    <div class="step-subtitle">This is the signal that starts everything. Choose one.</div>
+    <div class="grid-2" id="pattern-list"></div>
+    <div id="ai-tip-3" class="ai-tip-box" style="display:none"></div>
   </div>
 
-  <!-- Step 4: Anchor pattern -->
+  <!-- Step 4: Second reversal (optional) -->
   <div class="step" id="step-4">
-    <div class="step-title">Choose your anchor pattern</div>
-    <div class="step-subtitle">These are the patterns that have been firing most reliably on your chosen market over the last 30 days. Pick the one that resonates.</div>
-    <div id="pattern-list"></div>
-    <div id="ai-tip-box"></div>
+    <div class="step-title">Strengthen the signal</div>
+    <div class="step-subtitle">Add a second reversal within 10 candles. Optional.</div>
+    <div class="grid-2" id="pattern-grid-step4"></div>
+    <div id="pattern-grid-step4-skip"></div>
+    <div id="ai-tip-4" class="ai-tip-box" style="display:none"></div>
   </div>
 
-  <!-- Step 5: Complement -->
+  <!-- Step 5: Continuation + Indicators -->
   <div class="step" id="step-5">
-    <div class="step-title">Add a confirmation pattern</div>
-    <div class="step-subtitle">A second pattern as confirmation can dramatically improve accuracy. Our AI just tested every combination.</div>
-    <div id="complement-content"></div>
-  </div>
+    <div class="step-title">Add confirmation</div>
+    <div class="step-subtitle">Require Three Soldiers/Crows after your reversal.</div>
+    <div id="continuation-card-wrap"></div>
+    <p style="font-size:12px; color:var(--muted); margin-top:10px; line-height:1.5;">More confirmation patterns available on higher timeframes.</p>
+    <div id="ai-tip-5" class="ai-tip-box" style="display:none"></div>
 
-  <!-- Step 6: Indicator confirmation -->
-  <div class="step" id="step-6">
-    <div class="step-title">Add indicator confirmation</div>
-    <div class="step-subtitle">Classic technical analysis can act as a filter. These have been shown to improve signal quality when used as context.</div>
+    <div class="step-title" style="margin-top:28px; font-size:18px;">Indicators</div>
+    <div class="step-subtitle" style="margin-bottom:16px;">Classic technical analysis can act as a filter.</div>
     <div id="indicator-cards"></div>
   </div>
 
-  <!-- Step 7: Session filter -->
-  <div class="step" id="step-7">
-    <div class="step-title">Choose a session</div>
-    <div class="step-subtitle">Most traders choose All Sessions to start, and that's fine. NY Close (21:00–23:00 UTC) is flagged — spreads widen significantly at that hour and signal quality drops.</div>
+  <!-- Step 6: Session + Trade management -->
+  <div class="step" id="step-6">
+    <div class="step-title">Session</div>
+    <div class="step-subtitle">Most traders choose All Sessions to start. NY Close (21:00–23:00 UTC) is flagged — spreads widen significantly at that hour.</div>
     <div class="session-grid">
       <button class="big-btn" data-session="London" onclick="selectSession(this)">
         <span class="big-btn-title">London</span>
@@ -1129,41 +1188,25 @@
     <p style="font-size:12px; color:var(--muted); margin-top:14px; line-height:1.55;">
       Tip: start with All Sessions, then return here after going live to see which sessions your signals concentrate in.
     </p>
-  </div>
 
-  <!-- Step 8: SL / TP -->
-  <div class="step" id="step-8">
-    <div class="step-title">Set your stops & targets</div>
-    <div class="step-subtitle">We use the Average True Range to set stops and targets proportional to how the market is actually moving.</div>
+    <div class="step-title" style="margin-top:28px; font-size:18px;">Trade management</div>
 
-    <div class="slider-row">
+    <div class="slider-row" style="margin-top:8px;">
       <div class="slider-label">
-        <span>Stop loss multiplier</span>
-        <span class="slider-val" id="sl-val">1.0×</span>
+        <div>
+          <span>Risk / Reward</span>
+          <div style="font-size:12px; font-weight:400; color:var(--muted); margin-top:2px;">How much do you aim to make relative to risk?</div>
+        </div>
+        <span class="slider-val" id="rr-display">1 : 3.0</span>
       </div>
-      <input type="range" id="sl-slider" min="5" max="30" step="5" value="10"
-             oninput="onSliderChange()">
+      <input type="range" id="tp-rr-slider" min="15" max="50" step="5" value="30"
+             oninput="onRiskRewardSliderChange()">
     </div>
 
-    <div class="slider-row">
-      <div class="slider-label">
-        <span>Take profit multiplier</span>
-        <span class="slider-val" id="tp-val">3.0×</span>
-      </div>
-      <input type="range" id="tp-slider" min="10" max="60" step="5" value="30"
-             oninput="onSliderChange()">
-    </div>
-
-    <div id="sl-tp-pip-display" style="margin:12px 0 4px; padding:10px 14px; background:var(--bg); border-radius:8px; font-size:13px; color:var(--muted); display:flex; justify-content:space-between;">
-      <span>SL: <strong id="sl-pips-display">—</strong></span>
-      <span>TP: <strong id="tp-pips-display">—</strong></span>
-    </div>
-    <div id="sl-floor-note" style="font-size:11px; color:var(--muted); text-align:center; margin-top:4px; min-height:16px;"></div>
-
-    <div style="margin-top:16px;">
+    <div style="margin-top:20px;">
       <div class="slider-label" style="margin-bottom:8px;">
         <span style="font-size:14px; font-weight:500;">Trade timeout</span>
-        <span style="font-size:13px; color:var(--muted);">How long before forcing an exit?</span>
+        <span style="font-size:13px; color:var(--muted);">Close if neither target nor stop is hit within this window.</span>
       </div>
       <div id="timeout-options" style="display:flex; gap:8px; flex-wrap:wrap;">
         <button class="timeout-btn" data-val="5" onclick="onTimeoutChange(5)"><span class="timeout-btn-l1">5c</span><span class="timeout-btn-l2">...</span></button>
@@ -1174,10 +1217,32 @@
         <button class="timeout-btn active" data-val="1000" onclick="onTimeoutChange(1000)"><span class="timeout-btn-l1">No limit</span><span class="timeout-btn-l2">...</span></button>
       </div>
     </div>
+
+    <div id="sl-tp-pip-display" style="margin:16px 0 4px; padding:10px 14px; background:var(--bg); border-radius:8px; font-size:13px; color:var(--muted); display:flex; justify-content:space-between;">
+      <span>SL: <strong id="sl-pips-display">—</strong></span>
+      <span>TP: <strong id="tp-pips-display">—</strong></span>
+    </div>
+    <div id="sl-floor-note" style="font-size:11px; color:var(--muted); text-align:center; margin-top:4px; min-height:16px;"></div>
+
+    <button type="button" class="advanced-toggle" id="advanced-toggle-btn" onclick="toggleAdvancedSl(event)">Advanced: adjust stop width ▾</button>
+    <div class="advanced-content" id="advanced-sl-block">
+      <p style="font-size:12px; color:var(--muted); margin-bottom:10px;">Widens or tightens your stop loss relative to recent volatility.</p>
+      <div class="slider-row">
+        <div class="slider-label">
+          <span>Stop loss multiplier</span>
+          <span class="slider-val" id="sl-val">1.0×</span>
+        </div>
+        <input type="range" id="sl-slider" min="5" max="30" step="5" value="10"
+               oninput="onAdvancedSlChange()">
+      </div>
+    </div>
+
+    <div id="live-preview" style="display:none"></div>
+    <div id="ai-tip-6" class="ai-tip-box" style="display:none"></div>
   </div>
 
-  <!-- Step 9: Summary -->
-  <div class="step" id="step-9">
+  <!-- Step 7: Preview / Summary (was step 9) -->
+  <div class="step" id="step-7">
     <div class="step-title">Your strategy</div>
     <div class="step-subtitle">Here's your completed strategy. Review the results, then use Save to Draft or Promote to Live. If a PIN is required, My Strategies opens for you to unlock.</div>
 
@@ -1374,7 +1439,7 @@ function safeParseUnixSeconds(timeVal) {
 
 // ── State ────────────────────────────────────────────────────────────────────
 // Wizard state machine overview:
-// - This file implements a 9-step "wizard" as a single-page UI. Each step is a `.step`
+// - This file implements a 7-step "wizard" as a single-page UI. Each step is a `.step`
 //   section in the DOM and exactly one step is `.active` at any time.
 // - The `state` object below is the single source of truth for selections across steps.
 //   Steps write into `state` when the user clicks a card/toggle/slider; later steps
@@ -1382,12 +1447,13 @@ function safeParseUnixSeconds(timeVal) {
 // - Navigation is managed by `goStep(n)` and `goBack()`. `state.currentStep` is updated
 //   on every transition and drives the header (progress bar, back button, indicator).
 const state = {
-  instrument: null,     // e.g. "EURUSD"
-  interval: null,       // "5m" / "15m" / "1h"
-  direction: null,      // "reversal" / "trend" / "both"
-  anchor: null,         // pattern name
+  instrument: null,
+  interval: null,
+  strategy_type: "reversal",
+  pattern_1: "",
+  pattern_2: null,
+  continuation: null,
   anchorTip: "",
-  complement: null,
   connector: "ordered",
   indicator: null,
   activeIndicators: null,
@@ -1411,6 +1477,62 @@ function normalizeConnector(c) {
   const v = String(c == null ? "ordered" : c).trim() || "ordered";
   if (v === "optional") return "any-order";
   return v;
+}
+
+/** Complement + connector as used by `/api/finalise` engine (single complement slot). */
+function enginePatternPayload() {
+  const hasP2 = state.pattern_2 != null && String(state.pattern_2).trim() !== "";
+  const hasCont = state.continuation != null && String(state.continuation).trim() !== "";
+  const complement = hasP2 ? state.pattern_2 : (hasCont ? state.continuation : null);
+  let connector = null;
+  if (complement != null && String(complement).trim() !== "") {
+    connector = hasP2 ? "any-order" : "ordered";
+  }
+  return {
+    anchor: state.pattern_1,
+    complement,
+    connector,
+  };
+}
+
+/** Maps wizard state to API field names (anchor/complement/connector/direction). */
+function buildWizardPayload() {
+  let payload_complement = state.pattern_2;
+  if (!state.pattern_2 && state.continuation) {
+    payload_complement = state.continuation;
+  }
+  const payload_continuation = state.pattern_2 && state.continuation ? state.continuation : null;
+
+  let derived_connector = null;
+  if (state.pattern_2 && state.continuation) {
+    derived_connector = "type4";
+  } else if (state.pattern_2) {
+    derived_connector = "any-order";
+  } else if (state.continuation) {
+    derived_connector = "ordered";
+  }
+
+  const indObj = buildIndicatorFilterObject();
+
+  return {
+    strategy_type: state.strategy_type,
+    pattern_1: state.pattern_1,
+    pattern_2: state.pattern_2,
+    continuation: payload_continuation,
+    anchor: state.pattern_1,
+    complement: payload_complement,
+    connector: derived_connector,
+    direction: "both",
+    instrument: state.instrument,
+    interval: state.interval,
+    indicator_filter: indObj,
+    session_filter: state.session !== "All" ? state.session : null,
+    sl_multiplier: state.slMult,
+    tp_multiplier: state.tpMult,
+    timeout: state.timeout,
+    name: document.getElementById("name-input")?.value || "",
+    device_uuid: state.deviceUuid,
+  };
 }
 
 // ── Device UUID ───────────────────────────────────────────────────────────────
@@ -1460,6 +1582,34 @@ const PIP_VALUES_JS = {
 };
 const MIN_SL_PIPS_JS = 5.0;
 
+const SVG_ENGULFING = `<svg viewBox="0 0 40 50" width="40" height="50" xmlns="http://www.w3.org/2000/svg"><line x1="20" y1="8" x2="20" y2="12" stroke="#888" stroke-width="1"/><rect x="15" y="12" width="10" height="10" fill="#ef5350"/><line x1="20" y1="22" x2="20" y2="26" stroke="#888" stroke-width="1"/><line x1="25" y1="6" x2="25" y2="10" stroke="#888" stroke-width="1"/><rect x="20" y="10" width="10" height="16" fill="#26a69a"/><line x1="25" y1="26" x2="25" y2="30" stroke="#888" stroke-width="1"/></svg>`;
+const SVG_HAMMER = `<svg viewBox="0 0 40 50" width="40" height="50" xmlns="http://www.w3.org/2000/svg"><line x1="20" y1="10" x2="20" y2="14" stroke="#888" stroke-width="1"/><rect x="15" y="14" width="10" height="8" fill="#26a69a"/><line x1="20" y1="22" x2="20" y2="40" stroke="#888" stroke-width="2"/></svg>`;
+const SVG_STAR = `<svg viewBox="0 0 40 50" width="40" height="50" xmlns="http://www.w3.org/2000/svg"><rect x="5" y="8" width="8" height="14" fill="#ef5350"/><line x1="9" y1="6" x2="9" y2="8" stroke="#888" stroke-width="1"/><line x1="9" y1="22" x2="9" y2="24" stroke="#888" stroke-width="1"/><rect x="17" y="16" width="6" height="5" fill="#26a69a"/><rect x="27" y="10" width="8" height="14" fill="#26a69a"/><line x1="31" y1="8" x2="31" y2="10" stroke="#888" stroke-width="1"/><line x1="31" y1="24" x2="31" y2="26" stroke="#888" stroke-width="1"/></svg>`;
+const SVG_SHOOTING = `<svg viewBox="0 0 40 50" width="40" height="50" xmlns="http://www.w3.org/2000/svg"><line x1="20" y1="10" x2="20" y2="28" stroke="#888" stroke-width="2"/><rect x="15" y="28" width="10" height="8" fill="#ef5350"/><line x1="20" y1="36" x2="20" y2="40" stroke="#888" stroke-width="1"/></svg>`;
+const SVG_THREE_SOLDIERS = `<svg viewBox="0 0 40 50" width="40" height="50" xmlns="http://www.w3.org/2000/svg"><rect x="4" y="28" width="8" height="12" fill="#26a69a"/><rect x="16" y="20" width="8" height="12" fill="#26a69a"/><rect x="28" y="12" width="8" height="12" fill="#26a69a"/></svg>`;
+
+const WIZARD_ANCHOR_PATTERNS = [
+  { name: "Engulfing", kind: "reversal", svg: SVG_ENGULFING },
+  { name: "Hammer/Hanging Man", kind: "reversal", svg: SVG_HAMMER },
+  { name: "Morning/Evening Star", kind: "reversal", svg: SVG_STAR },
+  { name: "Shooting Star/Inv. Hammer", kind: "reversal", svg: SVG_SHOOTING },
+  { name: "Three Soldiers/Crows", kind: "continuation", svg: SVG_THREE_SOLDIERS },
+];
+
+function instrumentCardLabel(inst) {
+  const flags = {
+    EURUSD: "\u{1F1EA}\u{1F1FA} ",
+    GBPUSD: "\u{1F1EC}\u{1F1E7} ",
+    USDJPY: "\u{1F1EF}\u{1F1F5} ",
+    USDCAD: "\u{1F1E8}\u{1F1E6} ",
+    AUDUSD: "\u{1F1E6}\u{1F1FA} ",
+    NZDUSD: "\u{1F1F3}\u{1F1FF} ",
+    USDCHF: "\u{1F1E8}\u{1F1ED} ",
+  };
+  const pre = flags[inst.code] || "";
+  return pre + inst.label;
+}
+
 (function buildInstrumentGrid() {
   const grid = document.getElementById("instrument-grid");
   INSTRUMENTS.forEach(inst => {
@@ -1467,7 +1617,7 @@ const MIN_SL_PIPS_JS = 5.0;
     card.className = "card";
     card.style.flexDirection = "column";
     card.style.alignItems = "flex-start";
-    card.innerHTML = `<div class="card-name">${inst.label}</div><div class="card-desc">${inst.desc}</div>`;
+    card.innerHTML = `<div class="card-name">${instrumentCardLabel(inst)}</div><div class="card-desc">${inst.desc}</div>`;
     card.onclick = () => selectInstrument(inst.code);
     grid.appendChild(card);
   });
@@ -1496,20 +1646,7 @@ function badgeEl(wr) {
   return `<span class="badge ${badgeClass(wr)}">${wr}%</span>`;
 }
 
-// ── Step navigation ───────────────────────────────────────────────────────────
-function goStep(n) {
-  // Core wizard transition:
-  // - Hide all steps, show `#step-n`
-  // - Update `state.currentStep` and the header UI
-  // - Scroll to top so the user lands at the step title
-  document.querySelectorAll(".step").forEach(s => s.classList.remove("active"));
-  document.getElementById("step-" + n).classList.add("active");
-  state.currentStep = n;
-  document.getElementById("step-indicator").textContent = n + " / 9";
-  document.getElementById("progress-fill").style.width = (n / 9 * 100) + "%";
-  document.getElementById("back-btn").style.display = n > 1 ? "block" : "none";
-  window.scrollTo(0, 0);
-}
+// ── Step navigation (final implementation in second script block) ─────────────
 
 function goBack() {
   // Back navigation is purely UI-level: the `state` object retains selections so the
@@ -1525,243 +1662,259 @@ function selectInterval(btn) {
   goStep(3);
 }
 
-// ── Step 3: Direction → load patterns ────────────────────────────────────────
-function selectDirection(btn) {
-  // Step 3 selection → advances to Step 4 and triggers the patterns API call.
-  state.direction = btn.dataset.direction;
-  goStep(4);
-  loadPatterns();
+// ── Steps 3–4: Anchor + optional second reversal ─────────────────────────────
+
+function patternMetaByName(name) {
+  const row = state.patternsData.find(p => p.name === name);
+  const wp = row ? Number(row.win_pct).toFixed(0) : "—";
+  const sig = row ? row.signals : "—";
+  const tip = row && row.tip ? row.tip : "";
+  return { row, wp, sig, tip };
 }
 
-function loadPatterns() {
-  // API chain (Step 3 → Step 4):
-  // - Trigger: user selects a direction in Step 3
-  // - Request: GET `/api/patterns` (instrument, interval, direction)
-  // - Response: array of patterns with win rates / signal counts (+ optional AI tip)
-  // - Effect: updates `state.patternsData` and renders the anchor pattern list (Step 4)
+function loadPatternsStep3() {
   const list = document.getElementById("pattern-list");
+  if (!list) return;
   list.innerHTML = `<div class="spinner-wrap"><div class="spinner"></div><span>Loading patterns…</span></div>`;
-  document.getElementById("btn-anchor-continue").disabled = true;
-
-  const url = `/api/patterns?instrument=${state.instrument}&interval=${state.interval}&direction=${state.direction}`;
+  const url = `/api/patterns?instrument=${encodeURIComponent(state.instrument)}&interval=${encodeURIComponent(state.interval)}&strategy_type=all`;
   apiFetch(url)
     .then(r => r.json())
     .then(data => {
-      state.patternsData = data;
-      renderPatterns(data);
+      state.patternsData = Array.isArray(data) ? data : [];
+      renderPatternGridStep3();
     })
     .catch(() => {
       list.innerHTML = `<div style="color:var(--red); padding:20px;">Failed to load patterns.</div>`;
     });
 }
 
-function renderPatterns(data) {
+function renderPatternGridStep3() {
   const list = document.getElementById("pattern-list");
   list.innerHTML = "";
-  data.forEach(p => {
+  WIZARD_ANCHOR_PATTERNS.forEach(def => {
+    const { wp, sig, tip } = patternMetaByName(def.name);
+    const badgeClass = def.kind === "continuation" ? "continuation" : "reversal";
+    const badgeLabel = def.kind === "continuation" ? "Continuation" : "Reversal";
     const card = document.createElement("div");
-    card.className = "card pattern-card";
-    card.dataset.name = p.name;
+    card.className = "pattern-card";
+    card.dataset.name = def.name;
     card.innerHTML = `
-      <div class="card-main">
-        <div class="card-name">${p.name} ${badgeEl(p.win_pct_5)}</div>
-        <div class="pattern-rates">
-          <span>5c: ${p.win_pct_5}%</span>
-          <span>10c: ${p.win_pct_10}%</span>
-          <span>20c: ${p.win_pct_20}%</span>
-          <span style="color:var(--border)">·</span>
-          <span>${p.signals} signals</span>
+      <div class="pattern-illustration">${def.svg}</div>
+      <div class="card-main" style="flex:1; min-width:0;">
+        <div class="pattern-card-title-row">
+          <span class="pattern-name">${def.name}</span>
+          <span class="type-badge ${badgeClass}">${badgeLabel}</span>
         </div>
+        <div class="pattern-stats-line">${wp}% · ${sig} signals</div>
+        ${tip ? `<div class="pattern-tip-line">${tip}</div>` : ""}
       </div>`;
-    card.onclick = () => selectAnchor(p.name, p.tip);
+    card.onclick = () => selectPatternStep3(def.name, tip, def.kind);
     list.appendChild(card);
   });
+  const btn = document.getElementById("btn-step3-continue");
+  if (btn) btn.disabled = !state.pattern_1;
   setTimeout(checkScrollHint, 50);
 }
 
-function selectAnchor(name, tip) {
-  // Step 4 selection:
-  // - Sets the anchor pattern used by the strategy.
-  // - Enables the "Analyse combinations" CTA, which begins Step 5.
-  state.anchor = name;
-  state.anchorTip = tip;
-  document.querySelectorAll("#pattern-list .card").forEach(c => {
+function selectPatternStep3(name, tip, kind) {
+  state.pattern_1 = name;
+  state.strategy_type = kind === "continuation" || name === "Three Soldiers/Crows" ? "continuation" : "reversal";
+  state.anchorTip = tip || "";
+  document.querySelectorAll("#step-3 .pattern-card").forEach(c => {
     c.classList.toggle("selected", c.dataset.name === name);
   });
-  const tipBox = document.getElementById("ai-tip-box");
-  if (tip) {
-    tipBox.classList.add("visible");
-    typewriter(tipBox, "💡 " + tip, 28);
-  } else {
-    tipBox.classList.remove("visible");
+  const tipBox = document.getElementById("ai-tip-3");
+  if (tipBox) {
+    if (tip) {
+      tipBox.style.display = "block";
+      typewriter(tipBox, "\u{1F4A1} " + tip, 28);
+    } else {
+      tipBox.style.display = "none";
+      tipBox.textContent = "";
+    }
   }
-  document.getElementById("btn-anchor-continue").disabled = false;
+  const btn = document.getElementById("btn-step3-continue");
+  if (btn) btn.disabled = false;
 }
 
-// ── Step 5: Complement ────────────────────────────────────────────────────────
-function continueToComplement() {
-  // API chain (Step 4 → Step 5):
-  // - Trigger: user clicks "Analyse combinations" on Step 4 after selecting an anchor.
-  // - Request: POST `/api/complement` (anchor + current instrument/interval/direction)
-  // - Response: top complement suggestions (pattern + connector + win-rate delta)
-  // - Effect: updates `state.complementData` and renders complement choice UI.
-  goStep(5);
-  const content = document.getElementById("complement-content");
-  content.innerHTML = `<div class="spinner-wrap"><div class="spinner"></div><span>AI analysing combinations…</span></div>`;
-
+function continueFromStep3() {
+  const btn = document.getElementById("btn-step3-continue");
+  if (state.strategy_type === "continuation") {
+    state.pattern_2 = null;
+    state.complementData = [];
+    goStep(5);
+    initStep5ContinuationAndIndicators();
+    return;
+  }
+  if (btn) {
+    btn.disabled = true;
+    btn.dataset.loading = "1";
+    btn.innerHTML = `<span class="spinner" style="width:20px;height:20px;display:inline-block;vertical-align:middle;border:2px solid rgba(255,255,255,0.4);border-top-color:#fff;border-radius:50%;animation:spin 0.8s linear infinite;"></span>`;
+  }
   apiFetch("/api/complement", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      anchor: state.anchor,
-      direction: state.direction,
+      anchor: state.pattern_1,
+      strategy_type: "reversal",
       instrument: state.instrument,
       interval: state.interval,
     }),
   })
     .then(r => r.json())
     .then(data => {
-      state.complementData = data;
-      renderComplements(data, false);
+      state.complementData = Array.isArray(data) ? data : [];
+      if (btn) {
+        btn.disabled = false;
+        btn.dataset.loading = "";
+        btn.textContent = "Continue \u2192";
+      }
+      goStep(4);
+      renderPatternGridStep4();
     })
     .catch(() => {
-      content.innerHTML = `<div style="color:var(--red); padding:20px;">Analysis failed.</div>`;
-    });
-}
-
-function renderComplements(data, isBackNav = false) {
-  const content = document.getElementById("complement-content");
-  content.innerHTML = "";
-
-  if (!data || data.length === 0) {
-    content.innerHTML = `<div style="color:var(--muted); padding:16px;">No strong combinations found.</div>`;
-  } else {
-    data.forEach((c, i) => {
-      const card = document.createElement("div");
-      card.className = "comp-card";
-      card.dataset.idx = i;
-      const nSig = Number(c.signals) || 0;
-      const wpStr = c.win_pct != null ? Number(c.win_pct).toFixed(1) : "0.0";
-      const connStatFallback = `${nSig} sig · ${wpStr}%`;
-      const orderedStat =
-        c.ordered_signals != null || c.ordered_win_pct != null
-          ? `${Number(c.ordered_signals) || 0} sig · ${c.ordered_win_pct != null ? Number(c.ordered_win_pct).toFixed(1) : "0.0"}%`
-          : connStatFallback;
-      const anyOrderStat =
-        c.any_order_signals != null || c.any_order_win_pct != null
-          ? `${Number(c.any_order_signals) || 0} sig · ${c.any_order_win_pct != null ? Number(c.any_order_win_pct).toFixed(1) : "0.0"}%`
-          : connStatFallback;
-      card.innerHTML = `
-        <div class="comp-card-top">
-          <span style="font-size:15px; font-weight:600;">${c.complement}</span>
-          <span class="comp-delta">+${c.delta}%</span>
-        </div>
-        <div class="comp-meta">${c.win_pct}% win rate · ${c.signals} signals</div>
-        <div class="connector-radios" data-card="${i}">
-          ${[
-            ["ordered",   "•——•›", "In sequence",   "Pattern 2 fires after Pattern 1 within the window"],
-            ["any-order", "•——•",  "Either order",   "Both patterns fire close together, any sequence"],
-          ].map(([cn, icon, title, sub]) => {
-            const statLine = cn === "ordered" ? orderedStat : anyOrderStat;
-            return `<button class="connector-radio${cn === normalizeConnector(c.connector || "ordered") ? " active" : ""}"
-               data-value="${cn}">
-               <span class="conn-icon">${icon}</span><span class="conn-title">${title}</span>
-               <span class="conn-sub">${sub}</span>
-               <span class="conn-stat">${statLine}</span>
-             </button>`;
-          }).join("")}
-        </div>`;
-      card.onclick = e => {
-        if (e.target.closest(".connector-radio")) return;
-        selectComplement(i);
-      };
-
-      const radiosEl = card.querySelector(".connector-radios");
-      radiosEl.addEventListener("click", e => {
-        const btn = e.target.closest(".connector-radio");
-        if (!btn) return;
-        e.stopPropagation();
-
-        // Global UI reset — clear ALL cards first
-        document.querySelectorAll("#complement-content .comp-card")
-          .forEach(c => c.classList.remove("selected"));
-
-        const cardIdx = parseInt(radiosEl.dataset.card, 10);
-        const val = normalizeConnector(btn.dataset.value);
-        state.complementData[cardIdx].connector = val;
-        state.connector = val;
-
-        const clickedCard = document.querySelector(
-          `#complement-content .comp-card[data-idx="${cardIdx}"]`
-        );
-        if (clickedCard) clickedCard.classList.add("selected");
-
-        radiosEl.querySelectorAll(".connector-radio").forEach(b => {
-          b.classList.toggle("active", b === btn);
-        });
-
-        selectComplement(cardIdx);
-        if (clickedCard) clickedCard.classList.add("flash");
-        if (clickedCard) setTimeout(() => clickedCard.classList.remove("flash"), 650);
-      });
-
-      content.appendChild(card);
-    });
-  }
-
-  const actionsEl = document.getElementById("step-actions");
-  actionsEl.innerHTML = "";
-  if (data && data.length > 0) {
-    const pair = document.createElement("div");
-    pair.className = "sticky-btn-pair";
-    const contBtn = document.createElement("button");
-    contBtn.className = "cta-btn";
-    contBtn.id = "comp-continue";
-    contBtn.disabled = true;
-    contBtn.textContent = "Continue →";
-    contBtn.onclick = () => { buildIndicatorStep(); goStep(6); };
-    const skipBtn = document.createElement("button");
-    skipBtn.className = "sticky-skip-btn";
-    skipBtn.textContent = "Skip";
-    skipBtn.onclick = () => { state.complement = null; buildIndicatorStep(); goStep(6); };
-    pair.appendChild(contBtn);
-    pair.appendChild(skipBtn);
-    actionsEl.appendChild(pair);
-  } else {
-    const skipBtn = document.createElement("button");
-    skipBtn.className = "cta-btn";
-    skipBtn.textContent = "Skip — use anchor only";
-    skipBtn.onclick = () => { state.complement = null; buildIndicatorStep(); goStep(6); };
-    actionsEl.appendChild(skipBtn);
-  }
-
-  if (isBackNav && state.complement && data && data.length) {
-    const idx = data.findIndex(x => x.complement === state.complement);
-    if (idx >= 0) {
-      state.complementData[idx].connector = normalizeConnector(state.connector || "ordered");
-      selectComplement(idx);
-    }
-  }
-}
-
-function selectComplement(idx) {
-  state.complement = state.complementData[idx].complement;
-  state.connector = normalizeConnector(state.complementData[idx].connector || "ordered");
-  const root = document.getElementById("complement-content");
-  if (root) {
-    root.querySelectorAll(".comp-card").forEach(card => {
-      card.classList.remove("selected");
-      if (parseInt(card.dataset.idx, 10) === idx) {
-        card.classList.add("selected");
+      if (btn) {
+        btn.disabled = false;
+        btn.dataset.loading = "";
+        btn.textContent = "Continue \u2192";
       }
+      alert("Could not load combination stats.");
     });
-  }
-  const btn = document.getElementById("comp-continue");
-  if (btn) btn.disabled = false;
 }
 
+function complementRowForPattern(patternName) {
+  const rows = state.complementData || [];
+  return rows.find(r => r.complement === patternName);
+}
 
-// ── Step 6: Indicators ────────────────────────────────────────────────────────
+function renderPatternGridStep4() {
+  const grid = document.getElementById("pattern-grid-step4");
+  const bottom = document.getElementById("pattern-grid-step4-skip");
+  if (!grid) return;
+  grid.innerHTML = "";
+
+  WIZARD_ANCHOR_PATTERNS.filter(d => d.name !== state.pattern_1 && d.kind === "reversal").forEach(def => {
+    const row = complementRowForPattern(def.name);
+    const nSig = row ? Number(row.signals) || 0 : 0;
+    const wpStr = row && row.win_pct != null ? Number(row.win_pct).toFixed(0) : "\u2014";
+    const tooFew = nSig < 5;
+    const card = document.createElement("div");
+    card.className = "pattern-card" + (tooFew ? " disabled" : "");
+    card.dataset.name = def.name;
+    card.innerHTML = `
+      <div class="pattern-illustration">${def.svg}</div>
+      <div class="card-main" style="flex:1; min-width:0;">
+        <div class="pattern-card-title-row">
+          <span class="pattern-name">${def.name}</span>
+          <span class="type-badge reversal">Reversal</span>
+        </div>
+        <div class="pattern-stats-line">With this: ${wpStr}% · ${nSig} signals</div>
+        ${tooFew ? `<div style="font-size:11px;color:var(--red);margin-top:4px;">Too few signals</div>` : ""}
+      </div>`;
+    if (!tooFew) {
+      card.onclick = () => selectPatternStep4(def.name);
+    }
+    grid.appendChild(card);
+  });
+
+  if (bottom) {
+    bottom.innerHTML = `
+      <div class="pattern-card skip-pattern-card selected" id="step4-skip-card" role="button">
+        <div class="card-main" style="flex:1;">
+          <div class="pattern-name">Use single pattern</div>
+          <div style="font-size:13px;color:var(--muted);margin-top:4px;">Continue with just your anchor</div>
+        </div>
+      </div>`;
+    document.getElementById("step4-skip-card").onclick = () => selectSkipStep4();
+  }
+
+  document.querySelectorAll("#step-4 .pattern-card:not(.skip-pattern-card)").forEach(c => {
+    c.classList.toggle("selected", state.pattern_2 && c.dataset.name === state.pattern_2);
+  });
+  if (!state.pattern_2 && bottom) {
+    document.getElementById("step4-skip-card")?.classList.add("selected");
+  }
+}
+
+function selectSkipStep4() {
+  state.pattern_2 = null;
+  document.querySelectorAll("#step-4 .pattern-card").forEach(c => c.classList.remove("selected"));
+  document.getElementById("step4-skip-card")?.classList.add("selected");
+  const tip = document.getElementById("ai-tip-4");
+  if (tip) { tip.style.display = "none"; tip.textContent = ""; }
+}
+
+function selectPatternStep4(name) {
+  state.pattern_2 = name;
+  document.getElementById("step4-skip-card")?.classList.remove("selected");
+  document.querySelectorAll("#step-4 .pattern-card").forEach(c => c.classList.remove("selected"));
+  document.querySelectorAll("#step-4 .pattern-card[data-name]").forEach(c => {
+    if (c.dataset.name === name) c.classList.add("selected");
+  });
+  const row = state.patternsData.find(p => p.name === name);
+  const tipEl = document.getElementById("ai-tip-4");
+  if (tipEl && row && row.tip) {
+    tipEl.style.display = "block";
+    typewriter(tipEl, "\u{1F4A1} " + row.tip, 28);
+  } else if (tipEl) {
+    tipEl.style.display = "none";
+    tipEl.textContent = "";
+  }
+}
+
+function initStep5ContinuationAndIndicators() {
+  buildContinuationCard();
+  buildIndicatorStep();
+}
+
+function buildContinuationCard() {
+  const wrap = document.getElementById("continuation-card-wrap");
+  if (!wrap) return;
+  if (state.strategy_type === "continuation") {
+    wrap.innerHTML = "";
+    state.continuation = null;
+    return;
+  }
+  const on = state.continuation != null;
+  wrap.innerHTML = `
+    <div class="toggle-card continuation-pattern-card ${on ? "on" : ""}" id="continuation-toggle-card">
+      <div style="display:flex;align-items:center;gap:14px;flex:1;min-width:0;">
+        <div class="pattern-illustration">${SVG_THREE_SOLDIERS}</div>
+        <div class="card-main">
+          <div class="pattern-card-title-row">
+            <span class="pattern-name">Three Soldiers / Crows</span>
+            <span class="type-badge continuation">Continuation</span>
+          </div>
+          <div class="card-desc" style="margin-top:4px;">Adds trend confirmation after your reversal sequence.</div>
+        </div>
+      </div>
+      <div class="toggle-dot"></div>
+    </div>`;
+  document.getElementById("continuation-toggle-card").onclick = () => {
+    const was = state.continuation;
+    state.continuation = was ? null : "Three Soldiers/Crows";
+    buildContinuationCard();
+    const tip = document.getElementById("ai-tip-5");
+    if (state.continuation) {
+      tip.style.display = "block";
+      typewriter(tip, "\u{1F4A1} Confirmation with Three Soldiers/Crows filters for stronger follow-through.", 24);
+    } else if (was) {
+      tip.style.display = "none";
+      tip.textContent = "";
+    }
+  };
+}
+
+function toggleAdvancedSl(ev) {
+  ev.preventDefault();
+  const blk = document.getElementById("advanced-sl-block");
+  const btn = document.getElementById("advanced-toggle-btn");
+  if (!blk || !btn) return;
+  const open = blk.classList.toggle("open");
+  btn.textContent = open ? "Advanced: adjust stop width \u25b4" : "Advanced: adjust stop width \u25be";
+}
+
+// ── Step 5: Indicators ────────────────────────────────────────────────────────
 function buildIndicatorStep() {
   const container = document.getElementById("indicator-cards");
   container.innerHTML = "";
@@ -1776,12 +1929,10 @@ function buildIndicatorStep() {
   state._indicatorBaselineForDisplay = null;
   state._indicatorFilteredSnapshot = {};
 
-  const options = state.direction === "trend"
-    ? [{ key: "ma_stable", title: "MA Stable", desc: "Moving averages aligned with your trade direction for the last 10 candles." }]
-    : [
-        { key: "ma_cross", title: "MA Cross", desc: "5 and 20-period moving averages crossed in your favour in the last 10 candles." },
-        { key: "rsi", title: "RSI Extreme", desc: "RSI was at an extreme level (overbought/oversold) before the signal." },
-      ];
+  const options = [
+    { key: "ma_cross", title: "MA Cross", desc: "5 and 20-period moving averages crossed in your favour in the last 10 candles." },
+    { key: "rsi", title: "RSI Extreme", desc: "RSI was at an extreme level (overbought/oversold) before the signal." },
+  ];
 
   options.forEach(opt => {
     const card = document.createElement("div");
@@ -1876,14 +2027,15 @@ function toggleIndicator(card, key) {
     deltaEl.className = "toggle-delta delta-loading";
     deltaEl.textContent = "checking…";
 
+    const eng = enginePatternPayload();
     apiFetch("/api/indicator-check", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        anchor: state.anchor,
-        complement: state.complement,
-        connector: normalizeConnector(state.connector || "ordered"),
-        direction: state.direction,
+        anchor: eng.anchor,
+        complement: eng.complement,
+        connector: eng.connector != null ? normalizeConnector(eng.connector) : null,
+        direction: "both",
         instrument: state.instrument,
         interval: state.interval,
         indicator_filter: buildIndicatorFilterObject(),
@@ -1938,31 +2090,32 @@ function toggleIndicator(card, key) {
 
 // ── Step 7: Session ───────────────────────────────────────────────────────────
 function buildSessionCheckBody() {
+  const p = buildWizardPayload();
+  const eng = enginePatternPayload();
   const body = {
-    instrument: state.instrument,
-    interval: state.interval,
-    direction: state.direction,
-    anchor: state.anchor,
-    complement: state.complement,
-    connector: normalizeConnector(state.connector || "ordered"),
-    sl_multiplier: state.slMult,
-    tp_multiplier: state.tpMult,
-    timeout: state.timeout,
+    instrument: p.instrument,
+    interval: p.interval,
+    direction: "both",
+    anchor: eng.anchor,
+    complement: eng.complement,
+    connector: eng.connector != null ? normalizeConnector(eng.connector) : null,
+    sl_multiplier: p.sl_multiplier,
+    tp_multiplier: p.tp_multiplier,
+    timeout: p.timeout,
   };
-  const indObj = buildIndicatorFilterObject();
-  if (indObj) body.indicator_filter = indObj;
+  if (p.indicator_filter) body.indicator_filter = p.indicator_filter;
   return body;
 }
 
 function setSessionStatLoading() {
-  document.querySelectorAll("#step-7 .session-card-stat").forEach(el => {
+  document.querySelectorAll("#step-6 .session-card-stat").forEach(el => {
     el.textContent = "...";
   });
 }
 
 function applySessionStatsPayload(d) {
   if (!d || d.error) return;
-  document.querySelectorAll("#step-7 .big-btn").forEach(btn => {
+  document.querySelectorAll("#step-6 .big-btn").forEach(btn => {
     const el = btn.querySelector(".session-card-stat");
     if (!el) return;
     const key = el.dataset.statKey;
@@ -1983,14 +2136,14 @@ function fetchSessionStats() {
     .then(r => r.json())
     .then(applySessionStatsPayload)
     .catch(() => {
-      document.querySelectorAll("#step-7 .session-card-stat").forEach(el => {
+      document.querySelectorAll("#step-6 .session-card-stat").forEach(el => {
         el.textContent = "—";
       });
     });
 }
 
 function selectSession(btn) {
-  document.querySelectorAll("#step-7 .big-btn").forEach(b => b.classList.remove("selected"));
+  document.querySelectorAll("#step-6 .big-btn").forEach(b => b.classList.remove("selected"));
   btn.classList.add("selected");
   state.session = btn.dataset.session;
   fetchSessionStats();
@@ -2021,28 +2174,54 @@ function updateSlTpPipDisplay() {
   }
 }
 
-function onSliderChange() {
-  const slRaw = parseInt(document.getElementById("sl-slider").value) / 10;
-  let tpRaw = parseInt(document.getElementById("tp-slider").value) / 10;
-
-  // TP must be at least 0.5 above SL
-  if (tpRaw < slRaw + 0.5) {
-    tpRaw = slRaw + 0.5;
-    document.getElementById("tp-slider").value = Math.round(tpRaw * 10);
-  }
-
-  state.slMult = slRaw;
+function onRiskRewardSliderChange() {
+  const el = document.getElementById("tp-rr-slider");
+  if (!el) return;
+  let tpRaw = parseInt(el.value, 10) / 10;
+  if (tpRaw < 1.5) tpRaw = 1.5;
+  if (tpRaw > 5.0) tpRaw = 5.0;
   state.tpMult = tpRaw;
-  document.getElementById("sl-val").textContent = slRaw.toFixed(1) + "×";
-  document.getElementById("tp-val").textContent = tpRaw.toFixed(1) + "×";
-
+  const rr = document.getElementById("rr-display");
+  if (rr) rr.textContent = `1 : ${tpRaw.toFixed(1)}`;
+  const tip6 = document.getElementById("ai-tip-6");
+  if (tip6) {
+    if (tpRaw > 4.0) {
+      tip6.style.display = "block";
+      tip6.textContent =
+        "High reward targets fire less often — your signal count will drop.";
+    } else {
+      tip6.style.display = "none";
+      tip6.textContent = "";
+    }
+  }
   updateSlTpPipDisplay();
-
   clearTimeout(previewTimer);
   previewTimer = setTimeout(() => {
     fetchPreview();
     fetchTimeoutStats();
-  }, 500);
+  }, 400);
+}
+
+function onAdvancedSlChange() {
+  const slEl = document.getElementById("sl-slider");
+  if (!slEl) return;
+  let slRaw = parseInt(slEl.value, 10) / 10;
+  state.slMult = slRaw;
+  const slLab = document.getElementById("sl-val");
+  if (slLab) slLab.textContent = slRaw.toFixed(1) + "\u00d7";
+  if (state.tpMult <= slRaw) {
+    state.tpMult = Math.min(5.0, slRaw + 0.5);
+    const rrSlider = document.getElementById("tp-rr-slider");
+    if (rrSlider) rrSlider.value = String(Math.round(state.tpMult * 10));
+    const rr = document.getElementById("rr-display");
+    if (rr) rr.textContent = `1 : ${state.tpMult.toFixed(1)}`;
+  }
+  updateSlTpPipDisplay();
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(() => {
+    fetchPreview();
+    fetchTimeoutStats();
+  }, 400);
 }
 
 function timeoutLabel(candles) {
@@ -2073,6 +2252,10 @@ function onTimeoutChange(val) {
   });
   clearTimeout(previewTimer);
   updateTimeoutLabels();
+  previewTimer = setTimeout(() => {
+    fetchPreview();
+    fetchTimeoutStats();
+  }, 300);
 }
 
 function fetchPreview() {
@@ -2113,33 +2296,15 @@ function fetchPreview() {
 
 // ── Step 9: Summary ───────────────────────────────────────────────────────────
 function buildConfig(preview) {
-  // Consolidate the current wizard state into the backend config payload expected by
-  // `/api/finalise`. This function is used in two modes:
-  // - preview=true: light-weight response to update the live preview on the sliders step
-  // - preview=false: full backtest payload (charts when not in preview mode)
-  const cfg = {
-    instrument: state.instrument,
-    interval: state.interval,
-    direction: state.direction,
-    anchor: state.anchor,
-    complement: state.complement,
-    connector: normalizeConnector(state.connector || "ordered"),
-    session_filter: state.session !== "All" ? state.session : null,
-    sl_multiplier: state.slMult,
-    tp_multiplier: state.tpMult,
-    timeout: state.timeout,
-    device_uuid: state.deviceUuid,
-  };
-  const indObj = buildIndicatorFilterObject();
-  if (indObj) {
-    cfg.indicator_filter = indObj;
-  }
+  const cfg = buildWizardPayload();
+  delete cfg.name;
   if (preview) cfg.preview = true;
+  else delete cfg.preview;
   return cfg;
 }
 
 function fetchTimeoutStats() {
-  document.querySelectorAll("#step-8 .timeout-btn-l2").forEach(el => {
+  document.querySelectorAll("#step-6 .timeout-btn-l2").forEach(el => {
     el.textContent = "...";
   });
   apiFetch("/api/timeout-check", {
@@ -2150,12 +2315,12 @@ function fetchTimeoutStats() {
     .then(r => r.json())
     .then(d => {
       if (d.error) {
-        document.querySelectorAll("#step-8 .timeout-btn-l2").forEach(el => {
+        document.querySelectorAll("#step-6 .timeout-btn-l2").forEach(el => {
           el.textContent = "—";
         });
         return;
       }
-      document.querySelectorAll("#step-8 .timeout-btn").forEach(b => {
+      document.querySelectorAll("#step-6 .timeout-btn").forEach(b => {
         const val = parseInt(b.dataset.val, 10);
         const key = String(val);
         const row = d[key];
@@ -2170,34 +2335,15 @@ function fetchTimeoutStats() {
       });
     })
     .catch(() => {
-      document.querySelectorAll("#step-8 .timeout-btn-l2").forEach(el => {
+      document.querySelectorAll("#step-6 .timeout-btn-l2").forEach(el => {
         el.textContent = "—";
       });
     });
 }
 
-// Called when going to step 9 from step 8
-const _origGoStep = goStep;
-function goStep(n) {
-  // Hook the step transition to run side effects when the user reaches specific steps.
-  // Note: there is a second "clean" `goStep` implementation later in the file which
-  // overrides this one. Both versions preserve the idea: step transitions can trigger
-  // preview fetches (step 8) and summary fetch (step 9).
-  _origGoStep(n);
-  if (n === 8) {
-    // initialise sliders (final goStep also refreshes timeout stats on step 8)
-    document.getElementById("sl-slider").value = 10;
-    document.getElementById("tp-slider").value = 30;
-    onSliderChange();
-  }
-  if (n === 9) {
-    loadSummary();
-  }
-}
-
-/** Uses `state.finalResult` from the step-9 `loadSummary` request (no network). Shows charts, stats table, and trade log. */
+/** Uses `state.finalResult` from the step-7 `loadSummary` request (no network). Shows charts, stats table, and trade log. */
 function revealStep9ResultsFromFinalise() {
-  if (state.currentStep !== 9) return;
+  if (state.currentStep !== 7) return;
   const d = state.finalResult;
   if (!d || !Array.isArray(d.chart_trades)) return;
   document.getElementById("wizard-step9-form").classList.add("hidden");
@@ -2209,7 +2355,6 @@ function revealStep9ResultsFromFinalise() {
 }
 
 function loadSummary() {
-  // Step 9: one POST `/api/finalise` with no_persist (full charts + stats, no save_strategy).
   const statsEl = document.getElementById("summary-stats");
   const xfEl = document.getElementById("xf-tbody");
   statsEl.innerHTML = `<div class="spinner-wrap" style="padding:30px;"><div class="spinner"></div></div>`;
@@ -2239,8 +2384,10 @@ function loadSummary() {
       statsEl.innerHTML = `
         <div class="stat-row"><span class="stat-label">Instrument</span><span class="stat-value">${state.instrument}</span></div>
         <div class="stat-row"><span class="stat-label">Timeframe</span><span class="stat-value">${state.interval}</span></div>
-        <div class="stat-row"><span class="stat-label">Anchor pattern</span><span class="stat-value">${state.anchor}</span></div>
-        ${state.complement ? `<div class="stat-row"><span class="stat-label">Complement</span><span class="stat-value">${state.complement} (${normalizeConnector(state.connector)})</span></div>` : ""}
+        <div class="stat-row"><span class="stat-label">Strategy</span><span class="stat-value">${state.strategy_type}</span></div>
+        <div class="stat-row"><span class="stat-label">Primary pattern</span><span class="stat-value">${state.pattern_1}</span></div>
+        ${state.pattern_2 ? `<div class="stat-row"><span class="stat-label">Second reversal</span><span class="stat-value">${state.pattern_2}</span></div>` : ""}
+        ${state.continuation ? `<div class="stat-row"><span class="stat-label">Confirmation</span><span class="stat-value">${state.continuation}</span></div>` : ""}
         ${state.indicator ? `<div class="stat-row"><span class="stat-label">Indicator</span><span class="stat-value" style="word-break:break-all;">${JSON.stringify(buildIndicatorFilterObject())}</span></div>` : ""}
         ${state.session !== "All" ? `<div class="stat-row"><span class="stat-label">Session</span><span class="stat-value">${state.session}</span></div>` : ""}
         <div class="stat-row"><span class="stat-label">SL / TP</span><span class="stat-value">${state.slMult}× / ${state.tpMult}×</span></div>
@@ -2685,7 +2832,9 @@ function quickTryTimeframe(ivl) {
   const savedInst = state.instrument;
   Object.assign(state, {
     instrument: savedInst, interval: ivl,
-    anchor: null, anchorTip: "", complement: null, connector: "ordered",
+    strategy_type: "reversal",
+    pattern_1: "", pattern_2: null, continuation: null,
+    anchorTip: "", connector: "ordered",
     indicator: null,
     activeIndicators: null,
     _indicatorBaselineForDisplay: null,
@@ -2713,7 +2862,7 @@ function fetchAiCommentary(cfg, result) {
   const payload = {
     instrument: cfg.instrument,
     interval: cfg.interval,
-    direction: cfg.direction || state.direction,
+    direction: "both",
     anchor: cfg.anchor,
     complement: cfg.complement || null,
     session_filter: cfg.session_filter || null,
@@ -2847,7 +2996,9 @@ function restartWizard() {
   const savedIvl  = state.interval;
   Object.assign(state, {
     instrument: savedInst, interval: savedIvl,
-    anchor: null, anchorTip: "", complement: null, connector: "ordered",
+    strategy_type: "reversal",
+    pattern_1: "", pattern_2: null, continuation: null,
+    anchorTip: "", connector: "ordered",
     indicator: null,
     activeIndicators: null,
     _indicatorBaselineForDisplay: null,
@@ -2861,81 +3012,98 @@ function restartWizard() {
   goStep(3);
 }
 
-// ── Init step 8 on enter ──────────────────────────────────────────────────────
-// Patch goStep to handle step-8 init (we need to override after definition)
-// The above goStep override handles this — but it calls _origGoStep which is the
-// original function reference. Since JS hoists vars but not functions declared
-// with const/let, we need a different approach. Let's use a wrapper instead.
-
-// Actually the code above won't work because of the self-referencing override.
-// Let me use a different pattern: hook into the step transition.
 </script>
 
 <script>
-// Re-implement goStep cleanly (overrides the duplicate above)
 function goStep(n) {
-  // Wizard state machine (final implementation):
-  // - Adds a "slide-back" animation class when navigating backwards.
-  // - Calls `updateStepActions(n)` to control the CTA row (bottom fixed actions).
-  // - Triggers preview fetch (step 8) and summary fetch (step 9).
+  if (n < state.currentStep) {
+    if (n <= 3) {
+      state.pattern_1 = "";
+      state.strategy_type = "reversal";
+      document.querySelectorAll("#step-3 .pattern-card")
+        .forEach(c => c.classList.remove("selected"));
+    }
+    if (n <= 4) {
+      state.pattern_2 = null;
+      document.querySelectorAll("#step-4 .pattern-card")
+        .forEach(c => c.classList.remove("selected"));
+    }
+    if (n <= 5) {
+      state.continuation = null;
+      state.indicator = null;
+      state.activeIndicators = new Set();
+    }
+  }
+
   const goingBack = n < state.currentStep;
   document.querySelectorAll(".step").forEach(s => s.classList.remove("active", "slide-back"));
   const nextEl = document.getElementById("step-" + n);
   nextEl.classList.add("active");
   if (goingBack) nextEl.classList.add("slide-back");
   state.currentStep = n;
-  document.getElementById("step-indicator").textContent = n + " / 9";
-  document.getElementById("progress-fill").style.width = (n / 9 * 100) + "%";
+  document.getElementById("step-indicator").textContent = n + " / 7";
+  document.getElementById("progress-fill").style.width = (n / 7 * 100) + "%";
   document.getElementById("back-btn").style.display = n > 1 ? "block" : "none";
   window.scrollTo(0, 0);
   updateStepActions(n);
 
-  if (n === 5 && goingBack && Array.isArray(state.complementData)) {
-    renderComplements(state.complementData, true);
+  if (n === 3) {
+    loadPatternsStep3();
   }
-  if (n === 7) {
-    fetchSessionStats();
+  if (n === 4 && Array.isArray(state.complementData)) {
+    renderPatternGridStep4();
   }
-  if (n === 8) {
+  if (n === 5) {
+    initStep5ContinuationAndIndicators();
+  }
+  if (n === 6) {
     updateTimeoutLabels();
-    document.getElementById("sl-slider").value = Math.round(state.slMult * 10);
-    document.getElementById("tp-slider").value = Math.round(state.tpMult * 10);
-    document.getElementById("sl-val").textContent = state.slMult.toFixed(1) + "×";
-    document.getElementById("tp-val").textContent = state.tpMult.toFixed(1) + "×";
+    const slS = document.getElementById("sl-slider");
+    if (slS) slS.value = String(Math.round(state.slMult * 10));
+    const tpRr = document.getElementById("tp-rr-slider");
+    if (tpRr) tpRr.value = String(Math.round(state.tpMult * 10));
+    const rr = document.getElementById("rr-display");
+    if (rr) rr.textContent = `1 : ${state.tpMult.toFixed(1)}`;
+    const slv = document.getElementById("sl-val");
+    if (slv) slv.textContent = state.slMult.toFixed(1) + "\u00d7";
+    const tip6 = document.getElementById("ai-tip-6");
+    if (tip6) {
+      if (state.tpMult > 4.0) {
+        tip6.style.display = "block";
+        tip6.textContent =
+          "High reward targets fire less often — your signal count will drop.";
+      } else {
+        tip6.style.display = "none";
+        tip6.textContent = "";
+      }
+    }
     updateSlTpPipDisplay();
     clearTimeout(previewTimer);
-    fetchTimeoutStats();
-    fetchPreview();
+    Promise.all([fetchSessionStats(), fetchPreview()]).then(() => fetchTimeoutStats());
   }
-  if (n === 9) {
+  if (n === 7) {
     loadSummary();
   }
 }
 
 function updateStepActions(n) {
-  // Bottom CTA row that changes per step:
-  // - Step 4: "Analyse combinations" (disabled until an anchor is selected)
-  // - Step 5: populated by `renderComplements` once suggestions are loaded
-  // - Steps 6–8: simple "Continue" buttons
-  // - Step 8→9: "Finalise strategy" which triggers the summary call
   const el   = document.getElementById("step-actions");
   const hint = document.getElementById("scroll-hint");
   hint.classList.add("hidden");
-  if (n === 4) {
+  if (n === 3) {
     el.style.display = "block";
-    el.innerHTML = `<button class="cta-btn" id="btn-anchor-continue" disabled onclick="continueToComplement()">Analyse combinations →</button>`;
+    el.innerHTML = `<button class="cta-btn" id="btn-step3-continue" disabled onclick="continueFromStep3()">Continue \u2192</button>`;
+    const b = document.getElementById("btn-step3-continue");
+    if (b) b.disabled = !state.pattern_1;
+  } else if (n === 4) {
+    el.style.display = "block";
+    el.innerHTML = `<button class="cta-btn" onclick="goStep(5)">Continue \u2192</button>`;
   } else if (n === 5) {
     el.style.display = "block";
-    el.innerHTML = "";  // populated async by renderComplements
+    el.innerHTML = `<button class="cta-btn" onclick="goStep(6)">Continue \u2192</button>`;
   } else if (n === 6) {
     el.style.display = "block";
-    el.innerHTML = `<button class="cta-btn" onclick="goStep(7)">Continue →</button>`;
-  } else if (n === 7) {
-    el.style.display = "block";
-    el.innerHTML = `<button class="cta-btn" onclick="goStep(8)">Continue →</button>`;
-  } else if (n === 8) {
-    el.style.display = "block";
-    el.innerHTML = `<button class="cta-btn" onclick="goStep(9)">Finalise strategy →</button>`;
+    el.innerHTML = `<button class="cta-btn" onclick="goStep(7)">Preview strategy \u2192</button>`;
   } else {
     el.style.display = "none";
   }
@@ -2943,7 +3111,7 @@ function updateStepActions(n) {
 
 function checkScrollHint() {
   const hint = document.getElementById("scroll-hint");
-  if (state.currentStep !== 4) { hint.classList.add("hidden"); return; }
+  if (state.currentStep !== 3) { hint.classList.add("hidden"); return; }
   const list = document.getElementById("pattern-list");
   if (!list || !list.children.length) { hint.classList.add("hidden"); return; }
   const rect = list.getBoundingClientRect();
@@ -2971,10 +3139,14 @@ function labelToInstrumentCode(label) {
 function applyRowToState(row) {
   state.instrument = labelToInstrumentCode(row.instrument);
   state.interval = row.interval || "5m";
-  state.direction = row.direction || "both";
-  state.anchor = row.anchor || null;
+  state.strategy_type = row.strategy_type || "reversal";
+  state.pattern_1 = row.pattern_1 || row.anchor || "";
+  state.pattern_2 = row.pattern_2 != null && String(row.pattern_2).trim() !== "" ? row.pattern_2 : null;
+  state.continuation = row.continuation != null && String(row.continuation).trim() !== "" ? row.continuation : null;
+  if (!state.pattern_2 && row.complement && row.complement !== state.continuation) {
+    state.pattern_2 = row.complement;
+  }
   state.anchorTip = "";
-  state.complement = row.complement || null;
   state.connector = normalizeConnector(row.connector || "ordered");
   state.session = (row.session && row.session !== "All") ? row.session : "All";
   state.slMult = parseFloat(row.sl_mult) || 1;
@@ -3002,13 +3174,13 @@ function applyRowToState(row) {
   const ni = document.getElementById("name-input");
   if (ni) ni.value = (row.strategy_name || "").trim() || generateName();
   const sl = document.getElementById("sl-slider");
-  const tp = document.getElementById("tp-slider");
-  if (sl) sl.value = Math.round(state.slMult * 10);
-  if (tp) tp.value = Math.round(state.tpMult * 10);
+  const tpRr = document.getElementById("tp-rr-slider");
+  if (sl) sl.value = String(Math.round(state.slMult * 10));
+  if (tpRr) tpRr.value = String(Math.round(state.tpMult * 10));
   const slv = document.getElementById("sl-val");
-  const tpv = document.getElementById("tp-val");
+  const rr = document.getElementById("rr-display");
   if (slv) slv.textContent = state.slMult.toFixed(1) + "×";
-  if (tpv) tpv.textContent = state.tpMult.toFixed(1) + "×";
+  if (rr) rr.textContent = `1 : ${state.tpMult.toFixed(1)}`;
   document.querySelectorAll(".timeout-btn").forEach(b => {
     b.classList.toggle("active", parseInt(b.dataset.val, 10) === state.timeout);
   });
@@ -3025,7 +3197,7 @@ function openWizardFromDraft(row) {
   applyRowToState(row);
   document.getElementById("main").classList.add("wizard-field-glow");
   closeStrategiesPanel();
-  goStep(9);
+  goStep(7);
 }
 
 function openWizardFromLive(row) {
@@ -3043,7 +3215,7 @@ function openWizardFromLive(row) {
   applyRowToState(row);
   document.getElementById("main").classList.add("wizard-field-glow");
   closeStrategiesPanel();
-  goStep(9);
+  goStep(7);
 }
 
 function buildStrategyLifecycleBody(nameOverride) {
@@ -3052,20 +3224,25 @@ function buildStrategyLifecycleBody(nameOverride) {
   const inst = INSTRUMENTS.find(i => i.code === state.instrument);
   const ni = document.getElementById("name-input");
   const name = (nameOverride != null ? nameOverride : (ni && ni.value) || "").trim() || generateName();
+  const wp = buildWizardPayload();
   return {
     username: creds.username,
     pin: creds.pin,
     strategy_name: name,
     instrument: inst ? inst.label : state.instrument,
     interval: state.interval,
-    anchor: state.anchor,
-    complement: state.complement,
-    connector: normalizeConnector(state.connector || "ordered"),
+    strategy_type: wp.strategy_type,
+    pattern_1: wp.pattern_1,
+    pattern_2: state.pattern_2,
+    continuation: state.continuation,
+    anchor: wp.anchor,
+    complement: wp.complement,
+    connector: normalizeConnector(wp.connector || "ordered"),
     session: state.session || "All",
     sl_mult: state.slMult,
     tp_mult: state.tpMult,
     timeout: state.timeout,
-    direction: state.direction,
+    direction: "both",
     indicator_filter: buildIndicatorFilterObject() || null,
   };
 }
@@ -3422,7 +3599,7 @@ function loadStrategiesPanel() {
   const creds = loadUserCreds();
   if (!creds || !creds.username) {
     body.innerHTML = `<div style="padding:24px 8px; text-align:center; color:var(--muted); font-size:14px; line-height:1.65;">
-      No account found. Use <strong>Save to Draft</strong> or <strong>Promote to Live</strong> on step 9, or register below.
+      No account found. Use <strong>Save to Draft</strong> or <strong>Promote to Live</strong> on step 7, or register below.
     </div>`;
     return;
   }
@@ -3605,17 +3782,25 @@ function fetchStratPnl(s, card) {
   const inst = INSTRUMENTS.find(i => i.label === s.instrument || i.code === s.instrument);
   const instCode = inst ? inst.code : "EURUSD";
   const tickSize = PIP_SIZES[instCode] != null ? PIP_SIZES[instCode] : 0.0001;
+  const anchor = s.pattern_1 || s.anchor;
+  const hasP2 = s.pattern_2 != null && String(s.pattern_2).trim() !== "";
+  const hasCont = s.continuation != null && String(s.continuation).trim() !== "";
+  let complement = hasP2 ? s.pattern_2 : (hasCont ? s.continuation : (s.complement || null));
+  let connector = null;
+  if (complement != null && String(complement).trim() !== "") {
+    connector = hasP2 ? "any-order" : "ordered";
+  }
   const payload = {
     instrument:   instCode,
     interval:     s.interval || "5m",
-    anchor:       s.anchor,
-    complement:   s.complement || null,
-    connector:    normalizeConnector(s.connector || "ordered"),
+    anchor:       anchor,
+    complement:   complement,
+    connector:    connector,
     session_filter: s.session !== "All" ? s.session : null,
     sl_multiplier: s.sl_mult,
     tp_multiplier: s.tp_mult,
     timeout:      s.timeout || 1000,
-    direction:    s.direction || "both",
+    direction:    "both",
     go_live_at:   s.go_live_at || null,
     tick_size:    tickSize,
   };
