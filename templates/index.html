@@ -3518,6 +3518,10 @@ function buildLiveStratCard(l) {
         <div class="live-strat-stat-row"><span>Since live · signal replay</span><span class="live-strat-stat-vals live-stat-bt">Calculating…</span></div>
         <div class="live-strat-stat-row"><span>Since live · all entries</span><span class="live-strat-stat-vals live-stat-all">—</span></div>
         <div class="live-strat-stat-row"><span>Since live · clean only</span><span class="live-strat-stat-vals live-stat-clean">—</span></div>
+        <div class="live-strat-stat-row">
+          <span>30d backtest</span>
+          <span class="live-strat-stat-vals live-stat-bt30">Calculating…</span>
+        </div>
       </div>
     </div>
     <div style="margin-top:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
@@ -3606,6 +3610,11 @@ function fetchStratPnl(s, card) {
   const btEl = card.querySelector(".live-stat-bt");
   const allEl = card.querySelector(".live-stat-all");
   const cleanEl = card.querySelector(".live-stat-clean");
+  const bt30El = card.querySelector(".live-stat-bt30");
+
+  const savedAt30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const { go_live_at: _goLive, tick_size: _tick, ...pnlPayloadBase } = payload;
+  const pnlPayload = Object.assign({}, pnlPayloadBase, { saved_at: savedAt30d });
 
   apiFetch("/api/strategy/executor-pnl", {
     method: "POST",
@@ -3614,7 +3623,7 @@ function fetchStratPnl(s, card) {
   })
     .then(r => r.json())
     .then(ex => {
-      if (!btEl || !allEl || !cleanEl) return;
+      if (!btEl || !allEl || !cleanEl) return null;
       if (!ex || ex.error) {
         btEl.textContent = "Unavailable";
         allEl.textContent = "Unavailable";
@@ -3622,7 +3631,7 @@ function fetchStratPnl(s, card) {
         btEl.style.color = "var(--muted)";
         allEl.style.color = "var(--muted)";
         cleanEl.style.color = "var(--muted)";
-        return;
+        return null;
       }
       const noExecSignals = ex.insufficient === true || !ex.raw || Number(ex.raw.signals) === 0;
       if (noExecSignals) {
@@ -3637,7 +3646,7 @@ function fetchStratPnl(s, card) {
           dot0.classList.remove("strat-dot-amber", "strat-dot-green", "strat-dot-red");
           dot0.classList.add("strat-dot-amber");
         }
-        return;
+        return null;
       }
       const fmt = (blk) => {
         const line = formatLiveStatPnlLine(blk || {});
@@ -3660,11 +3669,33 @@ function fetchStratPnl(s, card) {
         dot.classList.remove("strat-dot-amber", "strat-dot-green", "strat-dot-red");
         dot.classList.add(pnl > 0 ? "strat-dot-green" : pnl < 0 ? "strat-dot-red" : "strat-dot-amber");
       }
+      return null;
+    })
+    .then(() =>
+      apiFetch("/api/strategy-pnl", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(pnlPayload),
+      }).then(r => r.json())
+    )
+    .then(bt30 => {
+      if (!bt30El) return;
+      if (!bt30 || bt30.error) {
+        bt30El.textContent = "Unavailable";
+        bt30El.style.color = "var(--muted)";
+        return;
+      }
+      const line = formatLiveStatPnlLine(bt30);
+      const pnl = bt30.cum_net ?? 0;
+      const col = pnl > 0 ? "var(--green)" : pnl < 0 ? "var(--red)" : "var(--muted)";
+      bt30El.textContent = line;
+      bt30El.style.color = col;
     })
     .catch(() => {
       if (btEl) { btEl.textContent = "Unavailable"; btEl.style.color = "var(--muted)"; }
       if (allEl) { allEl.textContent = "Unavailable"; allEl.style.color = "var(--muted)"; }
       if (cleanEl) { cleanEl.textContent = "Unavailable"; cleanEl.style.color = "var(--muted)"; }
+      if (bt30El) { bt30El.textContent = "Unavailable"; bt30El.style.color = "var(--muted)"; }
     });
 }
 
