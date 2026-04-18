@@ -1896,21 +1896,42 @@ def _executor_read_continuous_series(oanda_instrument: str, go_live_ts: pd.Times
         ts_db = go_live_ts
 
     sql = """
-        SELECT DISTINCT ON ((candle->>'candle_time')::timestamptz)
-            ep.ts AS poll_ts,
-            ep.bid,
-            ep.ask,
-            (candle->>'candle_time')::timestamptz AS candle_time,
-            (candle->'ohlc'->>'o')::numeric AS open,
-            (candle->'ohlc'->>'h')::numeric AS high,
-            (candle->'ohlc'->>'l')::numeric AS low,
-            (candle->'ohlc'->>'c')::numeric AS close,
-            candle->'patterns' AS patterns
-        FROM executor_poll_log ep,
-        LATERAL jsonb_array_elements(ep.candle_history) AS candle
-        WHERE ep.instrument = %s
-        AND ep.ts >= %s
-        ORDER BY (candle->>'candle_time')::timestamptz ASC, ep.ts DESC
+        WITH candles AS (
+            SELECT DISTINCT ON ((candle->>'candle_time')::timestamptz)
+                (candle->>'candle_time')::timestamptz AS candle_time,
+                (candle->'ohlc'->>'o')::numeric AS open,
+                (candle->'ohlc'->>'h')::numeric AS high,
+                (candle->'ohlc'->>'l')::numeric AS low,
+                (candle->'ohlc'->>'c')::numeric AS close,
+                candle->'patterns' AS patterns
+            FROM executor_poll_log ep,
+            LATERAL jsonb_array_elements(ep.candle_history) AS candle
+            WHERE ep.instrument = %s
+            AND ep.ts >= %s
+            ORDER BY (candle->>'candle_time')::timestamptz ASC, ep.ts DESC
+        ),
+        quotes AS (
+            SELECT DISTINCT ON (
+                date_trunc('minute', ts - interval '1 second')
+            )
+                date_trunc('minute', ts - interval '1 second') AS candle_time,
+                bid,
+                ask
+            FROM executor_poll_log
+            WHERE instrument = %s
+            AND ts >= %s
+            AND bid IS NOT NULL
+            AND ask IS NOT NULL
+            ORDER BY date_trunc('minute', ts - interval '1 second') ASC, ts ASC
+        )
+        SELECT
+            c.candle_time,
+            c.open, c.high, c.low, c.close,
+            c.patterns,
+            q.bid, q.ask
+        FROM candles c
+        LEFT JOIN quotes q ON q.candle_time = c.candle_time
+        ORDER BY c.candle_time ASC
     """
 
     conn = None
@@ -1918,7 +1939,7 @@ def _executor_read_continuous_series(oanda_instrument: str, go_live_ts: pd.Times
     try:
         conn = psycopg2.connect(url)
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(sql, (inst, ts_db))
+            cur.execute(sql, (inst, ts_db, inst, ts_db))
             raw = cur.fetchall()
     except Exception:
         log.exception("executor_pnl: continuous series query failed")
