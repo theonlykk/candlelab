@@ -2177,9 +2177,9 @@ def _executor_compute_from_dataframe(
         has_real_quote = False
         entry_all = entry_raw  # fallback
         spread_pips = 0.0
-        if i + 1 < n:
-            ask_next = df["ask"].iloc[i + 1]
-            bid_next = df["bid"].iloc[i + 1]
+        if i < len(df):
+            ask_next = df["ask"].iloc[i]
+            bid_next = df["bid"].iloc[i]
             if pd.notna(ask_next) and pd.notna(bid_next):
                 ask_next = float(ask_next)
                 bid_next = float(bid_next)
