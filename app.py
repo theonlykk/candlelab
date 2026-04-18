@@ -2283,8 +2283,9 @@ def _executor_compute_from_dataframe(
                 entry_all = ask_next if direction_val == 1 else bid_next
                 spread_pips = (ask_next - bid_next) / pip
 
-        sl_a = entry_all - direction_val * sl_mult * trade_atr
-        tp_a = entry_all + direction_val * tp_mult * trade_atr
+        # SL and TP are fixed at signal-time levels — not shifted with fill price
+        sl_a = sl_r
+        tp_a = tp_r
 
         # Clean threshold: exclude wide-spread entries
         instr_key = instrument_label.replace("/", "_")
@@ -2447,8 +2448,13 @@ def _executor_compute_trade_detail(
             is_clean = spread_pips_val <= clean_threshold
 
         replay_entry = float(ohlc["open"].iloc[i + 1])
-        sl_r = replay_entry - direction_val * sl_mult * trade_atr
-        tp_r = replay_entry + direction_val * tp_mult * trade_atr
+
+        # Apply same SL floor as _simulate_trades
+        sl_dist = _sl_distance_price(trade_atr, pip)
+        tp_dist = sl_dist * (tp_mult / sl_mult)
+
+        sl_r = replay_entry - direction_val * sl_dist
+        tp_r = replay_entry + direction_val * tp_dist
 
         end = min(i + 1 + int(timeout), n)
         sub = ohlc.iloc[i + 1 : end]
@@ -2470,9 +2476,10 @@ def _executor_compute_trade_detail(
         )
         # Deduct flat spread cost from replay P&L
         pip_val = PIP_VALUES.get(instrument_label, 10.0)
+        sl_pips_r = sl_dist / pip if pip > 0 else 0.0
         lot_size_r = (
-            (RISK_DOLLARS / ((sl_mult * trade_atr / pip) * pip_val))
-            if trade_atr > 0 and pip > 0 and pip_val > 0
+            (RISK_DOLLARS / (sl_pips_r * pip_val))
+            if sl_pips_r > 0 and pip_val > 0
             else 0.0
         )
         replay_pnl = round(pnl_r - spread_cost_pips * pip_val * lot_size_r, 2)
@@ -2500,8 +2507,9 @@ def _executor_compute_trade_detail(
         all_result = None
         all_pnl = None
         if has_quote:
-            sl_a = all_entry - direction_val * sl_mult * trade_atr
-            tp_a = all_entry + direction_val * tp_mult * trade_atr
+            # SL and TP are fixed at signal-time levels — not shifted with fill price
+            sl_a = sl_r
+            tp_a = tp_r
             win_a, pnl_a = _executor_simulate_trade_pnl(
                 all_entry, direction_val, sl_a, tp_a, trade_atr,
                 sl_mult, tp_mult, pip, instrument_label, fh, fl, fc, op_next,
