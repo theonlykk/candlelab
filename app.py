@@ -626,6 +626,7 @@ def index():
 
 @app.route("/chart/<int:strategy_id>")
 def strategy_chart(strategy_id):
+    """Live strategy PNG: wide scrollable candles, combo signals, trade overlays (`render_chart_with_trades`)."""
     init_strategy_tables()
     row = _fetch_live_strategy_row(strategy_id)
     if row is None:

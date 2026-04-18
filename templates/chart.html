@@ -63,8 +63,9 @@
     <span><strong>Go live</strong> — {{ go_live_at }}</span>
   </div>
   {% if chart_b64 %}
-  <div class="chart-wrap">
-    <img src="data:image/png;base64,{{ chart_b64 | safe }}" alt="Strategy chart" />
+  <div style="overflow-x:auto; overflow-y:hidden; width:100%;">
+    <img src="data:image/png;base64,{{ chart_b64 | safe }}" alt="Strategy chart"
+         style="height:600px; width:auto; display:block; max-width:none;" />
   </div>
   {% else %}
   <p class="empty-note">Not enough OHLC data to render a chart yet.</p>

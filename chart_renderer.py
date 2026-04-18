@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import matplotlib.gridspec as gridspec
 import matplotlib.transforms as mtransforms
-from matplotlib.ticker import FixedLocator, FuncFormatter, MaxNLocator, NullLocator
+from matplotlib.ticker import FixedLocator, FuncFormatter, MaxNLocator, NullFormatter, NullLocator
 
 # Colour palette
 C_BULL        = "#26a69a"
@@ -153,6 +153,49 @@ def _apply_two_level_datetime_xaxis(ax_bottom, window_df: pd.DataFrame) -> None:
         width=0.7,
         pad=14,
     )
+
+
+def _apply_daily_only_xaxis(ax_bottom, window_df: pd.DataFrame) -> None:
+    """
+    One x-axis label per UTC calendar day (first bar of each day).
+    No minor HH:MM ticks — avoids overlap on wide charts.
+    """
+    n = len(window_df)
+    if n == 0:
+        return
+
+    tick_pos: list[int] = []
+    tick_lbl: dict[int, str] = {}
+    prev_date = None
+    for i in range(n):
+        d = _bar_ts_utc(window_df, i).date()
+        if prev_date is None or d != prev_date:
+            tick_pos.append(i)
+            tick_lbl[i] = _bar_ts_utc(window_df, i).strftime("%d/%m")
+            prev_date = d
+
+    def _fmt(x, _pos):
+        xi = int(round(float(x)))
+        return tick_lbl.get(xi, "")
+
+    ax_bottom.xaxis.set_major_locator(FixedLocator(tick_pos))
+    ax_bottom.xaxis.set_major_formatter(FuncFormatter(_fmt))
+    ax_bottom.xaxis.set_minor_locator(NullLocator())
+    ax_bottom.xaxis.set_minor_formatter(NullFormatter())
+    ax_bottom.tick_params(
+        axis="x",
+        which="major",
+        labelsize=FS_XTICK,
+        labelcolor=C_TEXT,
+        colors=C_TEXT,
+        bottom=True,
+        top=False,
+        labelbottom=True,
+        length=10,
+        width=1.0,
+        pad=4,
+    )
+    ax_bottom.tick_params(axis="x", which="minor", bottom=False, labelbottom=False)
 
 
 def _equity_ts_at_index(full_index: pd.Index, i: int) -> pd.Timestamp:
@@ -768,13 +811,18 @@ def render_chart(window_df: pd.DataFrame,
                  show_volume: bool = True,
                  signals: np.ndarray | None = None,
                  pip: float | None = None,
-                 overlay_callback=None) -> tuple[str, dict]:
+                 overlay_callback=None,
+                 fig_width: float | None = None,
+                 fig_height: float | None = None,
+                 x_axis_daily_only: bool = False) -> tuple[str, dict]:
     """
     Price, indicators, and optional volume. No equity panel.
     When full_len > 1, a subtle axes-fraction band on the price panel shows
     where [window_start, window_end) sits in the full backtest.
     Optional `signals` (per-bar int8, window length) draws entry markers; `pip` scales offset.
     Optional ``overlay_callback(ax_price, x, highs, lows, window_df)`` runs after price markers.
+    Optional ``fig_width`` / ``fig_height`` override figure size (inches).
+    ``x_axis_daily_only``: date ticks once per UTC day, no minor time labels.
     Returns (image_base64, candle_map).
 
     Layout: Price (8), then each active indicator panel (3 each), optional volume (2).
@@ -824,7 +872,9 @@ def render_chart(window_df: pd.DataFrame,
         ratios.append(2)
 
     n_panels = len(ratios)
-    fig = plt.figure(figsize=(FIG_W, FIG_H), facecolor=C_BG)
+    fw = float(fig_width) if fig_width is not None else FIG_W
+    fh = float(fig_height) if fig_height is not None else FIG_H
+    fig = plt.figure(figsize=(fw, fh), facecolor=C_BG)
     gs  = gridspec.GridSpec(n_panels, 1, height_ratios=ratios,
                             hspace=0.08, left=0.07, right=0.93,
                             top=0.97, bottom=0.14)
@@ -1249,7 +1299,10 @@ def render_chart(window_df: pd.DataFrame,
                 break
         if bottom_dt is None:
             bottom_dt = ax_price
-    _apply_two_level_datetime_xaxis(bottom_dt, window_df)
+    if x_axis_daily_only:
+        _apply_daily_only_xaxis(bottom_dt, window_df)
+    else:
+        _apply_two_level_datetime_xaxis(bottom_dt, window_df)
     bottom_dt.tick_params(axis="x", labelbottom=True)
     if bottom_dt is not ax_price:
         ax_price.tick_params(axis="x", labelbottom=False)
@@ -1293,9 +1346,11 @@ def render_chart_with_trades(
     pip: float | None,
 ) -> str:
     """
-    Price chart with combo entry markers, muted anchor/complement triangles, and trade L-arrows.
+    Wide price chart: OHLC candles, combo entry markers (signals=), trade L-arrow overlays.
+    Anchor/complement triangle layers omitted (caller args kept for API compatibility).
     Returns base64 PNG string only.
     """
+    candles_per_inch = 6.0
     n = len(df)
     if n == 0:
         img_b64, _ = render_chart(
@@ -1309,29 +1364,31 @@ def render_chart_with_trades(
             signals=None,
             pip=pip,
             overlay_callback=None,
+            x_axis_daily_only=True,
         )
         return img_b64
     trades_list = list(trades or [])
-    muted_green = (76 / 255, 175 / 255, 80 / 255, 0.4)
-    muted_blue = (100 / 255, 149 / 255, 237 / 255, 0.4)
 
     def overlay(ax_price, x, highs, lows, window_df):
-        _draw_muted_direction_triangles(ax_price, x, highs, lows, anchor_sigs, pip, muted_green)
-        _draw_muted_direction_triangles(ax_price, x, highs, lows, complement_sigs, pip, muted_blue)
         _draw_trade_l_arrows(ax_price, trades_list, n)
 
     combo = np.asarray(combo_sigs, dtype=np.int8).ravel()
-    ne = max(1, n)
+    fig_width = max(30.0, float(n) / candles_per_inch)
+    fig_height = 8.0
+
     img_b64, _ = render_chart(
         df,
         [],
         [],
         window_start=0,
-        window_end=ne,
-        full_len=ne,
-        show_volume="volume" in df.columns,
+        window_end=n,
+        full_len=n,
+        show_volume=False,
         signals=combo,
         pip=pip,
         overlay_callback=overlay,
+        fig_width=fig_width,
+        fig_height=fig_height,
+        x_axis_daily_only=True,
     )
     return img_b64
