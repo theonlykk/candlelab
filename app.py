@@ -197,37 +197,29 @@ def _make_indicator_fn(indicator_filter):
 # ── Pattern direction classification ─────────────────────────────────────────
 
 _REVERSAL_PATTERNS = {
-    "Doji",
     "Hammer/Hanging Man",
     "Shooting Star/Inv. Hammer",
     "Engulfing",
     "Morning/Evening Star",
-    "Harami",
-    "Piercing/Dark Cloud",
-    "Spinning Top",
-    "Long-legged Doji",
 }
 
 _TREND_PATTERNS = {
     "Three Soldiers/Crows",
-    "Rising/Falling Three Methods",
-    "Upside/Downside Tasuki Gap",
 }
 
 ALL_PATTERN_NAMES = list(PATTERNS.keys())
 
 
-def _patterns_for_direction(direction: str) -> list:
+def _patterns_for_direction(strategy_type: str) -> list:
     """
-    Return the subset of pattern names appropriate for the selected strategy direction.
-
-    - "reversal" → patterns that are typically interpreted as reversals
-    - "trend"    → continuation/trend patterns
-    - anything else (including "both") → all patterns
+    Return pattern names valid for the chosen strategy type.
+    reversal → reversal patterns only
+    continuation → continuation patterns only
+    anything else → all patterns
     """
-    if direction == "reversal":
+    if strategy_type == "reversal":
         return [p for p in ALL_PATTERN_NAMES if p in _REVERSAL_PATTERNS]
-    if direction == "trend":
+    if strategy_type == "continuation":
         return [p for p in ALL_PATTERN_NAMES if p in _TREND_PATTERNS]
     return ALL_PATTERN_NAMES
 
@@ -653,16 +645,18 @@ def strategy_chart(strategy_id):
     if instrument_label not in INSTRUMENTS:
         abort(404)
 
-    anchor = (row.get("anchor") or "").strip()
+    anchor = (row.get("pattern_1") or row.get("anchor") or "").strip()
     if not anchor or anchor not in PATTERNS:
         abort(404)
 
-    complement = row.get("complement")
-    if complement is not None and str(complement).strip() == "":
-        complement = None
-    connector = None
-    if complement is not None:
-        connector = row.get("connector") or "ordered"
+    raw_p2 = row.get("pattern_2") if row.get("pattern_2") is not None else row.get("complement")
+    raw_cont = row.get("continuation")
+    has_p2 = raw_p2 is not None and str(raw_p2).strip() != ""
+    has_cont = raw_cont is not None and str(raw_cont).strip() != ""
+    complement = raw_p2 if has_p2 else (raw_cont if has_cont else None)
+    connector = row.get("connector")
+    if connector is None:
+        connector = "any-order" if has_p2 else ("ordered" if has_cont else None)
 
     interval = row.get("interval") or "5m"
     direction = row.get("direction") or "both"
@@ -797,14 +791,13 @@ def api_patterns():
     """
     instrument_raw = request.args.get("instrument", "EUR/USD")
     interval = request.args.get("interval", "5m")
-    direction = request.args.get("direction", "both")
-    # direction now derived from pattern signal value — not passed to backtest
+    strategy_type = request.args.get("strategy_type", "all")
 
     instrument = _norm_instrument(instrument_raw)
     if instrument not in INSTRUMENTS:
         return jsonify({"error": f"Unknown instrument: {instrument_raw}"}), 400
 
-    cache_key = f"patterns:{instrument}:{interval}:{direction}"
+    cache_key = f"patterns:{instrument}:{interval}:{strategy_type}"
     cached = cache_get(cache_key)
     if cached is not None:
         return jsonify(cached)
@@ -820,7 +813,7 @@ def api_patterns():
     if df.empty:
         return jsonify([])
 
-    pattern_names = _patterns_for_direction(direction)
+    pattern_names = _patterns_for_direction(strategy_type)
 
     tasks = [(df, pip, name, instrument) for name in pattern_names]
 
@@ -868,8 +861,7 @@ def api_complement():
     """
     body = request.get_json(force=True)
     anchor = body.get("anchor")
-    direction = body.get("direction", "both")
-    # direction now derived from pattern signal value — not passed to backtest
+    strategy_type = body.get("strategy_type", "reversal")
     instrument_raw = body.get("instrument", "EUR/USD")
     interval = body.get("interval", "5m")
 
@@ -879,6 +871,9 @@ def api_complement():
 
     meta = INSTRUMENTS[instrument]
     pip = meta["pip"]
+
+    if strategy_type == "continuation":
+        return jsonify([])
 
     try:
         df = get_ohlc(instrument, days=30, interval=interval)
@@ -900,10 +895,11 @@ def api_complement():
     anchor_r = _backtest_pattern(df, pip, anchor, timeout=TIMEOUT, instrument=instrument)
     anchor_win_pct = anchor_r["win_pct"]
 
+    valid_complements = _patterns_for_direction(strategy_type)
     combo_tasks = [
         (comp, conn, df, signals_df, anchor_indices, atr, anchor_signals, anchor_win_pct,
          pip, anchor, instrument)
-        for comp in ALL_PATTERN_NAMES
+        for comp in valid_complements
         for conn in ("ordered", "any-order")
         if comp != anchor
     ]
@@ -1159,10 +1155,19 @@ def api_finalise():
 
     instrument_raw = body.get("instrument", "EUR/USD")
     interval = body.get("interval", "5m")
-    anchor = body.get("anchor", "")
-    complement = body.get("complement")
+    strategy_type = body.get("strategy_type", "reversal")
+    pattern_1 = body.get("pattern_1", "")
+    pattern_2 = body.get("pattern_2")
+    continuation = body.get("continuation")
+
+    has_pattern_2 = pattern_2 is not None and str(pattern_2).strip() != ""
+    has_continuation = continuation is not None and str(continuation).strip() != ""
+
+    anchor = pattern_1
+    complement = pattern_2 if has_pattern_2 else (continuation if has_continuation else None)
+    connector = "any-order" if has_pattern_2 else ("ordered" if has_continuation else None)
+
     has_complement = complement is not None and str(complement).strip() != ""
-    connector = (body.get("connector") or "ordered") if has_complement else None
     indicator_filter = body.get("indicator_filter")
     session_filter = body.get("session_filter")
     sl_mult = float(body.get("sl_multiplier", 1.0))
@@ -1332,17 +1337,15 @@ def api_finalise():
         try:
             saved = save_strategy({
                 "name":             name,
-                "patterns":         [anchor] + ([complement] if has_complement else []),
-                "connectors":       [connector, connector] if has_complement else [],
-                "direction":        body.get("direction", ""),
-                "window_days":      5,
+                "strategy_type":    strategy_type,
+                "pattern_1":        pattern_1,
+                "pattern_2":        pattern_2,
+                "continuation":     continuation,
                 "instrument":       instrument,
                 "interval":         interval,
                 "bt_win_pct":       main_r["win_pct"],
                 "bt_cum_net":       main_r["cum_net"],
-                "bt_cum_gross":     None,
                 "bt_signals":       main_r["signals"],
-                "bt_tp_hits":       None,
                 "device_uuid":      device_uuid,
                 "indicator_filter": indicator_filter,
                 "session_filter":   session_filter,

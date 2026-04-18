@@ -321,18 +321,11 @@ def upside_downside_tasuki_gap(df: pd.DataFrame) -> pd.Series:
 
 # ── Registry ──────────────────────────────────────────────────────────────────
 PATTERNS = {
-    "Doji":                        doji,
-    "Hammer/Hanging Man":          hammer_hanging_man,
-    "Shooting Star/Inv. Hammer":   shooting_star_inverted_hammer,
-    "Engulfing":                   engulfing,
-    "Morning/Evening Star":        morning_evening_star,
-    "Harami":                      harami,
-    "Piercing/Dark Cloud":              piercing_dark_cloud,
-    "Three Soldiers/Crows":            three_soldiers_crows,
-    "Spinning Top":                    spinning_top,
-    "Long-legged Doji":                long_legged_doji,
-    "Rising/Falling Three Methods":    rising_falling_three_methods,
-    "Upside/Downside Tasuki Gap":      upside_downside_tasuki_gap,
+    "Hammer/Hanging Man": hammer_hanging_man,
+    "Shooting Star/Inv. Hammer": shooting_star_inverted_hammer,
+    "Engulfing": engulfing,
+    "Morning/Evening Star": morning_evening_star,
+    "Three Soldiers/Crows": three_soldiers_crows,
 }
 
 # Display labels for server-side chart annotations (`chart_renderer`).

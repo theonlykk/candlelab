@@ -44,6 +44,22 @@ def _complement_present(raw) -> bool:
     return bool(str(raw).strip())
 
 
+def _derive_connector(pattern_2, continuation) -> str | None:
+    """
+    Derive connector from strategy structure rather than user input.
+    - Two reversals (pattern_2 set): any-order
+    - Continuation only: ordered
+    - Neither: None
+    """
+    has_p2 = _complement_present(pattern_2)
+    has_cont = _complement_present(continuation)
+    if has_p2:
+        return "any-order"
+    if has_cont:
+        return "ordered"
+    return None
+
+
 def _connector_for_persist(raw_complement, raw_connector) -> str | None:
     """
     Store connector only when a complement is set; otherwise NULL in Postgres (not 'ordered').
@@ -111,6 +127,24 @@ def _ensure_draft_live_tables(cur) -> None:
         );
         """
     )
+    for _tbl in ("candlelab_strategies_draft", "candlelab_strategies_live"):
+        for _col, _typ in (
+            ("strategy_type", "VARCHAR(20)"),
+            ("pattern_1", "VARCHAR(100)"),
+            ("pattern_2", "VARCHAR(100)"),
+            ("continuation", "VARCHAR(100)"),
+        ):
+            cur.execute(
+                """
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = %s AND column_name = %s
+                """,
+                (_tbl, _col),
+            )
+            if not cur.fetchone():
+                cur.execute(
+                    f'ALTER TABLE {_tbl} ADD COLUMN {_col} {_typ}'
+                )
 
 
 def _verify_user_pin(cur, username: str, pin: str) -> bool:
@@ -179,10 +213,11 @@ def lifecycle_save_draft(body: dict) -> tuple[dict, int]:
         strategy_name = body.get("strategy_name") or _auto_name()
         instrument = body.get("instrument", "EUR/USD")
         interval = body.get("interval", "5m")
-        anchor = body.get("anchor") or ""
-        complement = body.get("complement")
-        connector = _connector_for_persist(complement, body.get("connector"))
-        direction = _normalize_strategy_direction(body.get("direction", "both"))
+        strategy_type = body.get("strategy_type") or "reversal"
+        pattern_1 = body.get("pattern_1") or ""
+        pattern_2 = body.get("pattern_2")
+        continuation = body.get("continuation")
+        connector = _derive_connector(pattern_2, continuation)
         session = body.get("session") or "All"
         sl_mult = float(body.get("sl_mult", 1.0))
         tp_mult = float(body.get("tp_mult", 3.0))
@@ -194,8 +229,9 @@ def lifecycle_save_draft(body: dict) -> tuple[dict, int]:
             cur.execute(
                 """
                 UPDATE candlelab_strategies_draft SET
-                    strategy_name=%s, instrument=%s, interval=%s, anchor=%s,
-                    complement=%s, connector=%s, direction=%s, session=%s,
+                    strategy_name=%s, instrument=%s, interval=%s,
+                    strategy_type=%s, pattern_1=%s, pattern_2=%s, continuation=%s,
+                    connector=%s, session=%s,
                     sl_mult=%s, tp_mult=%s, timeout=%s, indicator_filter=%s,
                     saved_at=NOW(), edited_from_live_id=COALESCE(%s, edited_from_live_id)
                 WHERE id=%s AND username=%s
@@ -205,10 +241,11 @@ def lifecycle_save_draft(body: dict) -> tuple[dict, int]:
                     strategy_name,
                     instrument,
                     interval,
-                    anchor,
-                    complement,
+                    strategy_type,
+                    pattern_1,
+                    pattern_2,
+                    continuation,
                     connector,
-                    direction,
                     session,
                     sl_mult,
                     tp_mult,
@@ -227,10 +264,11 @@ def lifecycle_save_draft(body: dict) -> tuple[dict, int]:
         cur.execute(
             """
             INSERT INTO candlelab_strategies_draft (
-                username, strategy_name, instrument, interval, anchor, complement,
-                connector, direction, session, sl_mult, tp_mult, timeout,
+                username, strategy_name, instrument, interval,
+                strategy_type, pattern_1, pattern_2, continuation,
+                connector, session, sl_mult, tp_mult, timeout,
                 indicator_filter, edited_from_live_id
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             RETURNING id
             """,
             (
@@ -238,10 +276,11 @@ def lifecycle_save_draft(body: dict) -> tuple[dict, int]:
                 strategy_name,
                 instrument,
                 interval,
-                anchor,
-                complement,
+                strategy_type,
+                pattern_1,
+                pattern_2,
+                continuation,
                 connector,
-                direction,
                 session,
                 sl_mult,
                 tp_mult,
@@ -277,14 +316,28 @@ def lifecycle_promote_live(body: dict) -> tuple[dict, int]:
         if not dr:
             return {"error": "draft_not_found"}, 404
         dr = dict(dr)
-        direction = _normalize_strategy_direction(dr.get("direction", "both"))
+        pattern_1 = dr.get("pattern_1") or dr.get("anchor") or ""
+        pattern_2 = dr.get("pattern_2") if dr.get("pattern_2") is not None else dr.get("complement")
+        continuation = dr.get("continuation")
+        strategy_type = dr.get("strategy_type")
+        if not strategy_type:
+            d0 = str(dr.get("direction") or "").strip().lower()
+            strategy_type = "continuation" if d0 == "trend" else "reversal"
+        else:
+            strategy_type = str(strategy_type).strip()
+        conn_store = dr.get("connector") or _derive_connector(pattern_2, continuation) or _connector_for_persist(
+            pattern_2 or continuation, dr.get("connector")
+        )
+        comp_legacy = pattern_2 if _complement_present(pattern_2) else continuation
         ind = dr.get("indicator_filter")
         cur.execute(
             """
             INSERT INTO candlelab_strategies_live (
-                username, strategy_name, instrument, interval, anchor, complement,
-                connector, direction, session, sl_mult, tp_mult, timeout, indicator_filter
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                username, strategy_name, instrument, interval,
+                strategy_type, pattern_1, pattern_2, continuation,
+                connector, session, sl_mult, tp_mult, timeout, indicator_filter,
+                anchor, complement, direction
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             RETURNING id
             """,
             (
@@ -292,15 +345,19 @@ def lifecycle_promote_live(body: dict) -> tuple[dict, int]:
                 dr.get("strategy_name"),
                 dr.get("instrument"),
                 dr.get("interval"),
-                dr.get("anchor"),
-                dr.get("complement"),
-                _connector_for_persist(dr.get("complement"), dr.get("connector")),
-                direction,
+                strategy_type,
+                pattern_1,
+                pattern_2,
+                continuation,
+                conn_store,
                 dr.get("session") or "All",
                 float(dr.get("sl_mult") or 1.0),
                 float(dr.get("tp_mult") or 3.0),
                 int(dr.get("timeout") or 1000),
                 Json(ind) if ind is not None else None,
+                pattern_1,
+                comp_legacy,
+                strategy_type,
             ),
         )
         live_row = cur.fetchone()
@@ -381,9 +438,10 @@ def lifecycle_list_my_strategies(username: str, pin: str) -> tuple[dict, int]:
             return {"error": "auth_failed"}, 401
         cur.execute(
             """
-            SELECT id, username, strategy_name, instrument, interval, anchor, complement,
-                   connector, direction, session, sl_mult, tp_mult, timeout, indicator_filter,
-                   saved_at, edited_from_live_id
+            SELECT id, username, strategy_name, instrument, interval,
+                   strategy_type, pattern_1, pattern_2, continuation,
+                   anchor, complement, connector, direction, session, sl_mult, tp_mult, timeout,
+                   indicator_filter, saved_at, edited_from_live_id
             FROM candlelab_strategies_draft
             WHERE username=%s
             ORDER BY saved_at DESC
@@ -393,9 +451,10 @@ def lifecycle_list_my_strategies(username: str, pin: str) -> tuple[dict, int]:
         drafts = [_row_to_strategy_dict(dict(r)) for r in cur.fetchall()]
         cur.execute(
             """
-            SELECT id, username, strategy_name, instrument, interval, anchor, complement,
-                   connector, direction, session, sl_mult, tp_mult, timeout, indicator_filter,
-                   go_live_at, closed_at, saved_at
+            SELECT id, username, strategy_name, instrument, interval,
+                   strategy_type, pattern_1, pattern_2, continuation,
+                   anchor, complement, connector, direction, session, sl_mult, tp_mult, timeout,
+                   indicator_filter, go_live_at, closed_at, saved_at
             FROM candlelab_strategies_live
             WHERE username=%s AND closed_at IS NULL
             ORDER BY go_live_at DESC
@@ -419,7 +478,9 @@ def list_open_live_for_instrument(instrument_label: str) -> list[dict]:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute(
             """
-            SELECT id, strategy_name, anchor, complement, connector, direction, interval
+            SELECT id, strategy_name,
+                   pattern_1, pattern_2, continuation, anchor, complement,
+                   connector, direction, interval
             FROM candlelab_strategies_live
             WHERE closed_at IS NULL AND instrument = %s
             ORDER BY id ASC
@@ -571,6 +632,22 @@ def save_strategy(config: dict) -> dict:
     init_strategy_tables()
     name = config.get("name") or _auto_name()
     now  = datetime.now(timezone.utc).isoformat()
+    strategy_type = config.get("strategy_type", "reversal")
+    pattern_1 = config.get("pattern_1", "")
+    pattern_2 = config.get("pattern_2")
+    continuation = config.get("continuation")
+    conn_derived = _derive_connector(pattern_2, continuation)
+    patterns_payload = {
+        "strategy_type": strategy_type,
+        "pattern_1": pattern_1,
+        "pattern_2": pattern_2,
+        "continuation": continuation,
+    }
+    connectors_list = (
+        [conn_derived, conn_derived]
+        if conn_derived
+        else []
+    )
     with get_conn() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute(
@@ -585,9 +662,9 @@ def save_strategy(config: dict) -> dict:
             """,
             (
                 name,
-                json.dumps(config.get("patterns", [])),
-                json.dumps(config.get("connectors", ["ordered", "ordered"])),
-                str(config.get("direction", "")),
+                json.dumps(patterns_payload),
+                json.dumps(connectors_list),
+                str(strategy_type),
                 int(config.get("window_days", config.get("window", 5))),
                 config.get("instrument", "EUR/USD"),
                 config.get("interval", "5m"),
