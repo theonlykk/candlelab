@@ -756,6 +756,10 @@ def strategy_chart(strategy_id):
         )
 
         indicator_type_chart = _indicator_type_string_for_chart(row.get("indicator_filter"))
+        ma_live_map = _executor_read_ma_live_map_from_poll_log(oanda_id, go_live_ts)
+        ma_fast_series, ma_slow_series = _chart_ma_series_aligned(
+            df, pre_live_df, ma_live_map
+        )
         chart_b64 = render_trade_panels(
             df,
             trades,
@@ -766,6 +770,8 @@ def strategy_chart(strategy_id):
             complement=complement or None,
             indicator_type=indicator_type_chart,
             go_live_at=go_live_ts,
+            ma_fast_series=ma_fast_series,
+            ma_slow_series=ma_slow_series,
         )
 
     strategy_name = (row.get("strategy_name") or "Strategy").strip() or "Strategy"
@@ -1867,6 +1873,153 @@ def _executor_read_continuous_series(oanda_instrument: str, go_live_ts: pd.Times
     out = pd.DataFrame(rows_out)
     out = out.set_index("candle_time").sort_index()
     return out
+
+
+def _chart_ma_utc(ts) -> pd.Timestamp:
+    t = pd.Timestamp(ts)
+    if t.tzinfo is None:
+        return t.tz_localize("UTC")
+    return t.tz_convert("UTC")
+
+
+def _executor_read_ma_live_map_from_poll_log(
+    oanda_instrument: str, go_live_ts: pd.Timestamp
+) -> dict[pd.Timestamp, tuple[float, float]]:
+    """
+    From each ``executor_poll_log`` row, take the last ``candle_history`` candle's
+    ``indicators.ma_fast`` / ``ma_slow`` keyed by that candle's ``candle_time``.
+    Latest poll wins per ``candle_time`` (same ordering idea as DISTINCT ON … ep.ts DESC).
+    """
+    url = os.environ.get("DATABASE_URL")
+    if not url:
+        return {}
+    inst = (oanda_instrument or "").strip()
+    if not inst:
+        return {}
+    try:
+        ts_db = go_live_ts.to_pydatetime() if hasattr(go_live_ts, "to_pydatetime") else go_live_ts
+    except Exception:
+        ts_db = go_live_ts
+
+    sql = """
+        SELECT ep.ts AS poll_ts, ep.candle_history
+        FROM executor_poll_log ep
+        WHERE ep.instrument = %s
+        AND ep.ts >= %s
+    """
+
+    conn = None
+    raw: list = []
+    try:
+        conn = psycopg2.connect(url)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(sql, (inst, ts_db))
+            raw = cur.fetchall()
+    except Exception:
+        log.exception("strategy_chart: executor_poll_log MA query failed")
+        return {}
+    finally:
+        if conn is not None:
+            conn.close()
+
+    entries: list[tuple[pd.Timestamp, pd.Timestamp, float, float]] = []
+    for r in raw:
+        ch = r.get("candle_history")
+        if isinstance(ch, str):
+            try:
+                ch = json.loads(ch)
+            except json.JSONDecodeError:
+                continue
+        if not isinstance(ch, list) or len(ch) == 0:
+            continue
+        last = ch[-1]
+        if not isinstance(last, dict):
+            continue
+        ct_raw = last.get("candle_time")
+        if ct_raw is None:
+            continue
+        try:
+            ct = _chart_ma_utc(ct_raw)
+        except Exception:
+            continue
+        ind = last.get("indicators")
+        if not isinstance(ind, dict):
+            ind = {}
+        mf_raw = ind.get("ma_fast")
+        ms_raw = ind.get("ma_slow")
+        if mf_raw is None or ms_raw is None:
+            continue
+        try:
+            mf = float(mf_raw)
+            ms = float(ms_raw)
+        except (TypeError, ValueError):
+            continue
+        if not (np.isfinite(mf) and np.isfinite(ms)):
+            continue
+        try:
+            poll_ts = _chart_ma_utc(r.get("poll_ts"))
+        except Exception:
+            continue
+        entries.append((poll_ts, ct, mf, ms))
+
+    entries.sort(key=lambda x: x[0], reverse=True)
+    out: dict[pd.Timestamp, tuple[float, float]] = {}
+    for _poll_ts, ct, mf, ms in entries:
+        if ct in out:
+            continue
+        out[ct] = (mf, ms)
+    return out
+
+
+def _chart_ma_series_aligned(
+    df: pd.DataFrame,
+    pre_live_df: pd.DataFrame,
+    ma_live_map: dict[pd.Timestamp, tuple[float, float]],
+) -> tuple[pd.Series, pd.Series]:
+    """
+    Rolling SMA5/SMA20 on the full pre-live OHLC series; live bars overlay values from the poll log.
+    """
+    ma_fast_pre = (
+        pre_live_df["close"].rolling(5).mean()
+        if pre_live_df is not None and not pre_live_df.empty
+        else pd.Series(dtype=float)
+    )
+    ma_slow_pre = (
+        pre_live_df["close"].rolling(20).mean()
+        if pre_live_df is not None and not pre_live_df.empty
+        else pd.Series(dtype=float)
+    )
+
+    ma_fast = pd.Series(np.nan, index=df.index, dtype=float)
+    ma_slow = pd.Series(np.nan, index=df.index, dtype=float)
+
+    if not ma_fast_pre.empty:
+        common = df.index.intersection(ma_fast_pre.index)
+        if len(common):
+            ma_fast.loc[common] = ma_fast_pre.loc[common].to_numpy(dtype=float)
+            ma_slow.loc[common] = ma_slow_pre.loc[common].to_numpy(dtype=float)
+
+    norm_label: dict[pd.Timestamp, pd.Timestamp] = {}
+    for lab in df.index:
+        try:
+            nk = _chart_ma_utc(lab)
+        except Exception:
+            continue
+        if nk not in norm_label:
+            norm_label[nk] = lab
+
+    for ct, (mf, ms) in ma_live_map.items():
+        try:
+            nk = _chart_ma_utc(ct)
+        except Exception:
+            continue
+        lab = norm_label.get(nk)
+        if lab is None:
+            continue
+        ma_fast.loc[lab] = mf
+        ma_slow.loc[lab] = ms
+
+    return ma_fast, ma_slow
 
 
 def _executor_session_ok(ts_raw, session_filter: str | None) -> bool:

@@ -1410,6 +1410,8 @@ def render_trade_panels(
     complement: str | None = None,
     indicator_type: str | None = None,
     go_live_at: pd.Timestamp | None = None,
+    ma_fast_series: pd.Series | None = None,
+    ma_slow_series: pd.Series | None = None,
 ) -> str:
     """
     Horizontal strip of OHLC panels, one column per trade, with L-shaped entry/exit overlay.
@@ -1614,11 +1616,22 @@ def render_trade_panels(
                         zorder=4,
                     )
         if "ma" in ind:
-            sma5 = panel_df["close"].rolling(5).mean()
-            sma20 = panel_df["close"].rolling(20).mean()
             xv = np.arange(len(panel_df), dtype=float)
-            ax.plot(xv, sma5, color="#4caf50", linewidth=0.5, alpha=0.6, zorder=3)
-            ax.plot(xv, sma20, color="#ff9800", linewidth=0.5, alpha=0.6, zorder=3)
+            if (
+                ma_fast_series is not None
+                and ma_slow_series is not None
+                and ma_fast_series.index.equals(df.index)
+                and ma_slow_series.index.equals(df.index)
+            ):
+                maf = ma_fast_series.iloc[start:end].to_numpy(dtype=float)
+                mas = ma_slow_series.iloc[start:end].to_numpy(dtype=float)
+                ax.plot(xv, maf, color="#4caf50", linewidth=0.8, alpha=0.7, zorder=3)
+                ax.plot(xv, mas, color="#ff9800", linewidth=0.8, alpha=0.7, zorder=3)
+            else:
+                sma5 = panel_df["close"].rolling(5).mean()
+                sma20 = panel_df["close"].rolling(20).mean()
+                ax.plot(xv, sma5, color="#4caf50", linewidth=0.8, alpha=0.7, zorder=3)
+                ax.plot(xv, sma20, color="#ff9800", linewidth=0.8, alpha=0.7, zorder=3)
 
         if _trade_is_live(trade.get("ts"), go_live_at):
             ax.text(
