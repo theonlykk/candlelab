@@ -19,6 +19,8 @@ SPREAD_COST_PIPS = {
     "AUD_USD": 0.8,
 }
 
+SLIPPAGE_CIRCUIT_BREAKER = 3.0
+
 # Clean entry threshold: signals with spread above this are excluded
 # from "clean only" P&L calculation. Set at 2x average observed spread
 # per instrument on M5 data.

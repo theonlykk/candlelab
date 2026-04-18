@@ -23,7 +23,12 @@ from data import get_ohlc, INSTRUMENTS, _oanda_instrument_id
 from chart_renderer import render_trade_panels
 from backtest import compute_atr
 from patterns import detect_all, PATTERNS
-from signal_engine import detect_signal, SPREAD_COST_PIPS, SPREAD_CLEAN_THRESHOLD
+from signal_engine import (
+    detect_signal,
+    SPREAD_COST_PIPS,
+    SPREAD_CLEAN_THRESHOLD,
+    SLIPPAGE_CIRCUIT_BREAKER,
+)
 from cache import cache_set, cache_get
 from scheduler import start_scheduler
 from poll_log import init_candlelab_poll_log_table, read_poll_log_pg, read_poll_log_view_rows
@@ -2384,7 +2389,7 @@ def _executor_compute_trade_detail(
         replay_entry: next bar open (float)
         all_entry: actual ask (BUY) or bid (SELL) at signal close (float, None if no quote)
         spread_pips: (ask-bid)/pip at signal bar (float, None if no quote)
-        is_clean: bool — spread within SPREAD_CLEAN_THRESHOLD
+        is_clean: bool — directional slippage within SLIPPAGE_CIRCUIT_BREAKER (pips)
         sl: stop loss price (float)
         tp: take profit price (float)
         exit_price: actual exit price (float)
@@ -2416,7 +2421,6 @@ def _executor_compute_trade_detail(
     atr_full = compute_atr(ohlc)
 
     instr_key = instrument_label.replace("/", "_")
-    clean_threshold = SPREAD_CLEAN_THRESHOLD.get(instr_key, 4.0)
     spread_cost_pips = SPREAD_COST_PIPS.get(instr_key, 1.0)
 
     for i in range(n):
@@ -2447,13 +2451,27 @@ def _executor_compute_trade_detail(
         has_quote = pd.notna(ask_v) and pd.notna(bid_v)
         spread_pips_val = None
         all_entry = None
-        is_clean = False
         if has_quote:
             ask_v = float(ask_v)
             bid_v = float(bid_v)
             spread_pips_val = round((ask_v - bid_v) / pip, 2)
             all_entry = ask_v if direction_val == 1 else bid_v
-            is_clean = spread_pips_val <= clean_threshold
+
+        slippage_pips = None
+        if has_quote and all_entry is not None:
+            if direction_val == 1:
+                slippage_pips = round((float(all_entry) - signal_close) / pip, 2)
+            else:
+                slippage_pips = round((signal_close - float(all_entry)) / pip, 2)
+
+        # Circuit breaker: exclude if fill is more than 3 pips worse than close
+        # Allow if fill is better than close (negative slippage = price improvement)
+        # Uses signed slippage: positive = worse fill, negative = better fill
+        is_clean = (
+            has_quote
+            and slippage_pips is not None
+            and slippage_pips <= SLIPPAGE_CIRCUIT_BREAKER
+        )
 
         replay_entry = float(ohlc["open"].iloc[i + 1])
 
@@ -2524,13 +2542,6 @@ def _executor_compute_trade_detail(
             )
             all_result = "TP" if win_a else "SL"
             all_pnl = round(pnl_a, 2)
-
-        slippage_pips = None
-        if has_quote and all_entry is not None:
-            if direction_val == 1:
-                slippage_pips = round((float(all_entry) - signal_close) / pip, 2)
-            else:
-                slippage_pips = round((signal_close - float(all_entry)) / pip, 2)
 
         atr_actual = round(trade_atr / pip, 1)
         atr_used = round(sl_dist / pip, 1) if pip > 0 else None
