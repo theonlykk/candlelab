@@ -19,6 +19,19 @@ SPREAD_COST_PIPS = {
     "AUD_USD": 0.8,
 }
 
+# Clean entry threshold: signals with spread above this are excluded
+# from "clean only" P&L calculation. Set at 2x average observed spread
+# per instrument on M5 data.
+SPREAD_CLEAN_THRESHOLD = {
+    'GBP_USD': 4.4,
+    'USD_CAD': 4.0,
+    'USD_JPY': 3.8,
+    'USD_CHF': 3.8,
+    'NZD_USD': 3.6,
+    'EUR_USD': 3.4,
+    'AUD_USD': 3.0,
+}
+
 # Signal detection window constants (candle counts, M5 default)
 WINDOW_REVERSAL_PAIR = 10      # any-order search for two reversal patterns
 WINDOW_ORDERED = 10            # ordered search: reversal → continuation

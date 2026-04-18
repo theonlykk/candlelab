@@ -321,7 +321,7 @@ def _simulate_trades(
         tp_pips  = sl_pips * (tp_mult / sl_mult)
         lot_size = (RISK_DOLLARS / (sl_pips * pip_val)) if sl_pips > 0 and pip_val > 0 else 0.0
 
-        entry = float(df["open"].iloc[i + 1]) + direction * 0.5 * pip
+        entry = float(df["open"].iloc[i + 1])
         tp = entry + direction * tp_mult * trade_atr
         sl = entry - direction * _sl_distance_price(trade_atr, pip)
 
