@@ -871,6 +871,12 @@
   .live-strat-stat-row > span:first-child { color: var(--muted); flex-shrink: 0; }
   .live-strat-stat-vals { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap;
     overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .pnl-info-icon {
+    cursor: help;
+    color: var(--muted);
+    font-size: 11px;
+    margin-left: 3px;
+  }
   .strat-card-stats {
     display: flex; gap: 16px; font-size: 12px; align-items: center;
     margin-bottom: 10px;
@@ -3782,6 +3788,10 @@ function buildLiveStratCard(l) {
         <div class="live-strat-stat-row"><span>Since live · all entries</span><span class="live-strat-stat-vals live-stat-all">—</span></div>
         <div class="live-strat-stat-row"><span>Since live · clean only</span><span class="live-strat-stat-vals live-stat-clean">—</span></div>
         <div class="live-strat-stat-row">
+          <span>True P&L <span class="pnl-info-icon" title="Actual OANDA fills — real money, real execution">ⓘ</span></span>
+          <span class="live-strat-stat-vals live-stat-true">—</span>
+        </div>
+        <div class="live-strat-stat-row">
           <span>30d backtest</span>
           <span class="live-strat-stat-vals live-stat-bt30">Calculating…</span>
         </div>
@@ -3876,12 +3886,14 @@ function fetchStratPnl(s, card) {
     direction:        "both",
     go_live_at:       s.go_live_at || null,
     tick_size:        tickSize,
+    strategy_name:    s.strategy_name || "",
     indicator_filter: s.indicator_filter || null,
   };
 
   const btEl = card.querySelector(".live-stat-bt");
   const allEl = card.querySelector(".live-stat-all");
   const cleanEl = card.querySelector(".live-stat-clean");
+  const trueEl = card.querySelector(".live-stat-true");
   const bt30El = card.querySelector(".live-stat-bt30");
 
   const savedAt30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
@@ -3895,7 +3907,32 @@ function fetchStratPnl(s, card) {
   })
     .then(r => r.json())
     .then(ex => {
-      if (!btEl || !allEl || !cleanEl) return null;
+      const fmt = (blk) => {
+        const line = formatLiveStatPnlLine(blk || {});
+        const pnl = (blk || {}).cum_net ?? 0;
+        const col = pnl > 0 ? "var(--green)" : pnl < 0 ? "var(--red)" : "var(--muted)";
+        return { line, col };
+      };
+      const fillTrue = () => {
+        if (!trueEl) return;
+        if (!ex || ex.error) {
+          trueEl.textContent = "Unavailable";
+          trueEl.style.color = "var(--muted)";
+          return;
+        }
+        if (!ex.true) {
+          trueEl.textContent = "No fills yet";
+          trueEl.style.color = "var(--muted)";
+        } else {
+          const t = fmt(ex.true);
+          trueEl.textContent = t.line;
+          trueEl.style.color = t.col;
+        }
+      };
+      if (!btEl || !allEl || !cleanEl) {
+        fillTrue();
+        return null;
+      }
       if (!ex || ex.error) {
         btEl.textContent = "Unavailable";
         allEl.textContent = "Unavailable";
@@ -3903,6 +3940,7 @@ function fetchStratPnl(s, card) {
         btEl.style.color = "var(--muted)";
         allEl.style.color = "var(--muted)";
         cleanEl.style.color = "var(--muted)";
+        fillTrue();
         return null;
       }
       const noExecSignals = ex.insufficient === true || !ex.raw || Number(ex.raw.signals) === 0;
@@ -3918,14 +3956,9 @@ function fetchStratPnl(s, card) {
           dot0.classList.remove("strat-dot-amber", "strat-dot-green", "strat-dot-red");
           dot0.classList.add("strat-dot-amber");
         }
+        fillTrue();
         return null;
       }
-      const fmt = (blk) => {
-        const line = formatLiveStatPnlLine(blk || {});
-        const pnl = (blk || {}).cum_net ?? 0;
-        const col = pnl > 0 ? "var(--green)" : pnl < 0 ? "var(--red)" : "var(--muted)";
-        return { line, col };
-      };
       const rw = fmt(ex.raw);
       const a = fmt(ex.all);
       const c = fmt(ex.clean);
@@ -3935,6 +3968,7 @@ function fetchStratPnl(s, card) {
       allEl.style.color = a.col;
       cleanEl.textContent = c.line;
       cleanEl.style.color = c.col;
+      fillTrue();
       const dot = card.querySelector(".strat-dot");
       if (dot) {
         const pnl = ex.all.cum_net ?? 0;
@@ -3967,6 +4001,8 @@ function fetchStratPnl(s, card) {
       if (btEl) { btEl.textContent = "Unavailable"; btEl.style.color = "var(--muted)"; }
       if (allEl) { allEl.textContent = "Unavailable"; allEl.style.color = "var(--muted)"; }
       if (cleanEl) { cleanEl.textContent = "Unavailable"; cleanEl.style.color = "var(--muted)"; }
+      const trueElCatch = card.querySelector(".live-stat-true");
+      if (trueElCatch) { trueElCatch.textContent = "Unavailable"; trueElCatch.style.color = "var(--muted)"; }
       if (bt30El) { bt30El.textContent = "Unavailable"; bt30El.style.color = "var(--muted)"; }
     });
 }

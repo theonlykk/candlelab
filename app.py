@@ -23,7 +23,7 @@ from data import get_ohlc, INSTRUMENTS, _oanda_instrument_id
 from chart_renderer import render_trade_panels
 from backtest import compute_atr
 from patterns import detect_all, PATTERNS
-from signal_engine import detect_signal, SPREAD_COST_PIPS
+from signal_engine import detect_signal, SPREAD_COST_PIPS, SPREAD_CLEAN_THRESHOLD
 from cache import cache_set, cache_get
 from scheduler import start_scheduler
 from poll_log import init_candlelab_poll_log_table, read_poll_log_pg, read_poll_log_view_rows
@@ -2114,25 +2114,27 @@ def _executor_compute_from_dataframe(
     tick_size: float,
     pip: float,
     instrument_label: str,
-) -> tuple[list[tuple[bool, float]], list[tuple[bool, float]], list[tuple[bool, float]]]:
+    indicator_fn=None,
+) -> tuple[list, list, list, float]:
     """
     Continuous OHLC series: ``detect_all`` + ``detect_signal`` (same as historical backtest),
-    then simulate each fired bar. ``raw`` uses next-bar open only; ``all`` applies bid/ask spread.
+    then simulate each fired bar. ``raw`` uses next-bar open only; ``all`` uses bid/ask at entry bar.
     """
     raw_trades: list[tuple[bool, float]] = []
     all_trades: list[tuple[bool, float]] = []
     clean_trades: list[tuple[bool, float]] = []
+    raw_spread_deduct_usd = 0.0
     if df is None or df.empty or len(df) < ATR_PERIOD + 2:
-        return raw_trades, all_trades, clean_trades
+        return raw_trades, all_trades, clean_trades, raw_spread_deduct_usd
 
     need = ["open", "high", "low", "close", "bid", "ask"]
     for c in need:
         if c not in df.columns:
-            return raw_trades, all_trades, clean_trades
+            return raw_trades, all_trades, clean_trades, raw_spread_deduct_usd
 
     ohlc = df[["open", "high", "low", "close"]].astype(float).sort_index()
     if anchor not in PATTERNS:
-        return raw_trades, all_trades, clean_trades
+        return raw_trades, all_trades, clean_trades, raw_spread_deduct_usd
 
     signals_df = detect_all(ohlc)
     sig_array = detect_signal(
@@ -2154,6 +2156,10 @@ def _executor_compute_from_dataframe(
             continue
         if not _executor_session_ok(ohlc.index[i], session_filter):
             continue
+        if indicator_fn is not None:
+            dir_str = "long" if direction_val == 1 else "short"
+            if not indicator_fn(ohlc, i, dir_str):
+                continue
         if i + 1 >= n:
             continue
 
@@ -2161,21 +2167,33 @@ def _executor_compute_from_dataframe(
         if not np.isfinite(trade_atr) or trade_atr <= 0:
             continue
 
-        bid_v = df["bid"].iloc[i]
-        ask_v = df["ask"].iloc[i]
-        if pd.notna(bid_v) and pd.notna(ask_v):
-            spread = max(0.0, float(ask_v) - float(bid_v))
-        else:
-            spread = 0.5 * tick_size
-
+        # Raw entry: next bar open, no spread adjustment
         entry_raw = float(ohlc["open"].iloc[i + 1])
-        entry_all = entry_raw + direction_val * spread
         sl_r = entry_raw - direction_val * sl_mult * trade_atr
         tp_r = entry_raw + direction_val * tp_mult * trade_atr
+
+        # All entries: use actual ask (BUY) or bid (SELL) at bar i+1
+        # Use i+1 quote — this is the bar we actually transact on
+        has_real_quote = False
+        entry_all = entry_raw  # fallback
+        spread_pips = 0.0
+        if i + 1 < n:
+            ask_next = df["ask"].iloc[i + 1]
+            bid_next = df["bid"].iloc[i + 1]
+            if pd.notna(ask_next) and pd.notna(bid_next):
+                ask_next = float(ask_next)
+                bid_next = float(bid_next)
+                has_real_quote = True
+                entry_all = ask_next if direction_val == 1 else bid_next
+                spread_pips = (ask_next - bid_next) / pip
+
         sl_a = entry_all - direction_val * sl_mult * trade_atr
         tp_a = entry_all + direction_val * tp_mult * trade_atr
-        sig_close = float(ohlc["close"].iloc[i])
-        clean = abs(sig_close - entry_all) <= 3.0 * tick_size
+
+        # Clean threshold: exclude wide-spread entries
+        instr_key = instrument_label.replace("/", "_")
+        clean_threshold = SPREAD_CLEAN_THRESHOLD.get(instr_key, 4.0)
+        is_clean = has_real_quote and spread_pips <= clean_threshold
 
         end = min(i + 1 + int(timeout), n)
         sub = ohlc.iloc[i + 1 : end]
@@ -2211,26 +2229,69 @@ def _executor_compute_from_dataframe(
         )
         raw_trades.append((win_r, pnl_r))
 
-        win_a, pnl_a = _executor_simulate_trade_pnl(
-            entry_all,
-            direction_val,
-            sl_a,
-            tp_a,
-            trade_atr,
-            sl_mult,
-            tp_mult,
-            pip,
-            instrument_label,
-            fh,
-            fl,
-            fc,
-            op_next,
-        )
-        all_trades.append((win_a, pnl_a))
-        if clean:
-            clean_trades.append((win_a, pnl_a))
+        pip_val = PIP_VALUES.get(instrument_label, 10.0)
+        sl_dist_r = abs(float(entry_raw) - float(sl_r))
+        sl_pips_r = sl_dist_r / pip if pip > 0 else 0.0
+        lot_size_r = (RISK_DOLLARS / (sl_pips_r * pip_val)) if sl_pips_r > 0 and pip_val > 0 else 0.0
+        raw_spread_deduct_usd += float(SPREAD_COST_PIPS.get(instr_key, 1.0)) * pip_val * lot_size_r
 
-    return raw_trades, all_trades, clean_trades
+        if has_real_quote:
+            win_a, pnl_a = _executor_simulate_trade_pnl(
+                entry_all,
+                direction_val,
+                sl_a,
+                tp_a,
+                trade_atr,
+                sl_mult,
+                tp_mult,
+                pip,
+                instrument_label,
+                fh,
+                fl,
+                fc,
+                op_next,
+            )
+            all_trades.append((win_a, pnl_a))
+            if is_clean:
+                clean_trades.append((win_a, pnl_a))
+
+    return raw_trades, all_trades, clean_trades, raw_spread_deduct_usd
+
+
+def _fetch_true_pnl(strategy_name: str, go_live_ts: pd.Timestamp) -> dict | None:
+    """
+    Read actual OANDA fills from trades table for this strategy.
+    Returns aggregated stats or None if no fills exist.
+    """
+    try:
+        from data import get_conn
+
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT pnl_pips, result, entry_price, exit_price,
+                       opened_at, direction
+                FROM trades
+                WHERE strategy_name = %s
+                  AND opened_at >= %s
+                ORDER BY opened_at ASC
+            """, (f"CandleLab:{strategy_name}", go_live_ts))
+            rows = cur.fetchall()
+    except Exception:
+        return None
+
+    if not rows:
+        return None
+
+    total = len(rows)
+    wins = sum(1 for r in rows if r[1] == "tp")
+    cum_pips = sum(float(r[0]) for r in rows if r[0] is not None)
+    return {
+        "signals": total,
+        "wins": wins,
+        "win_pct": round(wins / total * 100, 1) if total else 0.0,
+        "cum_net": round(cum_pips, 1),
+    }
 
 
 @app.route("/api/strategy/executor-pnl", methods=["POST"])
@@ -2256,6 +2317,9 @@ def api_strategy_executor_pnl():
     timeout = int(body.get("timeout", TIMEOUT))
     go_live_at = body.get("go_live_at")
     tick_size = float(body.get("tick_size") or 0.0001)
+    indicator_filter = body.get("indicator_filter")
+    indicator_fn = _make_indicator_fn(indicator_filter) if indicator_filter else None
+    strategy_name = body.get("strategy_name", "")
 
     if not anchor:
         return jsonify({"error": "missing anchor"}), 400
@@ -2281,7 +2345,7 @@ def api_strategy_executor_pnl():
 
     oanda_id = _oanda_instrument_id(instrument_label)
     series_df = _executor_read_continuous_series(oanda_id, go_live_ts)
-    raw_t, all_t, clean_t = _executor_compute_from_dataframe(
+    raw_t, all_t, clean_t, raw_spread_deduct_usd = _executor_compute_from_dataframe(
         series_df,
         anchor,
         complement,
@@ -2293,17 +2357,25 @@ def api_strategy_executor_pnl():
         tick_size,
         pip,
         instrument_label,
+        indicator_fn=indicator_fn,
     )
 
     agg_raw = _executor_aggregate_trades(raw_t)
+    # cum_net is USD (_executor_aggregate_trades sums executor dollar PnLs). Subtract spread in USD:
+    # sum over signals of SPREAD_COST_PIPS × pip_val × lot_size (matches ``_simulate_trades``).
+    if agg_raw["signals"] > 0:
+        agg_raw["cum_net"] = round(agg_raw["cum_net"] - raw_spread_deduct_usd, 2)
     agg_all = _executor_aggregate_trades(all_t)
     agg_clean = _executor_aggregate_trades(clean_t)
     insufficient = agg_raw["signals"] == 0
 
+    true_pnl = _fetch_true_pnl(strategy_name, go_live_ts) if strategy_name else None
+
     return jsonify({
-        "raw": agg_raw,
-        "all": agg_all,
-        "clean": agg_clean,
+        "raw":          agg_raw,
+        "all":          agg_all,
+        "clean":        agg_clean,
+        "true":         true_pnl,
         "insufficient": insufficient,
     })
 
