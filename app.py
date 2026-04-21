@@ -2635,6 +2635,21 @@ def _fetch_true_pnl(strategy_name: str, go_live_ts: pd.Timestamp) -> dict | None
     }
 
 
+@app.route("/api/strategy/true-pnl", methods=["POST"])
+def api_strategy_true_pnl():
+    body = request.get_json(force=True)
+    strategy_name = body.get("strategy_name", "")
+    go_live_at = body.get("go_live_at")
+    if not strategy_name or not go_live_at:
+        return jsonify({}), 400
+    try:
+        go_live_ts = pd.Timestamp(go_live_at, tz="UTC")
+        result = _fetch_true_pnl(strategy_name, go_live_ts)
+        return jsonify(result or {})
+    except Exception:
+        return jsonify({}), 500
+
+
 @app.route("/api/strategy/executor-pnl", methods=["POST"])
 def api_strategy_executor_pnl():
     """
@@ -2685,7 +2700,9 @@ def api_strategy_executor_pnl():
         return jsonify({"error": "bad go_live_at"}), 400
 
     oanda_id = _oanda_instrument_id(instrument_label)
-    series_df = _executor_read_continuous_series(oanda_id, go_live_ts)
+    # Cap data window to 30 days max to prevent OOM on Railway free tier
+    capped_go_live_ts = max(go_live_ts, pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=30))
+    series_df = _executor_read_continuous_series(oanda_id, capped_go_live_ts)
     raw_t, all_t, clean_t, raw_spread_deduct_usd = _executor_compute_from_dataframe(
         series_df,
         anchor,
