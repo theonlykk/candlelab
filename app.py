@@ -1908,6 +1908,7 @@ def _executor_read_continuous_series(oanda_instrument: str, go_live_ts: pd.Times
             LATERAL jsonb_array_elements(ep.candle_history) AS candle
             WHERE ep.instrument = %s
             AND ep.ts >= %s
+            AND ep.ts >= NOW() - INTERVAL '3 days'
             ORDER BY (candle->>'candle_time')::timestamptz ASC, ep.ts DESC
         ),
         quotes AS (
@@ -1920,6 +1921,7 @@ def _executor_read_continuous_series(oanda_instrument: str, go_live_ts: pd.Times
             FROM executor_poll_log
             WHERE instrument = %s
             AND ts >= %s - interval '6 minutes'
+            AND ts >= NOW() - INTERVAL '3 days'
             AND bid IS NOT NULL
             AND ask IS NOT NULL
             ORDER BY 
