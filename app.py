@@ -2599,37 +2599,36 @@ def _executor_compute_trade_detail(
 
 
 def _fetch_true_pnl(strategy_name: str, go_live_ts: pd.Timestamp) -> dict | None:
-    """
-    Read actual OANDA fills from trades table for this strategy.
-    Returns aggregated stats or None if no fills exist.
-    """
+    base = (strategy_name or "").strip()
+    if not base:
+        return None
+    try:
+        ts = pd.Timestamp(go_live_ts)
+        ts = ts.tz_localize("UTC") if ts.tzinfo is None else ts.tz_convert("UTC")
+        cutoff = ts.to_pydatetime()
+    except Exception:
+        return None
     try:
         from data import get_conn
-
         with get_conn() as conn:
             cur = conn.cursor()
             cur.execute("""
-                SELECT pnl_pips, result, entry_price, exit_price,
-                       opened_at, direction
-                FROM trades
-                WHERE strategy_name = %s
-                  AND opened_at >= %s
-                ORDER BY opened_at ASC
-            """, (f"CandleLab:{strategy_name}", go_live_ts))
+                SELECT pnl_pips, result FROM trades
+                WHERE (strategy_name = %s OR strategy_name = %s)
+                AND opened_at >= %s
+            """, (base, f"CandleLab:{base}", cutoff))
             rows = cur.fetchall()
     except Exception:
         return None
-
     if not rows:
         return None
-
     total = len(rows)
-    wins = sum(1 for r in rows if r[1] == "tp")
+    wins = sum(1 for r in rows if str(r[1] or "").lower() in ("tp", "win"))
     cum_pips = sum(float(r[0]) for r in rows if r[0] is not None)
     return {
         "signals": total,
         "wins": wins,
-        "win_pct": round(wins / total * 100, 1) if total else 0.0,
+        "win_pct": round(wins / total * 100, 1),
         "cum_net": round(cum_pips, 1),
     }
 
