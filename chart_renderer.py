@@ -1369,6 +1369,7 @@ def render_chart(window_df: pd.DataFrame,
     fig.savefig(buf, format="png", dpi=EXPORT_DPI, facecolor=C_BG)
     buf.seek(0)
     image_b64 = base64.b64encode(buf.read()).decode("utf-8")
+    fig.savefig("/tmp/debug_chart.png", dpi=96, bbox_inches=None, facecolor=fig.get_facecolor())
     plt.close(fig)
     return image_b64, candle_map
 
