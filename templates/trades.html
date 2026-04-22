@@ -192,7 +192,7 @@
   </div>
   <div class="summary-card" style="border-left: 3px solid #1a56db;">
     <div class="label">OANDA actual P&L</div>
-    <div class="value {{ 'green' if oanda_pnl_total > 0 else ('red' if oanda_pnl_total < 0 else '') }}">
+    <div class="value {{ 'green' if oanda_pnl_total and oanda_pnl_total > 0 else ('red' if oanda_pnl_total and oanda_pnl_total < 0 else '') }}">
       {% if oanda_pnl_total is not none %}${{ oanda_pnl_total }}{% else %}—{% endif %}
     </div>
   </div>
