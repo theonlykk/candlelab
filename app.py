@@ -853,7 +853,6 @@ def _fetch_oanda_fills_for_strategy(strategy_id: int, go_live_ts: pd.Timestamp) 
             "oanda_pl": round(oanda_pl, 2) if oanda_pl is not None else None,
             "close_type": close_type,
         }
-    log.info("_fetch_oanda_fills: strategy_id=%s found %d opens result=%d keys", strategy_id, len(opens), len(result))
     return result
 
 
@@ -942,7 +941,6 @@ def strategy_trades(strategy_id):
                 trade_key = (ts_pd + pd.Timedelta(minutes=5)).floor("min")
         except Exception:
             trade_key = None
-        log.info("trade_key debug: ts=%s trade_key=%s oanda_keys=%s", t.get("ts"), trade_key, list(oanda_fills.keys())[:3])
         match = oanda_fills.get(trade_key) if trade_key else None
         t["oanda_fill"] = match["oanda_fill"] if match else None
         t["oanda_units"] = match["oanda_units"] if match else None
