@@ -110,11 +110,18 @@ def _apply_two_level_datetime_xaxis(ax_bottom, window_df: pd.DataFrame) -> None:
             major_map[i] = _bar_ts_utc(window_df, i).strftime("%d/%m")
             prev_date = d
 
-    time_step = max(1, min(10, max(5, n // 7)))
-    minor_pos = list(range(0, n, time_step))
-    if minor_pos[-1] != n - 1:
-        minor_pos.append(n - 1)
-    minor_map = {i: _bar_ts_utc(window_df, i).strftime("%H:%M") for i in minor_pos}
+    # Suppress HH:MM minor ticks when data is dense (≥288 bars/day = 5m resolution).
+    # At that density the minor labels pack into a solid bar.
+    n_days = max(1, len(major_pos))
+    bars_per_day = n // n_days
+    show_minor = bars_per_day < 288
+
+    if show_minor:
+        time_step = max(1, min(10, max(5, n // 7)))
+        minor_pos = list(range(0, n, time_step))
+        if minor_pos[-1] != n - 1:
+            minor_pos.append(n - 1)
+        minor_map = {i: _bar_ts_utc(window_df, i).strftime("%H:%M") for i in minor_pos}
 
     def _major_fmt(x, _pos):
         xi = int(round(float(x)))
@@ -126,8 +133,12 @@ def _apply_two_level_datetime_xaxis(ax_bottom, window_df: pd.DataFrame) -> None:
 
     ax_bottom.xaxis.set_major_locator(FixedLocator(major_pos))
     ax_bottom.xaxis.set_major_formatter(FuncFormatter(_major_fmt))
-    ax_bottom.xaxis.set_minor_locator(FixedLocator(minor_pos))
-    ax_bottom.xaxis.set_minor_formatter(FuncFormatter(_minor_fmt))
+    if show_minor:
+        ax_bottom.xaxis.set_minor_locator(FixedLocator(minor_pos))
+        ax_bottom.xaxis.set_minor_formatter(FuncFormatter(_minor_fmt))
+    else:
+        ax_bottom.xaxis.set_minor_locator(NullLocator())
+        ax_bottom.xaxis.set_minor_formatter(NullFormatter())
 
     ax_bottom.tick_params(
         axis="x",
@@ -142,19 +153,22 @@ def _apply_two_level_datetime_xaxis(ax_bottom, window_df: pd.DataFrame) -> None:
         width=1.0,
         pad=4,
     )
-    ax_bottom.tick_params(
-        axis="x",
-        which="minor",
-        labelsize=FS_XTICK,
-        labelcolor=C_TEXT,
-        colors=C_TEXT,
-        bottom=True,
-        top=False,
-        labelbottom=True,
-        length=4,
-        width=0.7,
-        pad=14,
-    )
+    if show_minor:
+        ax_bottom.tick_params(
+            axis="x",
+            which="minor",
+            labelsize=FS_XTICK,
+            labelcolor=C_TEXT,
+            colors=C_TEXT,
+            bottom=True,
+            top=False,
+            labelbottom=True,
+            length=4,
+            width=0.7,
+            pad=14,
+        )
+    else:
+        ax_bottom.tick_params(axis="x", which="minor", bottom=False, labelbottom=False)
 
 
 def _apply_daily_only_xaxis(ax_bottom, window_df: pd.DataFrame) -> None:
