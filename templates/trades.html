@@ -190,6 +190,12 @@
       ${{ clean_pnl_total }}
     </div>
   </div>
+  <div class="summary-card" style="border-left: 3px solid #1a56db;">
+    <div class="label">OANDA actual P&L</div>
+    <div class="value {{ 'green' if oanda_pnl_total > 0 else ('red' if oanda_pnl_total < 0 else '') }}">
+      {% if oanda_pnl_total is not none %}${{ oanda_pnl_total }}{% else %}—{% endif %}
+    </div>
+  </div>
   <div class="summary-card">
     <div class="label">Outcome flips</div>
     <div class="value {{ 'amber' if flipped > 0 else 'green' }}">{{ flipped }}</div>
@@ -228,6 +234,8 @@
         <th>Replay P&L</th>
         <th>All entries P&L</th>
         <th title="P&amp;L using executor entry, excluding trades where spread exceeded the clean threshold for this instrument. — means this trade was excluded.">Clean P&amp;L</th>
+        <th style="border-left: 2px solid #1a56db; background:#f0f4ff; color:#1a56db;" title="Actual OANDA realized P&L in USD">OANDA P&L</th>
+        <th style="background:#f0f4ff; color:#1a56db;" title="Actual position size placed on OANDA">Units</th>
       </tr>
     </thead>
     <tbody>
@@ -261,11 +269,17 @@
         <td style="{% if t.clean_pnl is none %}color:#888{% elif t.clean_pnl > 0 %}color:#4caf50;font-weight:600{% elif t.clean_pnl < 0 %}color:#ef5350;font-weight:600{% else %}color:#888{% endif %}">
           {% if t.clean_pnl is none %}—{% else %}${{ t.clean_pnl }}{% endif %}
         </td>
+        <td style="border-left: 2px solid #1a56db; background:rgba(26,86,219,0.04); {% if t.oanda_pl is none %}color:#888{% elif t.oanda_pl > 0 %}color:#4caf50;font-weight:600{% else %}color:#ef5350;font-weight:600{% endif %}">
+          {% if t.oanda_pl is none %}—{% elif t.oanda_pl >= 0 %}+${{ t.oanda_pl }}{% else %}-${{ t.oanda_pl|abs }}{% endif %}
+        </td>
+        <td style="background:rgba(26,86,219,0.04); color:#555;">
+          {% if t.oanda_units is none %}—{% else %}{{ "{:,}".format(t.oanda_units) }}{% endif %}
+        </td>
       </tr>
       {% endfor %}
       {% if not trades %}
       <tr>
-        <td colspan="13" style="text-align:center; padding:32px; color:#888;">
+        <td colspan="15" style="text-align:center; padding:32px; color:#888;">
           No signals found since go live date.
         </td>
       </tr>

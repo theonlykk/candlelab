@@ -3912,7 +3912,7 @@ function fetchStratPnl(s, card) {
     return { line, col };
   };
 
-  // ── 1. True P&L — lightweight, runs immediately ──
+  // ── 1. True P&L — lightweight pip-based first, then OANDA actual ──
   if (trueEl) {
     trueEl.textContent = "Loading…";
     trueEl.style.color = "var(--muted)";
@@ -3936,6 +3936,32 @@ function fetchStratPnl(s, card) {
         trueEl.textContent = "Unavailable";
         trueEl.style.color = "var(--muted)";
       });
+
+    // OANDA actual fills — overwrites True P&L with real USD P&L when available
+    if (s.id) {
+      apiFetch("/api/strategy/oanda-fills", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          strategy_id: s.id,
+          strategy_name: s.strategy_name || "",
+          go_live_at: s.go_live_at || null,
+        }),
+      })
+        .then(r => r.json())
+        .then(of => {
+          if (!of || of.error || !of.summary || of.summary.closed === 0) return;
+          const sum = of.summary;
+          const pl = sum.total_pl_usd;
+          const col = pl > 0 ? "var(--green)" : pl < 0 ? "var(--red)" : "var(--muted)";
+          const winPct = sum.win_pct ?? 0;
+          trueEl.textContent = `${sum.closed} sig · ${winPct.toFixed(1)}% · ${pl >= 0 ? "+" : ""}$${pl.toFixed(2)} (OANDA)`;
+          trueEl.style.color = col;
+          // Store fills on card for See Trades panel
+          card._oandaFills = of.fills || [];
+        })
+        .catch(() => {}); // silent fail — pip-based value remains
+    }
   }
 
   // ── 2. Signal replay — heavier, runs independently ──
