@@ -133,13 +133,6 @@ def _apply_two_level_datetime_xaxis(ax_bottom, window_df: pd.DataFrame) -> None:
 
     ax_bottom.xaxis.set_major_locator(FixedLocator(major_pos))
     ax_bottom.xaxis.set_major_formatter(FuncFormatter(_major_fmt))
-    if show_minor:
-        ax_bottom.xaxis.set_minor_locator(FixedLocator(minor_pos))
-        ax_bottom.xaxis.set_minor_formatter(FuncFormatter(_minor_fmt))
-    else:
-        ax_bottom.xaxis.set_minor_locator(NullLocator())
-        ax_bottom.xaxis.set_minor_formatter(NullFormatter())
-
     ax_bottom.tick_params(
         axis="x",
         which="major",
@@ -154,6 +147,8 @@ def _apply_two_level_datetime_xaxis(ax_bottom, window_df: pd.DataFrame) -> None:
         pad=4,
     )
     if show_minor:
+        ax_bottom.xaxis.set_minor_locator(FixedLocator(minor_pos))
+        ax_bottom.xaxis.set_minor_formatter(FuncFormatter(_minor_fmt))
         ax_bottom.tick_params(
             axis="x",
             which="minor",
@@ -168,6 +163,8 @@ def _apply_two_level_datetime_xaxis(ax_bottom, window_df: pd.DataFrame) -> None:
             pad=14,
         )
     else:
+        ax_bottom.xaxis.set_minor_locator(NullLocator())
+        ax_bottom.xaxis.set_minor_formatter(NullFormatter())
         ax_bottom.tick_params(axis="x", which="minor", bottom=False, labelbottom=False)
 
 
