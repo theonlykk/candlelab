@@ -932,6 +932,7 @@ def strategy_trades(strategy_id):
             trade_key = (pd.Timestamp(t["ts"], tz="UTC") + pd.Timedelta(minutes=5)).floor("min")
         except Exception:
             trade_key = None
+        log.info("trade_key debug: ts=%s trade_key=%s oanda_keys=%s", t.get("ts"), trade_key, list(oanda_fills.keys())[:3])
         match = oanda_fills.get(trade_key) if trade_key else None
         t["oanda_fill"] = match["oanda_fill"] if match else None
         t["oanda_units"] = match["oanda_units"] if match else None
