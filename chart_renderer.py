@@ -91,7 +91,7 @@ def _bar_ts_utc(window_df: pd.DataFrame, i: int) -> pd.Timestamp:
     return ts.tz_convert("UTC")
 
 
-def _apply_two_level_datetime_xaxis(ax_bottom, window_df: pd.DataFrame) -> None:
+def _apply_two_level_datetime_xaxis(ax_bottom, window_df: pd.DataFrame, interval: str | None = None) -> None:
     """
     Single bottom x-axis: major ticks = UTC date changes (DD/MM), longer ticks;
     minor ticks = HH:MM every ~5–10 bars, shorter ticks. Bar index = window_df row.
@@ -114,7 +114,10 @@ def _apply_two_level_datetime_xaxis(ax_bottom, window_df: pd.DataFrame) -> None:
     # At that density the minor labels pack into a solid bar.
     n_days = max(1, len(major_pos))
     bars_per_day = n // n_days
-    show_minor = bars_per_day < 288
+    if interval and interval.endswith("m") and int(interval[:-1]) <= 5:
+        show_minor = False
+    else:
+        show_minor = bars_per_day < 288
 
     if show_minor:
         time_step = max(1, min(10, max(5, n // 7)))
@@ -847,7 +850,8 @@ def render_chart(window_df: pd.DataFrame,
                  overlay_callback=None,
                  fig_width: float | None = None,
                  fig_height: float | None = None,
-                 x_axis_daily_only: bool = False) -> tuple[str, dict]:
+                 x_axis_daily_only: bool = False,
+                 interval: str | None = None) -> tuple[str, dict]:
     """
     Price, indicators, and optional volume. No equity panel.
     When full_len > 1, a subtle axes-fraction band on the price panel shows
@@ -1335,7 +1339,7 @@ def render_chart(window_df: pd.DataFrame,
     if x_axis_daily_only:
         _apply_daily_only_xaxis(bottom_dt, window_df)
     else:
-        _apply_two_level_datetime_xaxis(bottom_dt, window_df)
+        _apply_two_level_datetime_xaxis(bottom_dt, window_df, interval=interval)
     bottom_dt.tick_params(axis="x", labelbottom=True)
     if bottom_dt is not ax_price:
         ax_price.tick_params(axis="x", labelbottom=False)
