@@ -55,6 +55,17 @@ ctx = multiprocessing.get_context("spawn")
 
 app = Flask(__name__)
 
+
+@app.route("/debug/chart-png")
+def debug_chart_png():
+    from flask import send_file
+    import os
+    path = "/tmp/debug_chart.png"
+    if not os.path.exists(path):
+        return "No chart rendered yet", 404
+    return send_file(path, mimetype="image/png")
+
+
 _startup_lock = threading.Lock()
 _startup_done = False
 
