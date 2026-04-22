@@ -928,7 +928,8 @@ def strategy_trades(strategy_id):
     # Annotate each trade with matched OANDA fill
     for t in trades:
         try:
-            trade_key = pd.Timestamp(t["ts"], tz="UTC").floor("min")
+            # OANDA fill happens at next bar open — 5 minutes after signal bar
+            trade_key = (pd.Timestamp(t["ts"], tz="UTC") + pd.Timedelta(minutes=5)).floor("min")
         except Exception:
             trade_key = None
         match = oanda_fills.get(trade_key) if trade_key else None
