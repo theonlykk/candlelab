@@ -853,6 +853,7 @@ def _fetch_oanda_fills_for_strategy(strategy_id: int, go_live_ts: pd.Timestamp) 
             "oanda_pl": round(oanda_pl, 2) if oanda_pl is not None else None,
             "close_type": close_type,
         }
+    log.info("_fetch_oanda_fills: strategy_id=%s found %d opens result=%d keys", strategy_id, len(opens), len(result))
     return result
 
 
