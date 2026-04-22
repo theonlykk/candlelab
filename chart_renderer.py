@@ -224,19 +224,34 @@ def _equity_ts_at_index(full_index: pd.Index, i: int) -> pd.Timestamp:
 
 
 def _apply_equity_sparse_date_xaxis(ax, n_bars: int, times: list[pd.Timestamp]) -> None:
-    """Sparse date-only x-axis (5–8 ticks); DD/MM if span ≤730d else MM/YY."""
+    """Sparse date-only x-axis; DD/MM if span ≤730d else MM/YY.
+    For dense data (≥288 bars/day = 5m), one tick per UTC calendar day.
+    For sparser data, 5–8 evenly-spaced ticks.
+    """
     if n_bars < 1 or len(times) != n_bars:
         return
-    n_tick = int(np.clip(8 if n_bars > 8 else max(5, min(n_bars, 8)), 5, 8))
-    if n_bars <= 1:
-        positions = [0]
-    else:
-        positions = sorted(
-            {int(round(v)) for v in np.linspace(0, n_bars - 1, num=min(n_tick, n_bars))}
-        )
     t0, t1 = times[0], times[n_bars - 1]
     span_days = max((t1 - t0).total_seconds() / 86400.0, 1e-9)
     fmt = "%m/%y" if span_days > 730 else "%d/%m"
+
+    bars_per_day = n_bars / span_days
+    if bars_per_day >= 288 and n_bars > 1:
+        # Daily-boundary ticks: first bar of each UTC calendar day.
+        positions = []
+        prev_date = None
+        for i, ts in enumerate(times):
+            d = ts.date()
+            if prev_date is None or d != prev_date:
+                positions.append(i)
+                prev_date = d
+    elif n_bars <= 1:
+        positions = [0]
+    else:
+        n_tick = int(np.clip(8 if n_bars > 8 else max(5, min(n_bars, 8)), 5, 8))
+        positions = sorted(
+            {int(round(v)) for v in np.linspace(0, n_bars - 1, num=min(n_tick, n_bars))}
+        )
+
     tick_map = {p: times[p].strftime(fmt) for p in positions}
 
     def _lab(x, _pos):
@@ -246,6 +261,7 @@ def _apply_equity_sparse_date_xaxis(ax, n_bars: int, times: list[pd.Timestamp]) 
     ax.xaxis.set_major_locator(FixedLocator(positions))
     ax.xaxis.set_major_formatter(FuncFormatter(_lab))
     ax.xaxis.set_minor_locator(NullLocator())
+    ax.xaxis.set_minor_formatter(NullFormatter())
     ax.tick_params(
         axis="x",
         which="major",
@@ -257,6 +273,7 @@ def _apply_equity_sparse_date_xaxis(ax, n_bars: int, times: list[pd.Timestamp]) 
         length=8,
         pad=6,
     )
+    ax.tick_params(axis="x", which="minor", bottom=False, labelbottom=False)
 
 
 def _apply_equity_sparse_date_axis_index(ax, full_index: pd.Index, n_bars: int) -> None:
@@ -693,7 +710,10 @@ def render_equity_chart(
     fig, ax_eq = plt.subplots(1, 1, figsize=(FIG_W, FIG_H_EQUITY), facecolor=C_BG)
     fig.patch.set_facecolor("#ffffff")
     ax_px = ax_eq.twinx()
+    ax_px.tick_params(axis="x", which="both", bottom=False, top=False, labelbottom=False)
     ax_pos = ax_eq.twinx() if signals is not None else None
+    if ax_pos is not None:
+        ax_pos.tick_params(axis="x", which="both", bottom=False, top=False, labelbottom=False)
     if ax_pos is not None:
         ax_pos.spines["right"].set_position(("outward", 54))
         ax_px.set_zorder(1)
@@ -1735,7 +1755,7 @@ def render_trade_panels(
         ax.set_ylim(lo - pad, hi + pad)
 
         ax.set_xlim(-0.5, len(panel_df) - 0.5)
-        ax.tick_params(axis="x", labelbottom=False)
+        ax.tick_params(axis="x", which="both", bottom=False, labelbottom=False)
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
 
