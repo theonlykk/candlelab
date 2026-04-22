@@ -273,6 +273,7 @@
     letter-spacing: 1px;
     color: var(--muted);
     margin: 16px 0 8px 2px;
+    grid-column: 1 / -1;
   }
   .type-badge {
     display: inline-block;
@@ -286,6 +287,30 @@
   }
   .type-badge.reversal  { background: rgba(76,175,80,0.15);  color: var(--accent); }
   .type-badge.continuation { background: rgba(33,150,243,0.15); color: #2196f3; }
+
+  /* Hide AI suggestion / tweak sections */
+  #suggestion-card, #ai-tweaks { display: none !important; }
+
+  /* Save to Draft — de-emphasised */
+  #wizard-step9-save-btn, #step9-results-save-btn {
+    background: #3a3a3a !important;
+    color: #aaa !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
+  /* Promote to Live — prominent green */
+  #wizard-step9-promote-btn, #step9-results-promote-btn {
+    background: var(--accent) !important;
+    color: #fff !important;
+    font-weight: 700 !important;
+    border: none !important;
+  }
+  /* Disabled state while backtest is calculating */
+  #wizard-step9-save-btn:disabled, #step9-results-save-btn:disabled,
+  #wizard-step9-promote-btn:disabled, #step9-results-promote-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
 
   /* AI tip box */
   #ai-tip-box {
@@ -1625,14 +1650,26 @@ function instrumentCardLabel(inst) {
 }
 
 (function buildInstrumentGrid() {
+  const COMING_SOON = new Set(["XAUUSD","XAGUSD","WTICOUSD","SPX500USD","BTCUSD"]);
   const grid = document.getElementById("instrument-grid");
   INSTRUMENTS.forEach(inst => {
     const card = document.createElement("div");
     card.className = "card";
     card.style.flexDirection = "column";
     card.style.alignItems = "flex-start";
-    card.innerHTML = `<div class="card-name">${instrumentCardLabel(inst)}</div><div class="card-desc">${inst.desc}</div>`;
-    card.onclick = () => selectInstrument(inst.code);
+    card.style.position = "relative";
+    if (COMING_SOON.has(inst.code)) {
+      card.style.opacity = "0.5";
+      card.style.pointerEvents = "none";
+      card.style.cursor = "default";
+      card.innerHTML = `
+        <span style="position:absolute;top:8px;right:8px;font-size:9px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;background:rgba(150,150,150,0.2);color:#888;padding:2px 6px;border-radius:10px;">Coming soon</span>
+        <div class="card-name">${instrumentCardLabel(inst)}</div>
+        <div class="card-desc">${inst.desc}</div>`;
+    } else {
+      card.innerHTML = `<div class="card-name">${instrumentCardLabel(inst)}</div><div class="card-desc">${inst.desc}</div>`;
+      card.onclick = () => selectInstrument(inst.code);
+    }
     grid.appendChild(card);
   });
 })();
@@ -1756,6 +1793,20 @@ function renderPatternGridStep3() {
       </div>`;
     card.onclick = () => selectPatternStep3(def.name, tip, def.kind);
     list.appendChild(card);
+  });
+  [{name: "Inside Bars"}, {name: "Flags"}].forEach(p => {
+    const ph = document.createElement("div");
+    ph.className = "pattern-card";
+    ph.style.cssText = "opacity:0.5;cursor:not-allowed;pointer-events:none;";
+    ph.innerHTML = `
+      <div class="card-main" style="flex:1;min-width:0;">
+        <div class="pattern-card-title-row">
+          <span class="pattern-name">${p.name}</span>
+          <span class="type-badge" style="background:rgba(150,150,150,0.15);color:#888;margin-left:6px;">Coming soon</span>
+        </div>
+        <div class="pattern-stats-line">—% · — signals</div>
+      </div>`;
+    list.appendChild(ph);
   });
   const btn = document.getElementById("btn-step3-continue");
   if (btn) btn.disabled = !state.pattern_1;
@@ -2405,6 +2456,8 @@ function loadSummary() {
   const xfEl = document.getElementById("xf-tbody");
   statsEl.innerHTML = `<div class="spinner-wrap" style="padding:30px;"><div class="spinner"></div></div>`;
   xfEl.innerHTML = "";
+  const _btns9 = ["wizard-step9-save-btn","step9-results-save-btn","wizard-step9-promote-btn","step9-results-promote-btn"];
+  _btns9.forEach(id => { const el = document.getElementById(id); if (el) { el.disabled = true; el.textContent = "Calculating…"; } });
 
   const ni = document.getElementById("name-input");
   if (!window.WIZARD_EDIT || !window.WIZARD_EDIT.preserveName) {
@@ -2424,6 +2477,8 @@ function loadSummary() {
     .then(d => {
       if (d.error) {
         statsEl.innerHTML = `<div style="color:var(--red); padding:16px;">${d.error}</div>`;
+        _btns9.forEach(id => { const el = document.getElementById(id); if (el) el.disabled = false; });
+        syncStep9LifecycleLabels();
         return;
       }
       state.finalResult = d;
@@ -2452,6 +2507,7 @@ function loadSummary() {
 
       updateWizardActionRow();
       revealStep9ResultsFromFinalise();
+      _btns9.forEach(id => { const el = document.getElementById(id); if (el) el.disabled = false; });
       const cfgAi = buildConfig(false);
       cfgAi.name = name;
       fetchAiCommentary(cfgAi, d);
@@ -2459,6 +2515,8 @@ function loadSummary() {
     })
     .catch(() => {
       statsEl.innerHTML = `<div style="color:var(--red); padding:16px;">Failed to load summary.</div>`;
+      _btns9.forEach(id => { const el = document.getElementById(id); if (el) el.disabled = false; });
+      syncStep9LifecycleLabels();
     });
 }
 
