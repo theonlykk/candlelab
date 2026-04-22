@@ -17,6 +17,7 @@ from flask import Flask, request, jsonify, render_template, abort
 
 import anthropic
 import psycopg2
+import requests
 from psycopg2.extras import RealDictCursor
 
 from data import get_ohlc, INSTRUMENTS, _oanda_instrument_id
@@ -2646,6 +2647,176 @@ def api_strategy_true_pnl():
         return jsonify(result or {})
     except Exception:
         return jsonify({}), 500
+
+
+@app.route("/api/strategy/oanda-fills", methods=["POST"])
+def api_strategy_oanda_fills():
+    """
+    Fetch actual OANDA fills for a strategy and match against Postgres trades rows.
+    Uses clientOrderID (cl-strat-{strategy_id}) for clean open matching.
+    Closes matched via tradeID linkage.
+    """
+    body = request.get_json(force=True)
+    strategy_id = body.get("strategy_id")
+    strategy_name = body.get("strategy_name", "")
+    go_live_at = body.get("go_live_at")
+
+    if not strategy_id or not go_live_at:
+        return jsonify({"error": "missing strategy_id or go_live_at"}), 400
+
+    oanda_token = os.environ.get("OANDA_API_TOKEN", "")
+    oanda_base = os.environ.get("OANDA_BASE_URL", "https://api-fxpractice.oanda.com")
+    oanda_account = os.environ.get("OANDA_ACCOUNT_ID", "")
+    if not oanda_token or not oanda_account:
+        return jsonify({"error": "missing OANDA credentials"}), 500
+
+    headers_oanda = {"Authorization": f"Bearer {oanda_token}"}
+    client_order_prefix = f"cl-strat-{strategy_id}"
+
+    try:
+        go_live_ts = pd.Timestamp(go_live_at, tz="UTC")
+        from_str = go_live_ts.strftime("%Y-%m-%dT%H:%M:%SZ")
+    except Exception:
+        return jsonify({"error": "bad go_live_at"}), 400
+
+    # ── 1. Fetch paginated OANDA transactions ──
+    all_transactions = []
+    try:
+        r = requests.get(
+            f"{oanda_base}/v3/accounts/{oanda_account}/transactions",
+            headers=headers_oanda,
+            params={"from": from_str, "type": "ORDER_FILL"},
+            timeout=15,
+        )
+        r.raise_for_status()
+        pages = r.json().get("pages", [])
+        for page_url in pages:
+            pr = requests.get(page_url, headers=headers_oanda, timeout=15)
+            pr.raise_for_status()
+            all_transactions.extend(pr.json().get("transactions", []))
+    except Exception as e:
+        log.warning("oanda_fills: transaction fetch failed: %s", e)
+        return jsonify({"error": "oanda_fetch_failed"}), 500
+
+    if not all_transactions:
+        return jsonify({"fills": [], "summary": {}})
+
+    # ── 2. Split opens and closes ──
+    opens = {}
+    closes = {}
+    for tx in all_transactions:
+        trade_opened = tx.get("tradeOpened")
+        trades_closed = tx.get("tradesClosed")
+        if trade_opened:
+            tid = str(trade_opened.get("tradeID", ""))
+            if tid:
+                opens[tid] = tx
+        if trades_closed:
+            for tc in trades_closed:
+                tid = str(tc.get("tradeID", ""))
+                if tid:
+                    closes[tid] = {"tx": tx, "detail": tc}
+
+    # ── 3. Filter opens by clientOrderID prefix ──
+    strategy_opens = {
+        tid: tx for tid, tx in opens.items()
+        if str(tx.get("clientOrderID", "")).startswith(client_order_prefix)
+    }
+
+    if not strategy_opens:
+        return jsonify({"fills": [], "summary": {}})
+
+    # ── 4. Load matching Postgres trades ──
+    pg_trades = {}
+    try:
+        from data import get_conn
+        with get_conn() as conn:
+            cur = conn.cursor()
+            base_name = strategy_name.replace("CandleLab:", "").strip()
+            cur.execute("""
+                SELECT trade_uuid, direction, entry_price, exit_price,
+                       pnl_pips, result, opened_at, closed_at, sl_pips, tp_pips
+                FROM trades
+                WHERE (strategy_name = %s OR strategy_name = %s)
+                AND opened_at >= %s
+                ORDER BY opened_at
+            """, (base_name, f"CandleLab:{base_name}", go_live_ts.to_pydatetime()))
+            rows = cur.fetchall()
+            for row in rows:
+                pg_trades[str(row[0])] = {
+                    "direction": row[1],
+                    "entry_price": float(row[2]) if row[2] else None,
+                    "exit_price": float(row[3]) if row[3] else None,
+                    "pnl_pips": float(row[4]) if row[4] else None,
+                    "result": row[5],
+                    "opened_at": row[6],
+                    "closed_at": row[7],
+                    "sl_pips": float(row[8]) if row[8] else None,
+                    "tp_pips": float(row[9]) if row[9] else None,
+                }
+    except Exception as e:
+        log.warning("oanda_fills: pg query failed: %s", e)
+
+    # ── 5. Match OANDA opens to Postgres by time proximity ──
+    pg_list = sorted(pg_trades.values(), key=lambda x: x["opened_at"])
+
+    fills = []
+    total_pl = 0.0
+    wins = 0
+    losses = 0
+
+    for tid, open_tx in sorted(strategy_opens.items(), key=lambda x: x[1]["time"]):
+        oanda_time = pd.Timestamp(open_tx["time"], tz="UTC")
+        oanda_price = float(open_tx.get("price", 0) or 0)
+        oanda_units = abs(int(open_tx.get("units", 0) or 0))
+        oanda_direction = "BUY" if int(open_tx.get("units", 0)) > 0 else "SELL"
+
+        close_info = closes.get(tid)
+        oanda_pl = None
+        close_type = None
+        if close_info:
+            oanda_pl = float(close_info["detail"].get("realizedPL", 0) or 0)
+            close_type = close_info["tx"].get("reason", "")
+            total_pl += oanda_pl
+            if oanda_pl > 0:
+                wins += 1
+            elif oanda_pl < 0:
+                losses += 1
+
+        # Match to Postgres row by time proximity (2 min window)
+        pg_match = None
+        for pg in pg_list:
+            pg_open = pd.Timestamp(pg["opened_at"]).tz_localize("UTC") if pg["opened_at"].tzinfo is None else pd.Timestamp(pg["opened_at"]).tz_convert("UTC")
+            if abs((oanda_time - pg_open).total_seconds()) <= 120:
+                pg_match = pg
+                break
+
+        fills.append({
+            "time": oanda_time.isoformat(),
+            "direction": oanda_direction,
+            "oanda_units": oanda_units,
+            "oanda_fill": oanda_price,
+            "oanda_pl": round(oanda_pl, 2) if oanda_pl is not None else None,
+            "close_type": close_type,
+            "executor_entry": pg_match["entry_price"] if pg_match else None,
+            "executor_pnl_pips": pg_match["pnl_pips"] if pg_match else None,
+            "sl_pips": pg_match["sl_pips"] if pg_match else None,
+            "tp_pips": pg_match["tp_pips"] if pg_match else None,
+            "result": pg_match["result"] if pg_match else None,
+            "slippage_pips": round(abs(oanda_price - pg_match["entry_price"]) / 0.0001, 1) if pg_match and pg_match["entry_price"] else None,
+        })
+
+    total = wins + losses
+    summary = {
+        "total_fills": len(strategy_opens),
+        "closed": total,
+        "wins": wins,
+        "losses": losses,
+        "win_pct": round(wins / total * 100, 1) if total > 0 else 0,
+        "total_pl_usd": round(total_pl, 2),
+    }
+
+    return jsonify({"fills": fills, "summary": summary})
 
 
 @app.route("/api/strategy/executor-pnl", methods=["POST"])
