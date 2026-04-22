@@ -913,7 +913,7 @@ def render_chart(window_df: pd.DataFrame,
     fig = plt.figure(figsize=(fw, fh), facecolor=C_BG)
     gs  = gridspec.GridSpec(n_panels, 1, height_ratios=ratios,
                             hspace=0.08, left=0.07, right=0.93,
-                            top=0.97, bottom=0.14)
+                            top=0.97, bottom=0.05)
 
     panel_idx = 0
     ax_price    = fig.add_subplot(gs[panel_idx]); panel_idx += 1
