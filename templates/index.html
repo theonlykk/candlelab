@@ -1283,7 +1283,7 @@
   <!-- Step 7: Preview / Summary (was step 9) -->
   <div class="step" id="step-7">
     <div class="step-title">Your strategy</div>
-    <div class="step-subtitle">Here's your completed strategy. Review the results, then use Save to Draft or Promote to Live. If a PIN is required, My Strategies opens for you to unlock.</div>
+    <div class="step-subtitle">Here's your completed strategy. Review the results, then promote it to go live. If a PIN is required, My Strategies opens for you to unlock.</div>
 
     <div id="wizard-step9-form">
       <div class="card" style="cursor:default; flex-direction:column; align-items:stretch; padding:0;">
@@ -1304,9 +1304,9 @@
         <div id="wizard-step9-banner" style="display:none;width:100%;font-size:12px;color:#ffb347;padding:8px;box-sizing:border-box;background:rgba(255,165,0,0.08);border-radius:8px;border:1px solid #FFA500;"></div>
         <div id="wizard-step9-lifecycle-err" style="display:none;color:var(--red);font-size:12px;"></div>
         <div id="wizard-step9-promote-msg" style="display:none;color:var(--accent);font-size:13px;font-weight:600;"></div>
-        <div id="wizard-step9-lifecycle-row" style="display:flex;flex-wrap:wrap;gap:10px;">
-          <button type="button" class="landing-btn" style="margin:0;flex:1;min-width:140px;" id="wizard-step9-save-btn" onclick="step9LifecycleSaveDraft('form')">Save to Draft</button>
-          <button type="button" class="cta-btn" style="margin:0;flex:1;min-width:140px;" id="wizard-step9-promote-btn" onclick="step9LifecyclePromoteLive('form')">Promote to Live</button>
+        <div id="wizard-step9-lifecycle-row">
+          <button type="button" class="cta-btn" style="margin:0;width:100%;" id="wizard-step9-promote-btn" onclick="step9LifecyclePromoteLive('form')">Promote to Live</button>
+          <button type="button" id="wizard-step9-save-btn" onclick="step9LifecycleSaveDraft('form')" style="display:block;margin:8px auto 0;background:none;border:none;color:#888;font-size:12px;cursor:pointer;text-decoration:underline;padding:0;text-align:center;width:100%;">Save to Draft instead</button>
         </div>
       </div>
     </div>
@@ -1328,11 +1328,11 @@
         <div id="step9-results-banner" style="display:none;width:100%;font-size:12px;color:#ffb347;padding:8px;margin-bottom:10px;box-sizing:border-box;background:rgba(255,165,0,0.08);border-radius:8px;border:1px solid #FFA500;"></div>
         <div id="step9-results-lifecycle-err" style="display:none;color:var(--red);font-size:13px;margin-bottom:10px;"></div>
         <div id="step9-results-promote-confirm" style="display:none;color:var(--accent);font-size:14px;font-weight:600;margin-bottom:12px;line-height:1.5;"></div>
-        <div id="step9-results-lifecycle-row" style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px;">
-          <button type="button" class="landing-btn" id="step9-results-save-btn" onclick="step9LifecycleSaveDraft('results')">Save to Draft</button>
+        <div id="step9-results-lifecycle-row" style="display:flex;flex-direction:column;gap:10px;margin-bottom:8px;">
           <button type="button" class="cta-btn" id="step9-results-promote-btn" onclick="step9LifecyclePromoteLive('results')">Promote to Live</button>
+          <button type="button" id="step9-results-save-btn" onclick="step9LifecycleSaveDraft('results')" style="display:block;margin:0 auto;background:none;border:none;color:#888;font-size:12px;cursor:pointer;text-decoration:underline;padding:0;text-align:center;width:100%;">Save to Draft instead</button>
         </div>
-        <button onclick="restartWizard()">Build another strategy</button>
+        <button onclick="restartWizard()" style="margin-top:16px;">Build another strategy</button>
       </div>
     </div>
   </div>
