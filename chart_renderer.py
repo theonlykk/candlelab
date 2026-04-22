@@ -78,7 +78,7 @@ FS_TICK  = 20    # axis tick labels (y-axis price labels)
 FS_LABEL = 11    # axis labels
 FS_ANN   = 9     # pattern symbols (min 9pt for readability)
 FS_BRKT  = 9     # multi-candle bracket labels
-FS_XTICK = 20    # x-axis date ticks
+FS_XTICK = 8     # x-axis date ticks
 
 
 def _bar_ts_utc(window_df: pd.DataFrame, i: int) -> pd.Timestamp:
@@ -149,7 +149,7 @@ def _apply_two_level_datetime_xaxis(ax_bottom, window_df: pd.DataFrame) -> None:
         bottom=True,
         top=False,
         labelbottom=True,
-        length=10,
+        length=4,
         width=1.0,
         pad=4,
     )
@@ -207,7 +207,7 @@ def _apply_daily_only_xaxis(ax_bottom, window_df: pd.DataFrame) -> None:
         bottom=True,
         top=False,
         labelbottom=True,
-        length=10,
+        length=4,
         width=1.0,
         pad=4,
     )
