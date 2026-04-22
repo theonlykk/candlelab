@@ -929,8 +929,17 @@ def strategy_trades(strategy_id):
     # Annotate each trade with matched OANDA fill
     for t in trades:
         try:
-            # OANDA fill happens at next bar open — 5 minutes after signal bar
-            trade_key = (pd.Timestamp(t["ts"], tz="UTC") + pd.Timedelta(minutes=5)).floor("min")
+            ts_raw = t.get("ts_raw")
+            if ts_raw is None:
+                trade_key = None
+            else:
+                ts_pd = pd.Timestamp(ts_raw)
+                if ts_pd.tzinfo is None:
+                    ts_pd = ts_pd.tz_localize("UTC")
+                else:
+                    ts_pd = ts_pd.tz_convert("UTC")
+                # OANDA fill happens at next bar open — 5 minutes after signal bar
+                trade_key = (ts_pd + pd.Timedelta(minutes=5)).floor("min")
         except Exception:
             trade_key = None
         log.info("trade_key debug: ts=%s trade_key=%s oanda_keys=%s", t.get("ts"), trade_key, list(oanda_fills.keys())[:3])
@@ -2672,6 +2681,7 @@ def _executor_compute_trade_detail(
 
         trades.append({
             "ts":             ohlc.index[i].strftime("%d/%m %H:%M"),
+            "ts_raw":         ohlc.index[i],
             "direction":      "BUY" if direction_val == 1 else "SELL",
             "close":          round(signal_close, 5),
             "replay_entry":   round(replay_entry, 5),
