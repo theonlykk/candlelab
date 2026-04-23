@@ -2555,7 +2555,7 @@ def _executor_compute_trade_detail(
                     WHERE strategy_id = %s
                     AND opened_at >= %s
                     ORDER BY opened_at ASC
-                """, (strategy_id, go_live_ts))
+                """, (f"cl-strat-{strategy_id}", go_live_ts))
                 rows = cur.fetchall()
         db_lookup = {}
         for direction, entry_price, opened_at in rows:
