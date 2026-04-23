@@ -814,7 +814,7 @@ def _fetch_oanda_fills_for_strategy(strategy_id: int, go_live_ts: pd.Timestamp) 
         r = requests.get(
             f"{oanda_base}/v3/accounts/{oanda_account}/transactions",
             headers=headers_oanda,
-            params={"from": from_str, "type": "ORDER_FILL"},
+            params={"from": from_str, "type": ["ORDER_FILL", "STOP_LOSS_ORDER", "TAKE_PROFIT_ORDER"]},
             timeout=15,
         )
         r.raise_for_status()
@@ -829,7 +829,17 @@ def _fetch_oanda_fills_for_strategy(strategy_id: int, go_live_ts: pd.Timestamp) 
         return {}
     opens = {}
     closes = {}
+    batch_orders = {}  # batchID -> {sl_price, tp_price}
     for tx in all_transactions:
+        tx_type = tx.get("type", "")
+        if tx_type == "STOP_LOSS_ORDER":
+            bid = str(tx.get("batchID", ""))
+            if bid:
+                batch_orders.setdefault(bid, {})["sl_price"] = float(tx.get("price", 0) or 0)
+        elif tx_type == "TAKE_PROFIT_ORDER":
+            bid = str(tx.get("batchID", ""))
+            if bid:
+                batch_orders.setdefault(bid, {})["tp_price"] = float(tx.get("price", 0) or 0)
         trade_opened = tx.get("tradeOpened")
         trades_closed = tx.get("tradesClosed")
         if trade_opened:
@@ -852,17 +862,26 @@ def _fetch_oanda_fills_for_strategy(strategy_id: int, go_live_ts: pd.Timestamp) 
             continue
         oanda_price = float(open_tx.get("price", 0) or 0)
         oanda_units = abs(int(open_tx.get("units", 0) or 0))
+        batch_id = str(open_tx.get("batchID", ""))
+        batch_info = batch_orders.get(batch_id, {})
+        oanda_sl = batch_info.get("sl_price")
+        oanda_tp = batch_info.get("tp_price")
         close_info = closes.get(tid)
         oanda_pl = None
         close_type = None
+        oanda_exit = None
         if close_info:
             oanda_pl = float(close_info["detail"].get("realizedPL", 0) or 0)
             close_type = close_info["tx"].get("reason", "")
+            oanda_exit = float(close_info["detail"].get("price", 0) or 0)
         result[key] = {
             "oanda_fill": oanda_price,
             "oanda_units": oanda_units,
             "oanda_pl": round(oanda_pl, 2) if oanda_pl is not None else None,
             "close_type": close_type,
+            "oanda_sl": oanda_sl,
+            "oanda_tp": oanda_tp,
+            "oanda_exit": oanda_exit,
         }
     return result
 
@@ -957,6 +976,9 @@ def strategy_trades(strategy_id):
         t["oanda_units"] = match["oanda_units"] if match else None
         t["oanda_pl"] = match["oanda_pl"] if match else None
         t["oanda_close_type"] = match["close_type"] if match else None
+        t["oanda_sl"] = match["oanda_sl"] if match else None
+        t["oanda_tp"] = match["oanda_tp"] if match else None
+        t["oanda_exit"] = match["oanda_exit"] if match else None
 
     _oanda_pls = [t["oanda_pl"] for t in trades if t.get("oanda_pl") is not None]
     oanda_pnl_total = round(sum(_oanda_pls), 2) if _oanda_pls else None

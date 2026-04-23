@@ -234,8 +234,14 @@
         <th>Replay P&L</th>
         <th>All entries P&L</th>
         <th title="P&amp;L using executor entry, excluding trades where spread exceeded the clean threshold for this instrument. — means this trade was excluded.">Clean P&amp;L</th>
-        <th style="border-left: 2px solid #1a56db; background:#f0f4ff; color:#1a56db;" title="Actual OANDA realized P&L in USD">OANDA P&L</th>
-        <th style="background:#f0f4ff; color:#1a56db;" title="Actual position size placed on OANDA">Units</th>
+        <th style="border-left: 2px solid #1a56db; background:rgba(26,86,219,0.04); color:#1a56db;" title="Actual fill price from OANDA">OANDA Fill</th>
+        <th style="background:rgba(26,86,219,0.04); color:#1a56db;" title="OANDA fill minus executor entry in pips. Positive = worse fill (cost), Negative = better fill">Entry Diff</th>
+        <th style="background:rgba(26,86,219,0.04); color:#1a56db;" title="Stop loss price set on OANDA">OANDA SL</th>
+        <th style="background:rgba(26,86,219,0.04); color:#1a56db;" title="Take profit price set on OANDA">OANDA TP</th>
+        <th style="background:rgba(26,86,219,0.04); color:#1a56db;" title="Actual close price from OANDA">OANDA Exit</th>
+        <th style="background:rgba(26,86,219,0.04); color:#1a56db;" title="OANDA exit vs SL/TP level in pips">Exit Diff</th>
+        <th style="background:rgba(26,86,219,0.04); color:#1a56db;" title="Actual position size placed on OANDA">Units</th>
+        <th style="background:rgba(26,86,219,0.04); color:#1a56db;" title="Actual OANDA realized P&L in USD">OANDA P&amp;L</th>
       </tr>
     </thead>
     <tbody>
@@ -269,17 +275,38 @@
         <td style="{% if t.clean_pnl is none %}color:#888{% elif t.clean_pnl > 0 %}color:#4caf50;font-weight:600{% elif t.clean_pnl < 0 %}color:#ef5350;font-weight:600{% else %}color:#888{% endif %}">
           {% if t.clean_pnl is none %}—{% else %}${{ t.clean_pnl }}{% endif %}
         </td>
-        <td style="border-left: 2px solid #1a56db; background:rgba(26,86,219,0.04); {% if t.oanda_pl is none %}color:#888{% elif t.oanda_pl > 0 %}color:#4caf50;font-weight:600{% else %}color:#ef5350;font-weight:600{% endif %}">
-          {% if t.oanda_pl is none %}—{% elif t.oanda_pl >= 0 %}+${{ t.oanda_pl }}{% else %}-${{ t.oanda_pl|abs }}{% endif %}
+        <td style="border-left: 2px solid #1a56db; background:rgba(26,86,219,0.04);">
+          {% if t.oanda_fill is none %}—{% else %}{{ "%.5f"|format(t.oanda_fill) }}{% endif %}
+        </td>
+        <td style="background:rgba(26,86,219,0.04); {% if t.oanda_fill is not none and t.all_entry is not none %}{% if ((t.oanda_fill - t.all_entry) / 0.0001)|round(1) > 0 %}color:#ef5350{% elif ((t.oanda_fill - t.all_entry) / 0.0001)|round(1) < 0 %}color:#4caf50{% else %}color:#888{% endif %}{% else %}color:#888{% endif %}">
+          {% if t.oanda_fill is not none and t.all_entry is not none %}{{ ((t.oanda_fill - t.all_entry) / 0.0001)|round(1) }}{% else %}—{% endif %}
+        </td>
+        <td style="background:rgba(26,86,219,0.04);">
+          {% if t.oanda_sl is none %}—{% else %}{{ "%.5f"|format(t.oanda_sl) }}{% endif %}
+        </td>
+        <td style="background:rgba(26,86,219,0.04);">
+          {% if t.oanda_tp is none %}—{% else %}{{ "%.5f"|format(t.oanda_tp) }}{% endif %}
+        </td>
+        <td style="background:rgba(26,86,219,0.04);">
+          {% if t.oanda_exit is none %}—{% else %}{{ "%.5f"|format(t.oanda_exit) }}{% endif %}
+        </td>
+        <td style="background:rgba(26,86,219,0.04);">
+          {% if t.oanda_exit is none %}—
+          {% elif t.all_result == "SL" and t.sl is not none %}{{ ((t.oanda_exit - t.sl) / 0.0001)|round(1) }}
+          {% elif t.all_result == "TP" and t.tp is not none %}{{ ((t.oanda_exit - t.tp) / 0.0001)|round(1) }}
+          {% else %}—{% endif %}
         </td>
         <td style="background:rgba(26,86,219,0.04); color:#555;">
           {% if t.oanda_units is none %}—{% else %}{{ "{:,}".format(t.oanda_units) }}{% endif %}
+        </td>
+        <td style="background:rgba(26,86,219,0.04); {% if t.oanda_pl is none %}color:#888{% elif t.oanda_pl > 0 %}color:#4caf50;font-weight:600{% else %}color:#ef5350;font-weight:600{% endif %}">
+          {% if t.oanda_pl is none %}—{% elif t.oanda_pl >= 0 %}+${{ t.oanda_pl }}{% else %}-${{ t.oanda_pl|abs }}{% endif %}
         </td>
       </tr>
       {% endfor %}
       {% if not trades %}
       <tr>
-        <td colspan="15" style="text-align:center; padding:32px; color:#888;">
+        <td colspan="21" style="text-align:center; padding:32px; color:#888;">
           No signals found since go live date.
         </td>
       </tr>
