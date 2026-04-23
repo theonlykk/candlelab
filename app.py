@@ -915,6 +915,14 @@ def strategy_trades(strategy_id):
     except Exception as e:
         log.warning("strategy_trades: oanda fills fetch failed: %s", e)
 
+    log.info("DIAG: oanda_fills size=%d", len(oanda_fills))
+    if oanda_fills:
+        sample_key = list(oanda_fills.keys())[0]
+        log.info("DIAG: sample oanda_fills key=%s type=%s", sample_key, type(sample_key))
+    if trades:
+        sample_opened_at = trades[0].get("opened_at")
+        log.info("DIAG: sample trade opened_at=%s type=%s", sample_opened_at, type(sample_opened_at))
+
     # Annotate each trade with matched OANDA fill
     for t in trades:
         try:
