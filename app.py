@@ -905,6 +905,7 @@ def strategy_trades(strategy_id):
             live_df, anchor, complement, connector,
             session_filter, sl_mult, tp_mult, timeout,
             tick_size, pip, instrument_label, indicator_fn,
+            strategy_id=strategy_id, go_live_ts=go_live_ts,
         )
 
     # Fetch OANDA actual fills from trades table — keyed by opened_at floored to minute
@@ -914,14 +915,6 @@ def strategy_trades(strategy_id):
         oanda_fills = _fetch_oanda_fills_for_strategy(f"CandleLab:{raw_strategy_name}", go_live_ts)
     except Exception as e:
         log.warning("strategy_trades: oanda fills fetch failed: %s", e)
-
-    log.info("DIAG: oanda_fills size=%d", len(oanda_fills))
-    if oanda_fills:
-        sample_key = list(oanda_fills.keys())[0]
-        log.info("DIAG: sample oanda_fills key=%s type=%s", sample_key, type(sample_key))
-    if trades:
-        sample_opened_at = trades[0].get("opened_at")
-        log.info("DIAG: sample trade opened_at=%s type=%s", sample_opened_at, type(sample_opened_at))
 
     # Annotate each trade with matched OANDA fill
     for t in trades:
@@ -2505,6 +2498,8 @@ def _executor_compute_trade_detail(
     pip: float,
     instrument_label: str,
     indicator_fn=None,
+    strategy_id: int | None = None,
+    go_live_ts: pd.Timestamp | None = None,
 ) -> list[dict]:
     """
     Same signal detection and simulation as _executor_compute_from_dataframe
@@ -2549,6 +2544,30 @@ def _executor_compute_trade_detail(
 
     instr_key = instrument_label.replace("/", "_")
     spread_cost_pips = SPREAD_COST_PIPS.get(instr_key, 1.0)
+
+    try:
+        from data import get_conn
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT direction, entry_price, opened_at
+                    FROM trades
+                    WHERE strategy_id = %s
+                    AND opened_at >= %s
+                    ORDER BY opened_at ASC
+                """, (strategy_id, go_live_ts))
+                rows = cur.fetchall()
+        db_lookup = {}
+        for direction, entry_price, opened_at in rows:
+            ts = pd.Timestamp(opened_at)
+            if ts.tzinfo is None:
+                ts = ts.tz_localize("UTC")
+            key = (str(direction).strip().upper(), round(float(entry_price), 5))
+            if key not in db_lookup:
+                db_lookup[key] = ts
+    except Exception as e:
+        log.warning("_executor_compute_trade_detail: db lookup failed: %s", e)
+        db_lookup = {}
 
     for i in range(n):
         if i >= len(sig_array):
@@ -2699,6 +2718,11 @@ def _executor_compute_trade_detail(
             "atr":            atr_actual,
             "clean_pnl":      clean_pnl,
         })
+        t = trades[-1]
+        raw_dir = str(t.get("direction", "")).strip().upper()
+        dir_key = "BUY" if raw_dir in ("BUY", "LONG") else "SELL" if raw_dir in ("SELL", "SHORT") else raw_dir
+        entry_key = round(float(t.get("all_entry") or 0), 5)
+        t["opened_at"] = db_lookup.get((dir_key, entry_key))
 
     return trades
 
