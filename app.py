@@ -814,7 +814,7 @@ def _fetch_oanda_fills_for_strategy(strategy_id: int, go_live_ts: pd.Timestamp) 
         r = requests.get(
             f"{oanda_base}/v3/accounts/{oanda_account}/transactions",
             headers=headers_oanda,
-            params={"from": from_str, "type": ["ORDER_FILL", "STOP_LOSS_ORDER", "TAKE_PROFIT_ORDER"]},
+            params={"from": from_str, "type": "ORDER_FILL"},
             timeout=15,
         )
         r.raise_for_status()
@@ -829,16 +829,7 @@ def _fetch_oanda_fills_for_strategy(strategy_id: int, go_live_ts: pd.Timestamp) 
         return {}
     opens = {}
     closes = {}
-    trade_orders = {}  # tradeID -> {sl_price, tp_price}
     for tx in all_transactions:
-        tx_type = tx.get("type", "")
-        tid = str(tx.get("tradeID", ""))
-        if not tid:
-            pass
-        elif tx_type == "STOP_LOSS_ORDER":
-            trade_orders.setdefault(tid, {})["sl_price"] = float(tx.get("price", 0) or 0)
-        elif tx_type == "TAKE_PROFIT_ORDER":
-            trade_orders.setdefault(tid, {})["tp_price"] = float(tx.get("price", 0) or 0)
         trade_opened = tx.get("tradeOpened")
         trades_closed = tx.get("tradesClosed")
         if trade_opened:
@@ -861,23 +852,17 @@ def _fetch_oanda_fills_for_strategy(strategy_id: int, go_live_ts: pd.Timestamp) 
             continue
         oanda_price = float(open_tx.get("price", 0) or 0)
         oanda_units = abs(int(open_tx.get("units", 0) or 0))
-        orders = trade_orders.get(tid, {})
         close_info = closes.get(tid)
         oanda_pl = None
         close_type = None
-        oanda_exit = None
         if close_info:
             oanda_pl = float(close_info["detail"].get("realizedPL", 0) or 0)
             close_type = close_info["tx"].get("reason", "")
-            oanda_exit = float(close_info["detail"].get("price", 0) or 0)
         result[key] = {
             "oanda_fill": oanda_price,
             "oanda_units": oanda_units,
             "oanda_pl": round(oanda_pl, 2) if oanda_pl is not None else None,
             "close_type": close_type,
-            "oanda_sl": orders.get("sl_price"),
-            "oanda_tp": orders.get("tp_price"),
-            "oanda_exit": oanda_exit,
         }
     return result
 
@@ -944,69 +929,27 @@ def strategy_trades(strategy_id):
             tick_size, pip, instrument_label, indicator_fn,
         )
 
-    # Populate opened_at on each computed trade from the trades DB
-    try:
-        from data import get_conn
-        base_name = (row.get("strategy_name") or "").strip().replace("CandleLab:", "")
-        _db_opened: dict = {}  # opened_at.floor("min") -> opened_at Timestamp
-        with get_conn() as _conn:
-            _cur = _conn.cursor()
-            _cur.execute("""
-                SELECT opened_at FROM trades
-                WHERE (strategy_name = %s OR strategy_name = %s)
-                AND opened_at >= %s
-                ORDER BY opened_at
-            """, (base_name, f"CandleLab:{base_name}", go_live_ts.to_pydatetime()))
-            for (_oa,) in _cur.fetchall():
-                try:
-                    _ts = pd.Timestamp(_oa)
-                    if _ts.tzinfo is None:
-                        _ts = _ts.tz_localize("UTC")
-                    else:
-                        _ts = _ts.tz_convert("UTC")
-                    _db_opened[_ts.floor("min")] = _ts
-                except Exception:
-                    pass
-        for t in trades:
-            try:
-                _ts_raw = t.get("ts_raw")
-                if _ts_raw is not None:
-                    _approx = pd.Timestamp(_ts_raw)
-                    if _approx.tzinfo is None:
-                        _approx = _approx.tz_localize("UTC")
-                    _approx = (_approx + pd.Timedelta(minutes=5)).floor("min")
-                    t["opened_at"] = _db_opened.get(_approx)
-                else:
-                    t["opened_at"] = None
-            except Exception:
-                t["opened_at"] = None
-    except Exception as e:
-        log.warning("strategy_trades: opened_at fetch failed: %s", e)
-
     # Fetch OANDA actual fills — keyed by open time truncated to minute
     oanda_fills = {}
     try:
         oanda_fills = _fetch_oanda_fills_for_strategy(strategy_id, go_live_ts)
-        log.info("strategy_trades: oanda_fills has %d keys for strategy_id=%s", len(oanda_fills), strategy_id)
-        if oanda_fills:
-            sample_key = next(iter(oanda_fills))
-            log.info("strategy_trades: sample key=%s value=%s", sample_key, oanda_fills[sample_key])
     except Exception as e:
         log.warning("strategy_trades: oanda fills fetch failed: %s", e)
 
     # Annotate each trade with matched OANDA fill
     for t in trades:
         try:
-            opened_at = t.get("opened_at")
-            if opened_at is None:
+            ts_raw = t.get("ts_raw")
+            if ts_raw is None:
                 trade_key = None
             else:
-                ts_pd = pd.Timestamp(opened_at)
+                ts_pd = pd.Timestamp(ts_raw)
                 if ts_pd.tzinfo is None:
                     ts_pd = ts_pd.tz_localize("UTC")
                 else:
                     ts_pd = ts_pd.tz_convert("UTC")
-                trade_key = ts_pd.floor("min")
+                # OANDA fill happens at next bar open — 5 minutes after signal bar
+                trade_key = (ts_pd + pd.Timedelta(minutes=5)).floor("min")
         except Exception:
             trade_key = None
         match = oanda_fills.get(trade_key) if trade_key else None
@@ -1014,9 +957,6 @@ def strategy_trades(strategy_id):
         t["oanda_units"] = match["oanda_units"] if match else None
         t["oanda_pl"] = match["oanda_pl"] if match else None
         t["oanda_close_type"] = match["close_type"] if match else None
-        t["oanda_sl"] = match["oanda_sl"] if match else None
-        t["oanda_tp"] = match["oanda_tp"] if match else None
-        t["oanda_exit"] = match["oanda_exit"] if match else None
 
     _oanda_pls = [t["oanda_pl"] for t in trades if t.get("oanda_pl") is not None]
     oanda_pnl_total = round(sum(_oanda_pls), 2) if _oanda_pls else None
@@ -2751,7 +2691,6 @@ def _executor_compute_trade_detail(
         trades.append({
             "ts":             ohlc.index[i].strftime("%d/%m %H:%M"),
             "ts_raw":         ohlc.index[i],
-            "opened_at":      None,
             "direction":      "BUY" if direction_val == 1 else "SELL",
             "close":          round(signal_close, 5),
             "replay_entry":   round(replay_entry, 5),
