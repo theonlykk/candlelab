@@ -944,6 +944,45 @@ def strategy_trades(strategy_id):
             tick_size, pip, instrument_label, indicator_fn,
         )
 
+    # Populate opened_at on each computed trade from the trades DB
+    try:
+        from data import get_conn
+        base_name = (row.get("strategy_name") or "").strip().replace("CandleLab:", "")
+        _db_opened: dict = {}  # opened_at.floor("min") -> opened_at Timestamp
+        with get_conn() as _conn:
+            _cur = _conn.cursor()
+            _cur.execute("""
+                SELECT opened_at FROM trades
+                WHERE (strategy_name = %s OR strategy_name = %s)
+                AND opened_at >= %s
+                ORDER BY opened_at
+            """, (base_name, f"CandleLab:{base_name}", go_live_ts.to_pydatetime()))
+            for (_oa,) in _cur.fetchall():
+                try:
+                    _ts = pd.Timestamp(_oa)
+                    if _ts.tzinfo is None:
+                        _ts = _ts.tz_localize("UTC")
+                    else:
+                        _ts = _ts.tz_convert("UTC")
+                    _db_opened[_ts.floor("min")] = _ts
+                except Exception:
+                    pass
+        for t in trades:
+            try:
+                _ts_raw = t.get("ts_raw")
+                if _ts_raw is not None:
+                    _approx = pd.Timestamp(_ts_raw)
+                    if _approx.tzinfo is None:
+                        _approx = _approx.tz_localize("UTC")
+                    _approx = (_approx + pd.Timedelta(minutes=5)).floor("min")
+                    t["opened_at"] = _db_opened.get(_approx)
+                else:
+                    t["opened_at"] = None
+            except Exception:
+                t["opened_at"] = None
+    except Exception as e:
+        log.warning("strategy_trades: opened_at fetch failed: %s", e)
+
     # Fetch OANDA actual fills — keyed by open time truncated to minute
     oanda_fills = {}
     try:
@@ -958,17 +997,16 @@ def strategy_trades(strategy_id):
     # Annotate each trade with matched OANDA fill
     for t in trades:
         try:
-            ts_raw = t.get("ts_raw")
-            if ts_raw is None:
+            opened_at = t.get("opened_at")
+            if opened_at is None:
                 trade_key = None
             else:
-                ts_pd = pd.Timestamp(ts_raw)
+                ts_pd = pd.Timestamp(opened_at)
                 if ts_pd.tzinfo is None:
                     ts_pd = ts_pd.tz_localize("UTC")
                 else:
                     ts_pd = ts_pd.tz_convert("UTC")
-                # OANDA fill happens at next bar open — 5 minutes after signal bar
-                trade_key = (ts_pd + pd.Timedelta(minutes=5)).floor("min")
+                trade_key = ts_pd.floor("min")
         except Exception:
             trade_key = None
         match = oanda_fills.get(trade_key) if trade_key else None
@@ -2713,6 +2751,7 @@ def _executor_compute_trade_detail(
         trades.append({
             "ts":             ohlc.index[i].strftime("%d/%m %H:%M"),
             "ts_raw":         ohlc.index[i],
+            "opened_at":      None,
             "direction":      "BUY" if direction_val == 1 else "SELL",
             "close":          round(signal_close, 5),
             "replay_entry":   round(replay_entry, 5),
