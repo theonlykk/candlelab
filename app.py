@@ -2568,6 +2568,7 @@ def _executor_compute_trade_detail(
     except Exception as e:
         log.warning("_executor_compute_trade_detail: db lookup failed: %s", e)
         db_lookup = {}
+    log.info("DIAG2: db_lookup size=%d sample=%s", len(db_lookup), list(db_lookup.items())[:2])
 
     for i in range(n):
         if i >= len(sig_array):
@@ -2723,6 +2724,8 @@ def _executor_compute_trade_detail(
         dir_key = "BUY" if raw_dir in ("BUY", "LONG") else "SELL" if raw_dir in ("SELL", "SHORT") else raw_dir
         entry_key = round(float(t.get("all_entry") or 0), 5)
         t["opened_at"] = db_lookup.get((dir_key, entry_key))
+        if len(trades) == 1:
+            log.info("DIAG2: first trade dir_key=%s entry_key=%s opened_at=%s", dir_key, entry_key, trades[-1].get("opened_at"))
 
     return trades
 
