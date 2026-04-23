@@ -898,6 +898,7 @@ def strategy_trades(strategy_id):
 
     oanda_id = _oanda_instrument_id(instrument_label)
     live_df = _executor_read_continuous_series(oanda_id, go_live_ts)
+    raw_strategy_name = (row.get("strategy_name") or "").strip()
 
     trades = []
     if live_df is not None and not live_df.empty:
@@ -906,10 +907,10 @@ def strategy_trades(strategy_id):
             session_filter, sl_mult, tp_mult, timeout,
             tick_size, pip, instrument_label, indicator_fn,
             strategy_id=strategy_id, go_live_ts=go_live_ts,
+            strategy_name=raw_strategy_name,
         )
 
     # Fetch OANDA actual fills from trades table — keyed by opened_at floored to minute
-    raw_strategy_name = (row.get("strategy_name") or "").strip()
     oanda_fills = {}
     try:
         oanda_fills = _fetch_oanda_fills_for_strategy(f"CandleLab:{raw_strategy_name}", go_live_ts)
@@ -2500,6 +2501,7 @@ def _executor_compute_trade_detail(
     indicator_fn=None,
     strategy_id: int | None = None,
     go_live_ts: pd.Timestamp | None = None,
+    strategy_name: str | None = None,
 ) -> list[dict]:
     """
     Same signal detection and simulation as _executor_compute_from_dataframe
@@ -2552,10 +2554,10 @@ def _executor_compute_trade_detail(
                 cur.execute("""
                     SELECT direction, entry_price, opened_at
                     FROM trades
-                    WHERE strategy_id = %s
+                    WHERE strategy_name = %s
                     AND opened_at >= %s
                     ORDER BY opened_at ASC
-                """, (f"cl-strat-{strategy_id}", go_live_ts))
+                """, (f"CandleLab:{strategy_name}", go_live_ts))
                 rows = cur.fetchall()
         db_lookup = {}
         for direction, entry_price, opened_at in rows:
@@ -2568,7 +2570,6 @@ def _executor_compute_trade_detail(
     except Exception as e:
         log.warning("_executor_compute_trade_detail: db lookup failed: %s", e)
         db_lookup = {}
-    log.info("DIAG2: db_lookup size=%d sample=%s", len(db_lookup), list(db_lookup.items())[:2])
 
     for i in range(n):
         if i >= len(sig_array):
@@ -2724,8 +2725,6 @@ def _executor_compute_trade_detail(
         dir_key = "BUY" if raw_dir in ("BUY", "LONG") else "SELL" if raw_dir in ("SELL", "SHORT") else raw_dir
         entry_key = round(float(t.get("all_entry") or 0), 5)
         t["opened_at"] = db_lookup.get((dir_key, entry_key))
-        if len(trades) == 1:
-            log.info("DIAG2: first trade dir_key=%s entry_key=%s opened_at=%s", dir_key, entry_key, trades[-1].get("opened_at"))
 
     return trades
 
