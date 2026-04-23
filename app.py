@@ -799,86 +799,89 @@ def strategy_chart(strategy_id):
 
 def _fetch_oanda_fills_for_strategy(strategy_id: int, go_live_ts: pd.Timestamp) -> dict:
     """
-    Fetch OANDA ORDER_FILL transactions for a strategy via clientOrderID.
-    Returns dict keyed by open time (truncated to minute) -> fill dict.
+    Fetch OANDA fills for a strategy. Returns dict keyed by open time
+    (floored to minute) -> fill dict with oanda_fill, oanda_units,
+    oanda_sl, oanda_tp, oanda_exit, oanda_pl, close_type.
+    Two-fetch approach: ORDER_FILL first (filtered by clientOrderID),
+    then ALL transactions (filtered by tradeID) for SL/TP/closes.
     """
     oanda_token = os.environ.get("OANDA_API_TOKEN", "")
     oanda_base = os.environ.get("OANDA_BASE_URL", "https://api-fxpractice.oanda.com")
     oanda_account = os.environ.get("OANDA_ACCOUNT_ID", "")
     if not oanda_token or not oanda_account:
+        log.warning("_fetch_oanda_fills: missing env vars")
         return {}
     headers_oanda = {"Authorization": f"Bearer {oanda_token}"}
     client_order_prefix = f"cl-strat-{strategy_id}"
     from_str = go_live_ts.strftime("%Y-%m-%dT%H:%M:%SZ")
-    try:
+
+    def _fetch_all(params):
         r = requests.get(
             f"{oanda_base}/v3/accounts/{oanda_account}/transactions",
-            headers=headers_oanda,
-            params={"from": from_str, "type": ["ORDER_FILL", "STOP_LOSS_ORDER", "TAKE_PROFIT_ORDER"]},
-            timeout=15,
+            headers=headers_oanda, params=params, timeout=15,
         )
         r.raise_for_status()
         pages = r.json().get("pages", [])
-        all_transactions = []
+        txns = []
         for page_url in pages:
             pr = requests.get(page_url, headers=headers_oanda, timeout=15)
             pr.raise_for_status()
-            all_transactions.extend(pr.json().get("transactions", []))
+            txns.extend(pr.json().get("transactions", []))
+        return txns
+
+    try:
+        # Step 1: ORDER_FILL only — find our strategy opens by clientOrderID
+        fill_txns = _fetch_all({"from": from_str, "type": "ORDER_FILL"})
+
+        oanda_rows = {}  # tradeID -> row dict
+        for tx in fill_txns:
+            if not str(tx.get("clientOrderID", "")).startswith(client_order_prefix):
+                continue
+            to = tx.get("tradeOpened")
+            if not to:
+                continue
+            tid = str(to["tradeID"])
+            oanda_rows[tid] = {
+                "key": pd.Timestamp(tx["time"], tz="UTC").floor("min"),
+                "oanda_fill": float(tx.get("price", 0) or 0),
+                "oanda_units": abs(int(tx.get("units", 0) or 0)),
+                "oanda_sl": None,
+                "oanda_tp": None,
+                "oanda_exit": None,
+                "oanda_pl": None,
+                "close_type": None,
+            }
+
+        if not oanda_rows:
+            return {}
+
+        # Step 2: ALL transactions — match SL/TP/closes by tradeID
+        strat_trade_ids = set(oanda_rows.keys())
+        all_txns = _fetch_all({"from": from_str})
+
+        for tx in all_txns:
+            tx_type = tx.get("type", "")
+            tid = str(tx.get("tradeID", ""))
+
+            if tx_type == "STOP_LOSS_ORDER" and tid in strat_trade_ids:
+                oanda_rows[tid]["oanda_sl"] = float(tx.get("price", 0) or 0)
+            elif tx_type == "TAKE_PROFIT_ORDER" and tid in strat_trade_ids:
+                oanda_rows[tid]["oanda_tp"] = float(tx.get("price", 0) or 0)
+
+            for tc in tx.get("tradesClosed", []):
+                ctid = str(tc.get("tradeID", ""))
+                if ctid in strat_trade_ids:
+                    oanda_rows[ctid]["oanda_exit"] = float(tc.get("price", 0) or 0)
+                    oanda_rows[ctid]["oanda_pl"] = round(float(tc.get("realizedPL", 0) or 0), 2)
+                    oanda_rows[ctid]["close_type"] = tx.get("reason", "")
+
     except Exception as e:
         log.warning("_fetch_oanda_fills: fetch failed: %s", e)
         return {}
-    opens = {}
-    closes = {}
-    trade_orders = {}  # tradeID -> {sl_price, tp_price}
-    for tx in all_transactions:
-        tx_type = tx.get("type", "")
-        tid = str(tx.get("tradeID", ""))
-        if not tid:
-            pass
-        elif tx_type == "STOP_LOSS_ORDER":
-            trade_orders.setdefault(tid, {})["sl_price"] = float(tx.get("price", 0) or 0)
-        elif tx_type == "TAKE_PROFIT_ORDER":
-            trade_orders.setdefault(tid, {})["tp_price"] = float(tx.get("price", 0) or 0)
-        trade_opened = tx.get("tradeOpened")
-        trades_closed = tx.get("tradesClosed")
-        if trade_opened:
-            tid = str(trade_opened.get("tradeID", ""))
-            if tid:
-                opens[tid] = tx
-        if trades_closed:
-            for tc in trades_closed:
-                tid = str(tc.get("tradeID", ""))
-                if tid:
-                    closes[tid] = {"tx": tx, "detail": tc}
+
     result = {}
-    for tid, open_tx in opens.items():
-        if not str(open_tx.get("clientOrderID", "")).startswith(client_order_prefix):
-            continue
-        try:
-            oanda_time = pd.Timestamp(open_tx["time"], tz="UTC")
-            key = oanda_time.floor("min")
-        except Exception:
-            continue
-        oanda_price = float(open_tx.get("price", 0) or 0)
-        oanda_units = abs(int(open_tx.get("units", 0) or 0))
-        orders = trade_orders.get(tid, {})
-        close_info = closes.get(tid)
-        oanda_pl = None
-        close_type = None
-        oanda_exit = None
-        if close_info:
-            oanda_pl = float(close_info["detail"].get("realizedPL", 0) or 0)
-            close_type = close_info["tx"].get("reason", "")
-            oanda_exit = float(close_info["detail"].get("price", 0) or 0)
-        result[key] = {
-            "oanda_fill": oanda_price,
-            "oanda_units": oanda_units,
-            "oanda_pl": round(oanda_pl, 2) if oanda_pl is not None else None,
-            "close_type": close_type,
-            "oanda_sl": orders.get("sl_price"),
-            "oanda_tp": orders.get("tp_price"),
-            "oanda_exit": oanda_exit,
-        }
+    for tid, row in oanda_rows.items():
+        result[row["key"]] = {k: v for k, v in row.items() if k != "key"}
     return result
 
 
