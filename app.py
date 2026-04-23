@@ -3094,7 +3094,7 @@ def api_strategy_my_strategies():
 
 with _startup_lock:
     if not _startup_done:
-        init_strategy_tables()
+        # init_strategy_tables()
         init_candlelab_poll_log_table()
         start_scheduler()
         _startup_done = True
