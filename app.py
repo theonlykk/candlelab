@@ -948,6 +948,10 @@ def strategy_trades(strategy_id):
     oanda_fills = {}
     try:
         oanda_fills = _fetch_oanda_fills_for_strategy(strategy_id, go_live_ts)
+        log.info("strategy_trades: oanda_fills has %d keys for strategy_id=%s", len(oanda_fills), strategy_id)
+        if oanda_fills:
+            sample_key = next(iter(oanda_fills))
+            log.info("strategy_trades: sample key=%s value=%s", sample_key, oanda_fills[sample_key])
     except Exception as e:
         log.warning("strategy_trades: oanda fills fetch failed: %s", e)
 
