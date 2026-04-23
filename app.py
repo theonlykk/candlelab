@@ -797,74 +797,52 @@ def strategy_chart(strategy_id):
     )
 
 
-def _fetch_oanda_fills_for_strategy(strategy_id: int, go_live_ts: pd.Timestamp) -> dict:
+def _fetch_oanda_fills_for_strategy(strategy_name: str, go_live_ts: pd.Timestamp) -> dict:
     """
-    Fetch OANDA ORDER_FILL transactions for a strategy via clientOrderID.
-    Returns dict keyed by open time (truncated to minute) -> fill dict.
+    Read OANDA fill data from the trades table in Postgres.
+    Returns dict keyed by opened_at floored to minute (UTC) -> fill dict.
     """
-    oanda_token = os.environ.get("OANDA_API_TOKEN", "")
-    oanda_base = os.environ.get("OANDA_BASE_URL", "https://api-fxpractice.oanda.com")
-    oanda_account = os.environ.get("OANDA_ACCOUNT_ID", "")
-    if not oanda_token or not oanda_account:
-        return {}
-    headers_oanda = {"Authorization": f"Bearer {oanda_token}"}
-    client_order_prefix = f"cl-strat-{strategy_id}"
-    from_str = go_live_ts.strftime("%Y-%m-%dT%H:%M:%SZ")
+    from data import get_conn
     try:
-        r = requests.get(
-            f"{oanda_base}/v3/accounts/{oanda_account}/transactions",
-            headers=headers_oanda,
-            params={"from": from_str, "type": "ORDER_FILL"},
-            timeout=15,
-        )
-        r.raise_for_status()
-        pages = r.json().get("pages", [])
-        all_transactions = []
-        for page_url in pages:
-            pr = requests.get(page_url, headers=headers_oanda, timeout=15)
-            pr.raise_for_status()
-            all_transactions.extend(pr.json().get("transactions", []))
+        with get_conn() as conn:
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            cur.execute(
+                """
+                SELECT opened_at, oanda_fill, oanda_units, oanda_pl,
+                       oanda_close_type, oanda_sl, oanda_tp, oanda_exit
+                FROM trades
+                WHERE strategy_name = %s AND opened_at >= %s
+                """,
+                (strategy_name, go_live_ts),
+            )
+            rows = cur.fetchall()
+        result = {}
+        for r in rows:
+            opened_at = r.get("opened_at")
+            if opened_at is None:
+                continue
+            try:
+                ts = pd.Timestamp(opened_at)
+                if ts.tzinfo is None:
+                    ts = ts.tz_localize("UTC")
+                else:
+                    ts = ts.tz_convert("UTC")
+                key = ts.floor("min")
+            except Exception:
+                continue
+            result[key] = {
+                "oanda_fill": r.get("oanda_fill"),
+                "oanda_units": r.get("oanda_units"),
+                "oanda_pl": r.get("oanda_pl"),
+                "close_type": r.get("oanda_close_type"),
+                "oanda_sl": r.get("oanda_sl"),
+                "oanda_tp": r.get("oanda_tp"),
+                "oanda_exit": r.get("oanda_exit"),
+            }
+        return result
     except Exception as e:
-        log.warning("_fetch_oanda_fills: fetch failed: %s", e)
+        log.warning("_fetch_oanda_fills_for_strategy: db fetch failed: %s", e)
         return {}
-    opens = {}
-    closes = {}
-    for tx in all_transactions:
-        trade_opened = tx.get("tradeOpened")
-        trades_closed = tx.get("tradesClosed")
-        if trade_opened:
-            tid = str(trade_opened.get("tradeID", ""))
-            if tid:
-                opens[tid] = tx
-        if trades_closed:
-            for tc in trades_closed:
-                tid = str(tc.get("tradeID", ""))
-                if tid:
-                    closes[tid] = {"tx": tx, "detail": tc}
-    result = {}
-    for tid, open_tx in opens.items():
-        if not str(open_tx.get("clientOrderID", "")).startswith(client_order_prefix):
-            continue
-        try:
-            oanda_time = pd.Timestamp(open_tx["time"], tz="UTC")
-            key = oanda_time.floor("min")
-        except Exception:
-            continue
-        oanda_price = float(open_tx.get("price", 0) or 0)
-        oanda_units = abs(int(open_tx.get("units", 0) or 0))
-        close_info = closes.get(tid)
-        oanda_pl = None
-        close_type = None
-        if close_info:
-            oanda_pl = float(close_info["detail"].get("realizedPL", 0) or 0)
-            close_type = close_info["tx"].get("reason", "")
-        result[key] = {
-            "oanda_fill": oanda_price,
-            "oanda_units": oanda_units,
-            "oanda_pl": round(oanda_pl, 2) if oanda_pl is not None else None,
-            "close_type": close_type,
-        }
-    return result
 
 
 @app.route("/trades/<int:strategy_id>")
@@ -929,27 +907,27 @@ def strategy_trades(strategy_id):
             tick_size, pip, instrument_label, indicator_fn,
         )
 
-    # Fetch OANDA actual fills — keyed by open time truncated to minute
+    # Fetch OANDA actual fills from trades table — keyed by opened_at floored to minute
+    raw_strategy_name = (row.get("strategy_name") or "").strip()
     oanda_fills = {}
     try:
-        oanda_fills = _fetch_oanda_fills_for_strategy(strategy_id, go_live_ts)
+        oanda_fills = _fetch_oanda_fills_for_strategy(f"CandleLab:{raw_strategy_name}", go_live_ts)
     except Exception as e:
         log.warning("strategy_trades: oanda fills fetch failed: %s", e)
 
     # Annotate each trade with matched OANDA fill
     for t in trades:
         try:
-            ts_raw = t.get("ts_raw")
-            if ts_raw is None:
+            opened_at = t.get("opened_at")
+            if opened_at is None:
                 trade_key = None
             else:
-                ts_pd = pd.Timestamp(ts_raw)
+                ts_pd = pd.Timestamp(opened_at)
                 if ts_pd.tzinfo is None:
                     ts_pd = ts_pd.tz_localize("UTC")
                 else:
                     ts_pd = ts_pd.tz_convert("UTC")
-                # OANDA fill happens at next bar open — 5 minutes after signal bar
-                trade_key = (ts_pd + pd.Timedelta(minutes=5)).floor("min")
+                trade_key = ts_pd.floor("min")
         except Exception:
             trade_key = None
         match = oanda_fills.get(trade_key) if trade_key else None
@@ -957,6 +935,9 @@ def strategy_trades(strategy_id):
         t["oanda_units"] = match["oanda_units"] if match else None
         t["oanda_pl"] = match["oanda_pl"] if match else None
         t["oanda_close_type"] = match["close_type"] if match else None
+        t["oanda_sl"] = match["oanda_sl"] if match else None
+        t["oanda_tp"] = match["oanda_tp"] if match else None
+        t["oanda_exit"] = match["oanda_exit"] if match else None
 
     _oanda_pls = [t["oanda_pl"] for t in trades if t.get("oanda_pl") is not None]
     oanda_pnl_total = round(sum(_oanda_pls), 2) if _oanda_pls else None
