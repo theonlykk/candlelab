@@ -829,17 +829,16 @@ def _fetch_oanda_fills_for_strategy(strategy_id: int, go_live_ts: pd.Timestamp) 
         return {}
     opens = {}
     closes = {}
-    batch_orders = {}  # batchID -> {sl_price, tp_price}
+    trade_orders = {}  # tradeID -> {sl_price, tp_price}
     for tx in all_transactions:
         tx_type = tx.get("type", "")
-        if tx_type == "STOP_LOSS_ORDER":
-            bid = str(tx.get("batchID", ""))
-            if bid:
-                batch_orders.setdefault(bid, {})["sl_price"] = float(tx.get("price", 0) or 0)
+        tid = str(tx.get("tradeID", ""))
+        if not tid:
+            pass
+        elif tx_type == "STOP_LOSS_ORDER":
+            trade_orders.setdefault(tid, {})["sl_price"] = float(tx.get("price", 0) or 0)
         elif tx_type == "TAKE_PROFIT_ORDER":
-            bid = str(tx.get("batchID", ""))
-            if bid:
-                batch_orders.setdefault(bid, {})["tp_price"] = float(tx.get("price", 0) or 0)
+            trade_orders.setdefault(tid, {})["tp_price"] = float(tx.get("price", 0) or 0)
         trade_opened = tx.get("tradeOpened")
         trades_closed = tx.get("tradesClosed")
         if trade_opened:
@@ -862,10 +861,7 @@ def _fetch_oanda_fills_for_strategy(strategy_id: int, go_live_ts: pd.Timestamp) 
             continue
         oanda_price = float(open_tx.get("price", 0) or 0)
         oanda_units = abs(int(open_tx.get("units", 0) or 0))
-        batch_id = str(open_tx.get("batchID", ""))
-        batch_info = batch_orders.get(batch_id, {})
-        oanda_sl = batch_info.get("sl_price")
-        oanda_tp = batch_info.get("tp_price")
+        orders = trade_orders.get(tid, {})
         close_info = closes.get(tid)
         oanda_pl = None
         close_type = None
@@ -879,8 +875,8 @@ def _fetch_oanda_fills_for_strategy(strategy_id: int, go_live_ts: pd.Timestamp) 
             "oanda_units": oanda_units,
             "oanda_pl": round(oanda_pl, 2) if oanda_pl is not None else None,
             "close_type": close_type,
-            "oanda_sl": oanda_sl,
-            "oanda_tp": oanda_tp,
+            "oanda_sl": orders.get("sl_price"),
+            "oanda_tp": orders.get("tp_price"),
             "oanda_exit": oanda_exit,
         }
     return result
