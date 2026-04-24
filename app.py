@@ -2552,21 +2552,22 @@ def _executor_compute_trade_detail(
         with get_conn() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT direction, entry_price, opened_at
+                    SELECT direction, signal_time, opened_at
                     FROM trades
                     WHERE strategy_name = %s
                     AND opened_at >= %s
+                    AND signal_time IS NOT NULL
                     ORDER BY opened_at ASC
                 """, (f"CandleLab:{strategy_name}", go_live_ts))
                 rows = cur.fetchall()
         db_lookup = {}
-        for direction, entry_price, opened_at in rows:
-            ts = pd.Timestamp(opened_at)
+        for direction, signal_time, opened_at in rows:
+            ts = pd.Timestamp(signal_time)
             if ts.tzinfo is None:
                 ts = ts.tz_localize("UTC")
-            key = (str(direction).strip().upper(), round(float(entry_price), 5))
+            key = (str(direction).strip().upper(), ts.floor("min"))
             if key not in db_lookup:
-                db_lookup[key] = ts
+                db_lookup[key] = pd.Timestamp(opened_at)
     except Exception as e:
         log.warning("_executor_compute_trade_detail: db lookup failed: %s", e)
         db_lookup = {}
@@ -2723,8 +2724,15 @@ def _executor_compute_trade_detail(
         t = trades[-1]
         raw_dir = str(t.get("direction", "")).strip().upper()
         dir_key = "BUY" if raw_dir in ("BUY", "LONG") else "SELL" if raw_dir in ("SELL", "SHORT") else raw_dir
-        entry_key = round(float(t.get("all_entry") or 0), 5)
-        t["opened_at"] = db_lookup.get((dir_key, entry_key))
+        ts_raw = t.get("ts_raw")
+        if ts_raw is not None:
+            ts_pd = pd.Timestamp(ts_raw)
+            if ts_pd.tzinfo is None:
+                ts_pd = ts_pd.tz_localize("UTC")
+            signal_key = (dir_key, ts_pd.floor("min"))
+        else:
+            signal_key = None
+        t["opened_at"] = db_lookup.get(signal_key) if signal_key else None
 
     return trades
 
