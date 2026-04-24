@@ -2547,6 +2547,9 @@ def _executor_compute_trade_detail(
     instr_key = instrument_label.replace("/", "_")
     spread_cost_pips = SPREAD_COST_PIPS.get(instr_key, 1.0)
 
+    db_lookup = {}
+    legacy_lookup = {}
+
     try:
         from data import get_conn
         with get_conn() as conn:
@@ -2556,21 +2559,31 @@ def _executor_compute_trade_detail(
                     FROM trades
                     WHERE strategy_name = %s
                     AND opened_at >= %s
-                    AND signal_time IS NOT NULL
                     ORDER BY opened_at ASC
                 """, (f"CandleLab:{strategy_name}", go_live_ts))
                 rows = cur.fetchall()
-        db_lookup = {}
+
         for direction, signal_time, opened_at in rows:
-            ts = pd.Timestamp(signal_time)
-            if ts.tzinfo is None:
-                ts = ts.tz_localize("UTC")
-            key = (str(direction).strip().upper(), ts.floor("min"))
-            if key not in db_lookup:
-                db_lookup[key] = pd.Timestamp(opened_at)
+            opened_ts = pd.Timestamp(opened_at)
+            if opened_ts.tzinfo is None:
+                opened_ts = opened_ts.tz_localize("UTC")
+            dir_str = str(direction).strip().upper()
+            if signal_time is not None and pd.notna(signal_time):
+                ts = pd.Timestamp(signal_time)
+                if ts.tzinfo is None:
+                    ts = ts.tz_localize("UTC")
+                key = (dir_str, ts.floor("min"))
+                if key not in db_lookup:
+                    db_lookup[key] = opened_ts
+            else:
+                legacy_key = (dir_str, opened_ts.floor("min"))
+                if legacy_key not in legacy_lookup:
+                    legacy_lookup[legacy_key] = opened_ts
+
     except Exception as e:
         log.warning("_executor_compute_trade_detail: db lookup failed: %s", e)
         db_lookup = {}
+        legacy_lookup = {}
 
     for i in range(n):
         if i >= len(sig_array):
@@ -2725,14 +2738,21 @@ def _executor_compute_trade_detail(
         raw_dir = str(t.get("direction", "")).strip().upper()
         dir_key = "BUY" if raw_dir in ("BUY", "LONG") else "SELL" if raw_dir in ("SELL", "SHORT") else raw_dir
         ts_raw = t.get("ts_raw")
+        opened_at_val = None
+
         if ts_raw is not None:
             ts_pd = pd.Timestamp(ts_raw)
             if ts_pd.tzinfo is None:
                 ts_pd = ts_pd.tz_localize("UTC")
-            signal_key = (dir_key, ts_pd.floor("min"))
-        else:
-            signal_key = None
-        t["opened_at"] = db_lookup.get(signal_key) if signal_key else None
+            base_key = (dir_key, ts_pd.floor("min"))
+            opened_at_val = db_lookup.get(base_key)
+            if not opened_at_val:
+                opened_at_val = legacy_lookup.get(base_key)
+            if not opened_at_val:
+                next_min_key = (dir_key, (ts_pd + pd.Timedelta(minutes=1)).floor("min"))
+                opened_at_val = legacy_lookup.get(next_min_key)
+
+        t["opened_at"] = opened_at_val
 
     return trades
 
