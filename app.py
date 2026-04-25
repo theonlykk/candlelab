@@ -800,7 +800,7 @@ def strategy_chart(strategy_id):
 def _fetch_oanda_fills_for_strategy(strategy_name: str, go_live_ts: pd.Timestamp) -> dict:
     """
     Read OANDA fill data from the trades table in Postgres.
-    Returns dict keyed by opened_at floored to minute (UTC) -> fill dict.
+    Returns dict keyed by (direction, signal_time floored to minute UTC) -> fill dict.
     """
     from data import get_conn
     try:
@@ -808,7 +808,7 @@ def _fetch_oanda_fills_for_strategy(strategy_name: str, go_live_ts: pd.Timestamp
             cur = conn.cursor(cursor_factory=RealDictCursor)
             cur.execute(
                 """
-                SELECT opened_at, oanda_fill, oanda_units, oanda_pl,
+                SELECT opened_at, signal_time, direction, oanda_fill, oanda_units, oanda_pl,
                        oanda_close_type, oanda_sl, oanda_tp, oanda_exit
                 FROM trades
                 WHERE strategy_name = %s AND opened_at >= %s
@@ -818,18 +818,19 @@ def _fetch_oanda_fills_for_strategy(strategy_name: str, go_live_ts: pd.Timestamp
             rows = cur.fetchall()
         result = {}
         for r in rows:
-            opened_at = r.get("opened_at")
-            if opened_at is None:
+            signal_time = r.get("signal_time")
+            if signal_time is None or pd.isna(signal_time):
                 continue
             try:
-                ts = pd.Timestamp(opened_at)
+                ts = pd.Timestamp(signal_time)
                 if ts.tzinfo is None:
                     ts = ts.tz_localize("UTC")
                 else:
                     ts = ts.tz_convert("UTC")
-                key = ts.floor("min")
+                floored = ts.floor("min")
             except Exception:
                 continue
+            key = (r["direction"], floored)
             result[key] = {
                 "oanda_fill": r.get("oanda_fill"),
                 "oanda_units": r.get("oanda_units"),
@@ -910,7 +911,7 @@ def strategy_trades(strategy_id):
             strategy_name=raw_strategy_name,
         )
 
-    # Fetch OANDA actual fills from trades table — keyed by opened_at floored to minute
+    # Fetch OANDA actual fills from trades table — keyed by (direction, signal_time minute UTC)
     oanda_fills = {}
     try:
         oanda_fills = _fetch_oanda_fills_for_strategy(f"CandleLab:{raw_strategy_name}", go_live_ts)
@@ -920,16 +921,11 @@ def strategy_trades(strategy_id):
     # Annotate each trade with matched OANDA fill
     for t in trades:
         try:
-            opened_at = t.get("opened_at")
-            if opened_at is None:
+            ts_raw = t.get("ts_raw")
+            if ts_raw is None:
                 trade_key = None
             else:
-                ts_pd = pd.Timestamp(opened_at)
-                if ts_pd.tzinfo is None:
-                    ts_pd = ts_pd.tz_localize("UTC")
-                else:
-                    ts_pd = ts_pd.tz_convert("UTC")
-                trade_key = ts_pd.floor("min")
+                trade_key = (t["direction"], pd.Timestamp(ts_raw).floor("min"))
         except Exception:
             trade_key = None
         match = oanda_fills.get(trade_key) if trade_key else None
