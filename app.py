@@ -6,6 +6,7 @@ import os
 import json
 import html
 import logging
+import math
 import multiprocessing
 import concurrent.futures
 import threading
@@ -898,8 +899,21 @@ def strategy_trades(strategy_id):
 
     total = len(trades_rows)
     wins = sum(1 for r in trades_rows if str(r.get("result") or "").strip().upper() == "WIN")
-    win_pct = round(wins / total * 100.0, 1) if total > 0 else 0.0
-    _oanda_pls = [float(r["oanda_pl"]) for r in trades_rows if r.get("oanda_pl") is not None]
+    if total > 0:
+        win_pct = round(wins / total * 100.0, 1)
+    else:
+        win_pct = 0.0
+    _oanda_pls: list[float] = []
+    for r in trades_rows:
+        v = r.get("oanda_pl")
+        if v is None:
+            continue
+        try:
+            fv = float(v)
+        except (TypeError, ValueError):
+            continue
+        if not math.isnan(fv):
+            _oanda_pls.append(fv)
     oanda_pnl_total = round(sum(_oanda_pls), 2) if _oanda_pls else None
 
     try:
