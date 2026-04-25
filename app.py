@@ -848,7 +848,7 @@ def _fetch_oanda_fills_for_strategy(strategy_name: str, go_live_ts: pd.Timestamp
 
 @app.route("/trades/<int:strategy_id>")
 def strategy_trades(strategy_id):
-    """Trade blotter: per-trade detail comparing signal replay vs all entries."""
+    """Trade blotter: live trades read from Postgres ``trades`` (diagnostic JSON in template until Prompt 2)."""
     init_strategy_tables()
     row = _fetch_live_strategy_row(strategy_id)
     if row is None:
@@ -871,83 +871,41 @@ def strategy_trades(strategy_id):
     if connector is None:
         connector = "any-order" if has_p2 else ("ordered" if has_cont else None)
 
-    sl_mult = float(row.get("sl_mult") or 1.0)
-    tp_mult = float(row.get("tp_mult") or 3.0)
-    timeout = int(row.get("timeout") or TIMEOUT)
     pip = float(INSTRUMENTS[instrument_label]["pip"])
-    tick_size = pip
-
-    indicator_filter = row.get("indicator_filter")
-    indicator_fn = _make_indicator_fn(indicator_filter) if indicator_filter else None
-
-    session_filter = row.get("session")
-    if session_filter is not None:
-        sstr = str(session_filter).strip()
-        if not sstr or sstr.lower() in ("all", "all sessions"):
-            session_filter = None
-        else:
-            session_filter = sstr
-
-    try:
-        go_live_ts = pd.Timestamp(row.get("go_live_at"))
-        if go_live_ts.tzinfo is None:
-            go_live_ts = go_live_ts.tz_localize("UTC")
-        else:
-            go_live_ts = go_live_ts.tz_convert("UTC")
-    except Exception:
-        abort(404)
-
-    oanda_id = _oanda_instrument_id(instrument_label)
-    live_df = _executor_read_continuous_series(oanda_id, go_live_ts)
     raw_strategy_name = (row.get("strategy_name") or "").strip()
 
-    trades = []
-    if live_df is not None and not live_df.empty:
-        trades = _executor_compute_trade_detail(
-            live_df, anchor, complement, connector,
-            session_filter, sl_mult, tp_mult, timeout,
-            tick_size, pip, instrument_label, indicator_fn,
-            strategy_id=strategy_id, go_live_ts=go_live_ts,
-            strategy_name=raw_strategy_name,
-        )
-
-    # Fetch OANDA actual fills from trades table — keyed by (direction, signal_time minute UTC)
-    oanda_fills = {}
+    trades_rows: list[dict] = []
     try:
-        oanda_fills = _fetch_oanda_fills_for_strategy(f"CandleLab:{raw_strategy_name}", go_live_ts)
+        from data import get_conn
+
+        with get_conn() as conn:
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            cur.execute(
+                """
+                SELECT *
+                FROM trades
+                WHERE strategy_name = %s
+                  AND status != 'CANCELLED'
+                ORDER BY signal_time DESC NULLS LAST, opened_at DESC
+                LIMIT 100
+                """,
+                (f"CandleLab:{raw_strategy_name}",),
+            )
+            trades_rows = [dict(r) for r in cur.fetchall()]
     except Exception as e:
-        log.warning("strategy_trades: oanda fills fetch failed: %s", e)
+        log.warning("strategy_trades: trades table fetch failed: %s", e)
+        trades_rows = []
 
-    # Annotate each trade with matched OANDA fill
-    for t in trades:
-        try:
-            ts_raw = t.get("ts_raw")
-            if ts_raw is None:
-                trade_key = None
-            else:
-                trade_key = (t["direction"], pd.Timestamp(ts_raw).floor("min"))
-        except Exception:
-            trade_key = None
-        match = oanda_fills.get(trade_key) if trade_key else None
-        t["oanda_fill"] = match["oanda_fill"] if match else None
-        t["oanda_units"] = match["oanda_units"] if match else None
-        t["oanda_pl"] = match["oanda_pl"] if match else None
-        t["oanda_close_type"] = match["close_type"] if match else None
-        t["oanda_sl"] = match["oanda_sl"] if match else None
-        t["oanda_tp"] = match["oanda_tp"] if match else None
-        t["oanda_exit"] = match["oanda_exit"] if match else None
-
-    _oanda_pls = [t["oanda_pl"] for t in trades if t.get("oanda_pl") is not None]
+    total = len(trades_rows)
+    wins = sum(1 for r in trades_rows if str(r.get("result") or "").strip().upper() == "WIN")
+    win_pct = round(wins / total * 100.0, 1) if total > 0 else 0.0
+    _oanda_pls = [float(r["oanda_pl"]) for r in trades_rows if r.get("oanda_pl") is not None]
     oanda_pnl_total = round(sum(_oanda_pls), 2) if _oanda_pls else None
 
-    # Summary stats
-    replay_wins = sum(1 for t in trades if t["replay_result"] == "TP")
-    all_wins = sum(1 for t in trades if t["all_result"] == "TP")
-    total = len(trades)
-    replay_pnl_total = round(sum(t["replay_pnl"] for t in trades), 2)
-    all_pnl_total = round(sum(t["all_pnl"] for t in trades if t["all_pnl"] is not None), 2)
-    clean_pnl_total = round(sum(t["clean_pnl"] for t in trades if t.get("clean_pnl") is not None), 2)
-    flipped = sum(1 for t in trades if t["replay_result"] != t["all_result"] and t["all_result"] is not None)
+    try:
+        trades = json.loads(json.dumps(trades_rows, default=str))
+    except (TypeError, ValueError):
+        trades = trades_rows
 
     strategy_name = (row.get("strategy_name") or "Strategy").strip()
     gl_str = ""
@@ -964,16 +922,13 @@ def strategy_trades(strategy_id):
         complement=complement or "—",
         connector=connector or "—",
         go_live_at=gl_str,
-        trades=trades,
-        total=total,
-        replay_wins=replay_wins,
-        all_wins=all_wins,
-        replay_pnl_total=replay_pnl_total,
-        all_pnl_total=all_pnl_total,
-        clean_pnl_total=clean_pnl_total,
-        oanda_pnl_total=oanda_pnl_total,
-        flipped=flipped,
         strategy_id=strategy_id,
+        total=total,
+        wins=wins,
+        win_pct=win_pct,
+        oanda_pnl_total=oanda_pnl_total,
+        trades=trades,
+        pip=pip,
     )
 
 
