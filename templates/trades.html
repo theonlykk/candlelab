@@ -29,7 +29,6 @@
     .meta { font-size: 13px; color: #555; margin-bottom: 20px; line-height: 1.8; }
     .meta span { display: inline-block; margin-right: 20px; }
 
-    /* Summary cards */
     .summary {
       display: flex;
       gap: 12px;
@@ -56,26 +55,7 @@
     }
     .summary-card .value.green { color: #4caf50; }
     .summary-card .value.red   { color: #ef5350; }
-    .summary-card .value.amber { color: #f59e0b; }
 
-    /* Legend */
-    .legend {
-      display: flex;
-      gap: 16px;
-      margin-bottom: 16px;
-      font-size: 12px;
-      color: #555;
-      flex-wrap: wrap;
-    }
-    .legend-item { display: flex; align-items: center; gap: 6px; }
-    .legend-dot {
-      width: 12px; height: 12px; border-radius: 2px; flex-shrink: 0;
-    }
-    .legend-dot.agree-win  { background: rgba(76,175,80,0.15); }
-    .legend-dot.agree-loss { background: rgba(239,83,80,0.12); }
-    .legend-dot.flipped    { background: rgba(245,158,11,0.18); }
-
-    /* Table */
     .table-wrap {
       overflow-x: auto;
       border-radius: 8px;
@@ -85,7 +65,7 @@
       width: 100%;
       border-collapse: collapse;
       font-size: 13px;
-      min-width: 900px;
+      min-width: 1100px;
     }
     thead tr {
       background: #f5f5f5;
@@ -101,6 +81,15 @@
       color: #555;
       white-space: nowrap;
     }
+    th .th-hint {
+      display: block;
+      font-weight: 400;
+      font-size: 10px;
+      text-transform: none;
+      letter-spacing: 0;
+      color: #888;
+      margin-top: 2px;
+    }
     td {
       padding: 9px 12px;
       border-bottom: 1px solid #f0f0f0;
@@ -108,12 +97,6 @@
     }
     tr:last-child td { border-bottom: none; }
 
-    /* Row tints */
-    tr.agree-win  td { background: rgba(76,175,80,0.06); }
-    tr.agree-loss td { background: rgba(239,83,80,0.05); }
-    tr.flipped    td { background: rgba(245,158,11,0.10); }
-
-    /* Result badges */
     .badge {
       display: inline-block;
       padding: 2px 8px;
@@ -121,23 +104,43 @@
       font-size: 11px;
       font-weight: 700;
     }
-    .badge.tp { background: rgba(76,175,80,0.15); color: #2e7d32; }
-    .badge.sl { background: rgba(239,83,80,0.12); color: #c62828; }
-    .badge.to { background: rgba(0,0,0,0.07);     color: #555;    }
+    .badge-dir-buy {
+      background: rgba(76,175,80,0.15);
+      color: #2e7d32;
+    }
+    .badge-dir-sell {
+      background: rgba(239,83,80,0.12);
+      color: #c62828;
+    }
+    .badge-open {
+      background: rgba(76,175,80,0.2);
+      color: #1b5e20;
+    }
+    .badge-res-win {
+      background: rgba(76,175,80,0.15);
+      color: #2e7d32;
+    }
+    .badge-res-loss {
+      background: rgba(239,83,80,0.12);
+      color: #c62828;
+    }
+    .badge-res-be {
+      background: rgba(0,0,0,0.06);
+      color: #757575;
+      font-weight: 600;
+    }
 
-    .dir-buy  { color: #4caf50; font-weight: 600; }
-    .dir-sell { color: #ef5350; font-weight: 600; }
-    .clean-yes { color: #4caf50; }
-    .clean-no  { color: #ef5350; }
+    .text-muted { color: #888; }
+    .mono-id {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px;
+      color: #888;
+    }
 
     .pnl-pos { color: #4caf50; font-weight: 600; }
     .pnl-neg { color: #ef5350; font-weight: 600; }
-
-    .flip-note {
-      font-size: 11px;
-      color: #f59e0b;
-      font-weight: 600;
-    }
+    .diff-pos { color: #4caf50; font-weight: 600; }
+    .diff-neg { color: #ef5350; font-weight: 600; }
   </style>
 </head>
 <body>
@@ -152,8 +155,145 @@
   <span>Live since: {{ go_live_at }}</span>
 </div>
 
-<!-- Temporary diagnostic (Prompt 1); Prompt 2 replaces with real table + stats -->
-<pre style="margin:0; padding:16px; background:#f8f8f8; border:1px solid #e0e0e0; border-radius:8px; font-size:12px; line-height:1.45; overflow:auto; max-height:80vh;">{{ trades | tojson(indent=2) }}</pre>
+<div class="summary">
+  <div class="summary-card">
+    <div class="label">Total trades</div>
+    <div class="value">{{ total }}</div>
+  </div>
+  <div class="summary-card">
+    <div class="label">Wins</div>
+    <div class="value">{{ wins }}</div>
+  </div>
+  <div class="summary-card">
+    <div class="label">Win %</div>
+    <div class="value {{ 'green' if win_pct >= 50 else 'red' }}">{{ win_pct | round(1) }}%</div>
+  </div>
+  <div class="summary-card" style="border-left: 3px solid #1a56db;">
+    <div class="label">OANDA P&amp;L</div>
+    <div class="value {% if oanda_pnl_total is not none %}{{ 'green' if oanda_pnl_total > 0 else ('red' if oanda_pnl_total < 0 else '') }}{% endif %}">
+      {% if oanda_pnl_total is not none %}${{ oanda_pnl_total | round(2) }}{% else %}—{% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Signal time</th>
+        <th>Instrument</th>
+        <th>Dir</th>
+        <th>Units</th>
+        <th>Entry</th>
+        <th>Fill</th>
+        <th title="Pips: (entry − fill) ÷ pip. Positive = price improvement, negative = slippage.">
+          Entry diff
+          <span class="th-hint">pips · + improv. / − slip</span>
+        </th>
+        <th>OANDA SL</th>
+        <th>OANDA TP</th>
+        <th>OANDA exit</th>
+        <th>OANDA P&amp;L</th>
+        <th>Status</th>
+        <th>Trade ID</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% if not trades %}
+      <tr>
+        <td colspan="13" style="text-align:center; padding:32px; color:#888;">
+          No trades recorded for this strategy.
+        </td>
+      </tr>
+      {% else %}
+      {% for t in trades %}
+      {% set jpy = (pip >= 0.01) %}
+      {% set ep = t.get('entry_price') %}
+      {% set of = t.get('oanda_fill') %}
+      {% set st = t.get('signal_time') %}
+      {% set oa = t.get('opened_at') %}
+      <tr>
+        <td>
+          {% if st is not none and st != '' %}
+            {% set s = st|string|trim %}
+            {% if s|length >= 16 %}{{ s[8:10] }}/{{ s[5:7] }} {{ s[11:16] }}{% else %}{{ s }}{% endif %}
+          {% elif oa is not none and oa != '' %}
+            {% set s = oa|string|trim %}
+            {% if s|length >= 16 %}{{ s[8:10] }}/{{ s[5:7] }} {{ s[11:16] }}{% else %}{{ s }}{% endif %}<span class="text-muted"> *</span>
+          {% else %}
+            —
+          {% endif %}
+        </td>
+        <td>{% if t.get('instrument') is not none and t.get('instrument') != '' %}{{ t.instrument }}{% else %}—{% endif %}</td>
+        <td>
+          {% set d = (t.get('direction') or '')|string|trim|upper %}
+          {% if d == 'BUY' %}
+            <span class="badge badge-dir-buy">BUY</span>
+          {% elif d == 'SELL' %}
+            <span class="badge badge-dir-sell">SELL</span>
+          {% elif d %}
+            <span class="badge">{{ d }}</span>
+          {% else %}
+            —
+          {% endif %}
+        </td>
+        <td>
+          {% set u = t.get('oanda_units') %}
+          {% if u is none %}—{% else %}{{ "{:,}".format(u|int) }}{% endif %}
+        </td>
+        <td>
+          {% if ep is none or ep == '' %}—{% elif jpy %}{{ "%.3f"|format(ep|float) }}{% else %}{{ "%.5f"|format(ep|float) }}{% endif %}
+        </td>
+        <td>
+          {% if of is none or of == '' %}—{% elif jpy %}{{ "%.3f"|format(of|float) }}{% else %}{{ "%.5f"|format(of|float) }}{% endif %}
+        </td>
+        <td>
+          {% if ep is none or ep == '' or of is none or of == '' %}
+            —
+          {% else %}
+            {% set diffp = ((ep|float) - (of|float)) / pip %}
+            {% set diff1 = diffp|round(1) %}
+            <span class="{{ 'diff-pos' if diff1 > 0 else ('diff-neg' if diff1 < 0 else 'text-muted') }}" title="Pips: (entry − fill) ÷ pip. Positive = improvement.">{{ diff1 }}</span>
+            <span class="text-muted" style="font-size:11px;"> pips</span>
+          {% endif %}
+        </td>
+        <td>{% set v = t.get('oanda_sl') %}{% if v is none or v == '' %}—{% elif jpy %}{{ "%.3f"|format(v|float) }}{% else %}{{ "%.5f"|format(v|float) }}{% endif %}</td>
+        <td>{% set v = t.get('oanda_tp') %}{% if v is none or v == '' %}—{% elif jpy %}{{ "%.3f"|format(v|float) }}{% else %}{{ "%.5f"|format(v|float) }}{% endif %}</td>
+        <td>{% set v = t.get('oanda_exit') %}{% if v is none or v == '' %}—{% elif jpy %}{{ "%.3f"|format(v|float) }}{% else %}{{ "%.5f"|format(v|float) }}{% endif %}</td>
+        <td>
+          {% set pl = t.get('oanda_pl') %}
+          {% if pl is none %}—{% else %}<span class="{{ 'pnl-pos' if pl|float > 0 else ('pnl-neg' if pl|float < 0 else 'text-muted') }}">${{ pl|float | round(2) }}</span>{% endif %}
+        </td>
+        <td>
+          {% set stt = (t.get('status') or '')|string|trim|upper %}
+          {% if stt == 'OPEN' %}
+            <span class="badge badge-open">OPEN</span>
+          {% elif stt == 'CLOSED' %}
+            {% set res = (t.get('result') or '')|string|trim|upper %}
+            {% if res == 'WIN' %}
+              <span class="badge badge-res-win">WIN</span>
+            {% elif res == 'LOSS' %}
+              <span class="badge badge-res-loss">LOSS</span>
+            {% elif res == 'BREAKEVEN' %}
+              <span class="badge badge-res-be">BREAKEVEN</span>
+            {% elif res %}
+              <span class="badge">{{ res }}</span>
+            {% else %}
+              <span class="text-muted">—</span>
+            {% endif %}
+          {% elif stt %}
+            <span class="badge">{{ t.get('status') }}</span>
+          {% else %}
+            —
+          {% endif %}
+        </td>
+        <td class="mono-id">{% set oid = t.get('oanda_trade_id') %}{% if oid is none or oid == '' %}—{% else %}{{ oid }}{% endif %}</td>
+      </tr>
+      {% endfor %}
+      {% endif %}
+    </tbody>
+  </table>
+</div>
 
 </body>
 </html>
