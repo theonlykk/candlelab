@@ -13,7 +13,7 @@ import threading
 from collections import defaultdict
 import numpy as np
 import pandas as pd
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from flask import Flask, request, jsonify, render_template, abort
 
 import anthropic
@@ -847,6 +847,194 @@ def _fetch_oanda_fills_for_strategy(strategy_name: str, go_live_ts: pd.Timestamp
         return {}
 
 
+_STRATEGY_DETAIL_EPOCH_UTC = datetime(2026, 4, 19, 0, 0, 0, tzinfo=timezone.utc)
+_STRATEGY_DETAIL_PLACED_JSONB = '[{"placed": true}]'
+_STRATEGY_DETAIL_DEFAULT_UNITS = 10000
+_STRATEGY_DETAIL_LABEL_PREF = "Pre-refactor - fill data unavailable"
+_STRATEGY_DETAIL_LABEL_EARLY = "Early system - data unavailable"
+
+
+def _st_strip_strategy_prefix(name) -> str:
+    if name is None:
+        return ""
+    s = str(name).strip()
+    if s.startswith("CandleLab:"):
+        return s[len("CandleLab:") :].strip()
+    return s
+
+
+def _st_utc_dt(val):
+    if val is None:
+        return None
+    try:
+        ts = pd.Timestamp(val)
+        if ts.tzinfo is None:
+            ts = ts.tz_localize("UTC")
+        else:
+            ts = ts.tz_convert("UTC")
+        return ts.to_pydatetime()
+    except Exception:
+        return None
+
+
+def _st_floor_minute_utc(dt) -> datetime | None:
+    d = _st_utc_dt(dt)
+    if d is None:
+        return None
+    return d.replace(second=0, microsecond=0)
+
+
+def _st_parse_placed_signals(poll_rows: list) -> list[dict]:
+    out: list[dict] = []
+    for pr in poll_rows:
+        row = dict(pr) if not isinstance(pr, dict) else pr
+        se = row.get("strategies_evaluated")
+        if se is None:
+            continue
+        if isinstance(se, str):
+            try:
+                se = json.loads(se)
+            except (TypeError, ValueError):
+                continue
+        if not isinstance(se, list):
+            continue
+        for item in se:
+            if not isinstance(item, dict) or not item.get("placed"):
+                continue
+            nm = (item.get("name") or item.get("strategy_name") or "").strip()
+            if not nm:
+                continue
+            out.append(
+                {
+                    "poll_log_id": row.get("poll_log_id"),
+                    "candle_time": row.get("candle_time"),
+                    "instrument": (row.get("instrument") or "").strip(),
+                    "strategy_name": nm,
+                    "bar_open": row.get("bar_open"),
+                }
+            )
+    return out
+
+
+def _st_sig_fp(sig: dict):
+    ct = _st_utc_dt(sig.get("candle_time"))
+    return (sig.get("poll_log_id"), ct, sig.get("strategy_name"))
+
+
+def _st_best_signal_for_trade(
+    tr: dict,
+    signals: list[dict],
+    consumed_sigs: set,
+    inst_default: str,
+) -> dict | None:
+    plain = _st_strip_strategy_prefix(tr.get("strategy_name"))
+    inst_t = _oanda_instrument_id(
+        _norm_instrument(tr.get("instrument") or inst_default or "EUR/USD")
+    )
+    cands = [
+        s
+        for s in signals
+        if s.get("strategy_name") == plain
+        and (s.get("instrument") or "").strip() == inst_t
+        and _st_sig_fp(s) not in consumed_sigs
+    ]
+    pid_t = tr.get("poll_log_id")
+    if pid_t is not None:
+        for s in cands:
+            pid_s = s.get("poll_log_id")
+            if pid_s is None:
+                continue
+            try:
+                if int(pid_t) == int(pid_s):
+                    return s
+            except (TypeError, ValueError):
+                continue
+    ft = _st_floor_minute_utc(tr.get("signal_time") or tr.get("opened_at"))
+    for s in cands:
+        fc = _st_floor_minute_utc(s.get("candle_time"))
+        if ft is not None and fc is not None and ft == fc:
+            return s
+    oa = _st_utc_dt(tr.get("opened_at"))
+    best = None
+    bestd = None
+    for s in cands:
+        cs = _st_utc_dt(s.get("candle_time"))
+        if oa is None or cs is None:
+            continue
+        delta = abs((oa - cs).total_seconds())
+        if delta <= 600 and (bestd is None or delta < bestd):
+            bestd = delta
+            best = s
+    return best
+
+
+def _st_execution_label(matched: bool, trade: dict, matched_candle_time) -> str:
+    fill = trade.get("oanda_fill")
+    if matched:
+        if fill is not None:
+            return "EXECUTED"
+        ref = _st_utc_dt(matched_candle_time)
+        if ref is not None and ref < _STRATEGY_DETAIL_EPOCH_UTC:
+            return _STRATEGY_DETAIL_LABEL_EARLY
+        return _STRATEGY_DETAIL_LABEL_PREF
+    ref = _st_utc_dt(trade.get("signal_time") or trade.get("opened_at"))
+    if ref is not None and ref < _STRATEGY_DETAIL_EPOCH_UTC:
+        return _STRATEGY_DETAIL_LABEL_EARLY
+    return "SYSTEM_INTEGRITY_GAP"
+
+
+def _st_notable_differences(
+    execution_label: str, trade: dict, pip: float
+) -> tuple[str | None, str]:
+    """
+    Returns (notable_differences, notable_kind) where notable_kind is
+    empty | gap | label | plain for template rendering.
+    """
+    st = (trade.get("status") or "").strip().upper()
+    ep = trade.get("entry_price")
+    of = trade.get("oanda_fill")
+    units = trade.get("oanda_units")
+    d = (trade.get("direction") or "").strip().upper()
+    is_buy = d in ("BUY", "LONG")
+    is_sell = d in ("SELL", "SHORT")
+
+    if execution_label == "SYSTEM_INTEGRITY_GAP":
+        return "SYSTEM_INTEGRITY_GAP", "gap"
+    if execution_label in (
+        _STRATEGY_DETAIL_LABEL_PREF,
+        _STRATEGY_DETAIL_LABEL_EARLY,
+    ):
+        return execution_label, "label"
+
+    parts: list[str] = []
+    if st == "TIMEOUT_EXIT":
+        parts.append("Timed out")
+    if ep is not None and of is not None and pip > 0:
+        try:
+            efv = float(ep)
+            ofv = float(of)
+            if is_buy:
+                slip = (efv - ofv) / pip
+            elif is_sell:
+                slip = (ofv - efv) / pip
+            else:
+                slip = None
+            if slip is not None and abs(slip) > 0.5:
+                parts.append(f"Slippage: {slip:+.1f} pips")
+        except (TypeError, ValueError):
+            pass
+    try:
+        u_int = int(units) if units is not None else None
+    except (TypeError, ValueError):
+        u_int = None
+    if u_int == _STRATEGY_DETAIL_DEFAULT_UNITS:
+        parts.append("Fallback sizing used")
+
+    if not parts:
+        return None, "empty"
+    return " · ".join(parts), "plain"
+
+
 @app.route("/trades/<int:strategy_id>")
 def strategy_trades(strategy_id):
     """Trade blotter: live trades read from Postgres ``trades`` (diagnostic JSON in template until Prompt 2)."""
@@ -874,8 +1062,12 @@ def strategy_trades(strategy_id):
 
     pip = float(INSTRUMENTS[instrument_label]["pip"])
     raw_strategy_name = (row.get("strategy_name") or "").strip()
+    raw_instrument = _oanda_instrument_id(instrument_label)
 
     trades_rows: list[dict] = []
+    poll_rows: list = []
+    next_rows: list = []
+    used_opened_at_fallback = False
     try:
         from data import get_conn
 
@@ -890,12 +1082,153 @@ def strategy_trades(strategy_id):
                 ORDER BY signal_time DESC NULLS LAST, opened_at DESC
                 LIMIT 100
                 """,
-                (f"CandleLab:{raw_strategy_name}",),
+                (raw_strategy_name,),
             )
             trades_rows = [dict(r) for r in cur.fetchall()]
+
+            signal_times: list = []
+            for t in trades_rows:
+                st = t.get("signal_time")
+                if st is not None:
+                    dt_st = _st_utc_dt(st)
+                    if dt_st is not None:
+                        signal_times.append(dt_st)
+                else:
+                    oa = t.get("opened_at")
+                    if oa is not None:
+                        dt_oa = _st_utc_dt(oa)
+                        if dt_oa is not None:
+                            signal_times.append(dt_oa)
+                            t["bounds_note"] = (
+                                "Signal time unavailable — bounds estimated from opened_at"
+                            )
+                            used_opened_at_fallback = True
+
+            if signal_times:
+                min_bound = min(signal_times) - timedelta(days=1)
+                max_bound = max(signal_times) + timedelta(days=1)
+            else:
+                max_bound = datetime.now(timezone.utc)
+                min_bound = max_bound - timedelta(days=90)
+
+            sql_poll = """
+                SELECT DISTINCT ON (candle_time, instrument)
+                    id AS poll_log_id,
+                    candle_time,
+                    instrument,
+                    open AS bar_open,
+                    strategies_evaluated
+                FROM executor_poll_log
+                WHERE instrument = %s
+                  AND candle_time >= %s
+                  AND candle_time <= %s
+                  AND strategies_evaluated @> %s::jsonb
+                ORDER BY candle_time, instrument, id DESC
+            """
+            sql_next = """
+                SELECT
+                    a.candle_time AS signal_time,
+                    b.open AS next_bar_open
+                FROM (
+                    SELECT DISTINCT ON (candle_time)
+                        candle_time, open
+                    FROM executor_poll_log
+                    WHERE instrument = %s
+                      AND candle_time >= %s
+                      AND candle_time <= %s
+                      AND strategies_evaluated @> %s::jsonb
+                    ORDER BY candle_time, id DESC
+                ) a
+                JOIN (
+                    SELECT DISTINCT ON (candle_time)
+                        candle_time, open
+                    FROM executor_poll_log
+                    WHERE instrument = %s
+                    ORDER BY candle_time, id DESC
+                ) b ON b.candle_time = a.candle_time + INTERVAL '5 minutes'
+            """
+            cur.execute(
+                sql_poll,
+                (
+                    raw_instrument,
+                    min_bound,
+                    max_bound,
+                    _STRATEGY_DETAIL_PLACED_JSONB,
+                ),
+            )
+            poll_rows = cur.fetchall()
+            cur.execute(
+                sql_next,
+                (
+                    raw_instrument,
+                    min_bound,
+                    max_bound,
+                    _STRATEGY_DETAIL_PLACED_JSONB,
+                    raw_instrument,
+                ),
+            )
+            next_rows = cur.fetchall()
     except Exception as e:
         log.warning("strategy_trades: trades table fetch failed: %s", e)
         trades_rows = []
+        poll_rows = []
+        next_rows = []
+
+    next_bar_lookup: dict = {}
+    for nr in next_rows:
+        rd = dict(nr)
+        k = _st_floor_minute_utc(rd.get("signal_time"))
+        if k is not None:
+            next_bar_lookup[k] = rd.get("next_bar_open")
+
+    signals = _st_parse_placed_signals([dict(r) for r in poll_rows])
+    consumed_sigs: set = set()
+    match_by_tid: dict = {}
+    for tr in trades_rows:
+        sig = _st_best_signal_for_trade(
+            tr, signals, consumed_sigs, instrument_label
+        )
+        if sig is not None:
+            consumed_sigs.add(_st_sig_fp(sig))
+            tid = tr.get("id")
+            if tid is not None:
+                match_by_tid[tid] = sig
+
+    log.debug(
+        "strategy_trades strategy_id=%s bounds_used_opened_at_fallback=%s",
+        strategy_id,
+        used_opened_at_fallback,
+    )
+
+    for tr in trades_rows:
+        sig = match_by_tid.get(tr.get("id"))
+        matched = sig is not None
+        mcandle = sig.get("candle_time") if sig else None
+        execution_label = _st_execution_label(matched, tr, mcandle)
+
+        rk = _st_floor_minute_utc(mcandle) if sig else None
+        replay_entry = next_bar_lookup.get(rk) if rk is not None else None
+
+        ox = tr.get("oanda_exit")
+        direction = (tr.get("direction") or "").strip().upper()
+        replay_pips = None
+        if replay_entry is not None and ox is not None and pip > 0:
+            try:
+                rep = float(replay_entry)
+                exv = float(ox)
+                if direction in ("BUY", "LONG"):
+                    replay_pips = round((exv - rep) / pip, 1)
+                elif direction in ("SELL", "SHORT"):
+                    replay_pips = round((rep - exv) / pip, 1)
+            except (TypeError, ValueError):
+                replay_pips = None
+
+        nd_str, nd_kind = _st_notable_differences(execution_label, tr, pip)
+        tr["execution_label"] = execution_label
+        tr["replay_entry"] = replay_entry
+        tr["replay_pips"] = replay_pips
+        tr["notable_differences"] = nd_str
+        tr["notable_kind"] = nd_kind
 
     total = len(trades_rows)
     wins = sum(1 for r in trades_rows if str(r.get("result") or "").strip().upper() == "WIN")
