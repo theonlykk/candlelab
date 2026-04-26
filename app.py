@@ -929,7 +929,7 @@ def _st_best_signal_for_trade(
 ) -> dict | None:
     plain = _st_strip_strategy_prefix(tr.get("strategy_name"))
     inst_t = _oanda_instrument_id(
-        _norm_instrument(tr.get("instrument") or inst_default or "EUR/USD")
+        _norm_instrument((tr.get("instrument") or inst_default or "EUR/USD").replace("_", "/"))
     )
     cands = [
         s
