@@ -2187,13 +2187,10 @@ def api_strategy_pnl():
     """
     body = request.get_json(force=True)
     instrument = body.get("instrument", "EURUSD")
-    interval = body.get("interval", "5m")
     anchor = body.get("anchor")
     sl_mult = float(body.get("sl_multiplier", 1.0))
     tp_mult = float(body.get("tp_multiplier", 3.0))
     timeout = int(body.get("timeout", TIMEOUT))
-    direction = body.get("direction", "both")
-    # direction now derived from pattern signal value — not passed to backtest
     session_filter = body.get("session_filter")
     complement = body.get("complement")
     if complement is not None and str(complement).strip() == "":
@@ -2203,7 +2200,6 @@ def api_strategy_pnl():
         connector = body.get("connector") or "ordered"
 
     indicator_filter = body.get("indicator_filter")
-    indicator_fn = _make_indicator_fn(indicator_filter) if indicator_filter else None
 
     if not anchor:
         return jsonify({"error": "missing anchor"}), 400
@@ -2219,45 +2215,20 @@ def api_strategy_pnl():
     if meta is None:
         return jsonify({"error": "unknown instrument"}), 400
 
-    pip = meta["pip"]
+    from strategy_runner import run_30d_backtest
 
-    try:
-        df = get_ohlc(instrument_label, days=90, interval=interval)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-    if df.empty:
-        return jsonify({"cum_net": 0.0, "signals": 0})
-
-    cutoff = datetime.now(timezone.utc) - timedelta(days=30)
-    if getattr(df.index, "tz", None) is None:
-        cutoff_cmp = cutoff.replace(tzinfo=None)
-    else:
-        cutoff_cmp = pd.Timestamp(cutoff)
-    df = df[df.index >= cutoff_cmp]
-
-    if df.empty:
-        return jsonify({"cum_net": 0.0, "signals": 0})
-
-    result = _backtest_pattern(
-        df,
-        pip,
+    result = run_30d_backtest(
+        instrument_label,
         anchor,
-        timeout=timeout,
-        session=session_filter,
-        indicator_fn=indicator_fn,
-        sl_mult=sl_mult,
-        tp_mult=tp_mult,
-        instrument=instrument_label,
-        complement=complement,
-        connector=connector,
+        complement,
+        connector,
+        session_filter,
+        indicator_filter,
+        sl_mult,
+        tp_mult,
+        timeout,
     )
-
-    return jsonify({
-        "cum_net": result.get("cum_net", 0.0),
-        "signals": result.get("signals", 0),
-        "win_pct": result.get("win_pct", 0.0),
-    })
+    return jsonify(result)
 
 
 def _executor_parse_patterns_cell(raw) -> list:
@@ -3326,27 +3297,14 @@ def api_strategy_oanda_fills():
 @app.route("/api/strategy/executor-pnl", methods=["POST"])
 def api_strategy_executor_pnl():
     """
-    Live executor stats: continuous OHLC from ``executor_poll_log`` (DISTINCT ON candle_time),
-    ``detect_all`` + ``detect_signal`` aligned with historical backtest.
+    Live theoretical P&L via ``strategy_runner`` (poll-log placed signals + ``oanda_candles``).
     """
     body = request.get_json(force=True)
     instrument = body.get("instrument", "EURUSD")
     anchor = body.get("anchor")
-    complement = body.get("complement")
-    if complement is not None and str(complement).strip() == "":
-        complement = None
-    connector = None
-    if complement is not None:
-        connector = body.get("connector") or "ordered"
-    direction = body.get("direction", "both")
-    # direction now derived from pattern signal value — not passed to backtest
-    session_filter = body.get("session_filter")
     sl_mult = float(body.get("sl_multiplier", 1.0))
     tp_mult = float(body.get("tp_multiplier", 3.0))
     timeout = int(body.get("timeout", TIMEOUT))
-    tick_size = float(body.get("tick_size") or 0.0001)
-    indicator_filter = body.get("indicator_filter")
-    indicator_fn = _make_indicator_fn(indicator_filter) if indicator_filter else None
     strategy_name = (body.get("strategy_name") or "").strip()
 
     if not anchor:
@@ -3368,44 +3326,20 @@ def api_strategy_executor_pnl():
     if meta is None:
         return jsonify({"error": "unknown instrument"}), 400
 
-    pip = float(meta["pip"])
+    from strategy_runner import run_since_live
 
-    oanda_id = _oanda_instrument_id(instrument_label)
-    # Cap data window to 30 days max to prevent OOM on Railway free tier
-    capped_go_live_ts = max(anchor_ts, pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=30))
-    series_df = _executor_read_continuous_series(oanda_id, capped_go_live_ts)
-    raw_t, all_t, clean_t, raw_spread_deduct_usd = _executor_compute_from_dataframe(
-        series_df,
-        anchor,
-        complement,
-        connector,
-        session_filter,
-        sl_mult,
-        tp_mult,
-        timeout,
-        tick_size,
-        pip,
-        instrument_label,
-        indicator_fn=indicator_fn,
+    agg = run_since_live(
+        strategy_name, instrument_label, sl_mult, tp_mult, timeout, "aggressive", anchor_ts
     )
-
-    agg_raw = _executor_aggregate_trades(raw_t)
-    # cum_net is USD (_executor_aggregate_trades sums executor dollar PnLs). Subtract spread in USD:
-    # sum over signals of SPREAD_COST_PIPS × pip_val × lot_size (matches ``_simulate_trades``).
-    if agg_raw["signals"] > 0:
-        agg_raw["cum_net"] = round(agg_raw["cum_net"] - raw_spread_deduct_usd, 2)
-    agg_all = _executor_aggregate_trades(all_t)
-    agg_clean = _executor_aggregate_trades(clean_t)
-    insufficient = agg_raw["signals"] == 0
-
+    pas = run_since_live(
+        strategy_name, instrument_label, sl_mult, tp_mult, timeout, "passive", anchor_ts
+    )
     true_pnl = _fetch_true_pnl(strategy_name, anchor_ts)
 
     return jsonify({
-        "raw":          agg_raw,
-        "all":          agg_all,
-        "clean":        agg_clean,
-        "true":         true_pnl,
-        "insufficient": insufficient,
+        "aggressive": agg,
+        "passive": pas,
+        "true_pnl": true_pnl,
     })
 
 
