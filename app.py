@@ -3160,10 +3160,17 @@ def api_strategy_oanda_fills():
     body = request.get_json(force=True)
     strategy_id = body.get("strategy_id")
     strategy_name = body.get("strategy_name", "")
-    go_live_at = body.get("go_live_at")
 
-    if not strategy_id or not go_live_at:
-        return jsonify({"error": "missing strategy_id or go_live_at"}), 400
+    if not strategy_id:
+        return jsonify({"error": "missing strategy_id"}), 400
+
+    base_name = (strategy_name or "").strip()
+    if not base_name:
+        return jsonify({"error": "missing strategy_name"}), 400
+
+    anchor_ts = _fetch_metrics_anchor_ts(base_name)
+    if anchor_ts is None:
+        return jsonify({"error": "no active live strategy"}), 400
 
     oanda_token = os.environ.get("OANDA_API_TOKEN", "")
     oanda_base = os.environ.get("OANDA_BASE_URL", "https://api-fxpractice.oanda.com")
@@ -3174,11 +3181,8 @@ def api_strategy_oanda_fills():
     headers_oanda = {"Authorization": f"Bearer {oanda_token}"}
     client_order_prefix = f"cl-strat-{strategy_id}"
 
-    try:
-        go_live_ts = pd.Timestamp(go_live_at, tz="UTC")
-        from_str = go_live_ts.strftime("%Y-%m-%dT%H:%M:%SZ")
-    except Exception:
-        return jsonify({"error": "bad go_live_at"}), 400
+    oanda_from = anchor_ts - timedelta(minutes=5)
+    from_str = oanda_from.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     # ── 1. Fetch paginated OANDA transactions ──
     all_transactions = []
@@ -3233,15 +3237,14 @@ def api_strategy_oanda_fills():
         from data import get_conn
         with get_conn() as conn:
             cur = conn.cursor()
-            base_name = strategy_name.replace("CandleLab:", "").strip()
             cur.execute("""
                 SELECT trade_uuid, direction, entry_price, exit_price,
                        pnl_pips, result, opened_at, closed_at, sl_pips, tp_pips
                 FROM trades
-                WHERE (strategy_name = %s OR strategy_name = %s)
+                WHERE strategy_name = %s
                 AND opened_at >= %s
                 ORDER BY opened_at
-            """, (base_name, f"CandleLab:{base_name}", go_live_ts.to_pydatetime()))
+            """, (base_name, anchor_ts.to_pydatetime()))
             rows = cur.fetchall()
             for row in rows:
                 pg_trades[str(row[0])] = {
