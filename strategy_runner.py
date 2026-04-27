@@ -17,6 +17,7 @@ from indicator_utils import _parse_indicator_filter_config, passes_indicator
 from patterns import detect_all
 from signal_engine import detect_signal
 from simulation_engine import get_pip, run_simulation
+from time_utils import to_utc_timestamp
 
 log = logging.getLogger(__name__)
 
@@ -119,11 +120,9 @@ def _lookup_h1_atr(h1_atr: pd.Series, signal_time: pd.Timestamp, pip: float) -> 
     floor_min = 5.0 * float(pip)
     if h1_atr is None or h1_atr.empty:
         return floor_min
-    st = pd.Timestamp(signal_time)
-    if st.tzinfo is None:
-        st = st.tz_localize("UTC")
-    else:
-        st = st.tz_convert("UTC")
+    st = to_utc_timestamp(signal_time)
+    if st is None:
+        return floor_min
     hkey = st.floor("h")
     val = None
     try:
@@ -149,7 +148,7 @@ def _session_bar_ok(ts: pd.Timestamp, session_filter: str | None) -> bool:
     s = str(session_filter).strip().lower()
     if not s or s == "all":
         return True
-    h = int(pd.Timestamp(ts).tz_convert("UTC").hour)
+    h = int(to_utc_timestamp(ts).hour)
     if "london" in s:
         return 7 <= h <= 15
     if "new" in s or "york" in s:
@@ -200,7 +199,7 @@ def run_30d_backtest(
     pip = get_pip(oanda_instrument)
     now = datetime.now(timezone.utc)
     from_ts = now - timedelta(days=30) - timedelta(minutes=WARMUP_BARS * 5)
-    strict_cutoff = pd.Timestamp(now - timedelta(days=30), tz="UTC")
+    strict_cutoff = to_utc_timestamp(now - timedelta(days=30))
 
     candles = _fetch_oanda_candles(oanda_instrument, from_ts)
     if candles.empty:
@@ -232,11 +231,7 @@ def run_30d_backtest(
     for i in range(n):
         if int(sig_array[i]) == 0:
             continue
-        tsi = candles.index[i]
-        if tsi.tzinfo is None:
-            tsi = pd.Timestamp(tsi).tz_localize("UTC")
-        else:
-            tsi = pd.Timestamp(tsi).tz_convert("UTC")
+        tsi = to_utc_timestamp(candles.index[i])
         if tsi < strict_cutoff:
             continue
         if not _session_bar_ok(tsi, session_filter):
@@ -313,11 +308,9 @@ def _fetch_placed_signals(oanda_instrument: str, strategy_name: str, anchor_ts) 
         ct = row.get("candle_time")
         if ct is None:
             continue
-        st = pd.Timestamp(ct)
-        if st.tzinfo is None:
-            st = st.tz_localize("UTC")
-        else:
-            st = st.tz_convert("UTC")
+        st = to_utc_timestamp(ct)
+        if st is None:
+            continue
         arr = _parse_strategies_evaluated(row.get("strategies_evaluated"))
         for item in arr:
             if not isinstance(item, dict):
@@ -363,11 +356,9 @@ def run_since_live(
             sig_close = float(candles["close"].loc[st])
         except (KeyError, TypeError, ValueError):
             continue
-        signal_time = pd.Timestamp(st)
-        if signal_time.tzinfo is None:
-            signal_time = signal_time.tz_localize("UTC")
-        else:
-            signal_time = signal_time.tz_convert("UTC")
+        signal_time = to_utc_timestamp(st)
+        if signal_time is None:
+            continue
         sl_dist = _lookup_h1_atr(h1_atr, signal_time, pip)
         if direction == "BUY":
             sl = sig_close - sl_dist * sl_mult
