@@ -232,6 +232,66 @@ def insert_bars(instrument: str, df: pd.DataFrame, interval: str = "5m"):
         conn.commit()
 
 
+def insert_oanda_candles(instrument: str, df: pd.DataFrame) -> None:
+    """
+    Bulk UPSERT MBA rows into ``oanda_candles`` (instrument + time PK).
+
+    ``instrument`` is the OANDA instrument id (e.g. EUR_USD). ``df`` must include
+    open, high, low, close, volume, bid_open, bid_close, ask_open, ask_close.
+    """
+    if df.empty:
+        return
+    w = df.copy()
+    idx = w.index
+    if idx.tzinfo is None:
+        w.index = idx.tz_localize("UTC")
+    else:
+        w.index = idx.tz_convert("UTC")
+    tuples = []
+    for ts, row in w.iterrows():
+        tuples.append(
+            (
+                instrument,
+                _ts_to_utc_aware(ts),
+                float(row["open"]),
+                float(row["high"]),
+                float(row["low"]),
+                float(row["close"]),
+                float(row["bid_open"]),
+                float(row["bid_close"]),
+                float(row["ask_open"]),
+                float(row["ask_close"]),
+                int(row["volume"]),
+            )
+        )
+    insert_sql = """
+INSERT INTO oanda_candles
+    (instrument, time, open, high, low, close,
+     bid_open, bid_close, ask_open, ask_close, volume)
+VALUES %s
+ON CONFLICT (instrument, time) DO UPDATE SET
+    open = EXCLUDED.open,
+    high = EXCLUDED.high,
+    low = EXCLUDED.low,
+    close = EXCLUDED.close,
+    bid_open = EXCLUDED.bid_open,
+    bid_close = EXCLUDED.bid_close,
+    ask_open = EXCLUDED.ask_open,
+    ask_close = EXCLUDED.ask_close,
+    volume = EXCLUDED.volume
+"""
+    with get_conn() as conn:
+        cur = conn.cursor()
+        psycopg2.extras.execute_values(
+            cur,
+            insert_sql,
+            tuples,
+            template="(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            page_size=500,
+        )
+        conn.commit()
+
+
 def _log_candle_check_candlelab(instrument: str, df: pd.DataFrame) -> None:
     """Temporary diagnostic: last 3 rows loaded from Postgres (compare to strategy_executor OANDA fetch)."""
     if df is None or df.empty:
@@ -288,25 +348,42 @@ def load_bars(
 # ── OANDA REST fetch ───────────────────────────────────────────────────────────
 
 def _candles_to_df(candles: list) -> pd.DataFrame:
-    """Parse OANDA `candles` JSON list into a DataFrame (UTC index, OHLCV)."""
+    """Parse OANDA ``candles`` JSON (``price=MBA``): mid, bid, ask; UTC index."""
     rows = []
     for c in candles:
         if not c.get("complete", True):
             continue
-        mid = c.get("mid") or {}
-        try:
-            o = float(mid["o"])
-            h = float(mid["h"])
-            l = float(mid["l"])
-            cl = float(mid["c"])
-        except (KeyError, TypeError, ValueError):
-            continue
+        mid = c["mid"]
+        bid = c["bid"]
+        ask = c["ask"]
+        o = float(mid["o"])
+        h = float(mid["h"])
+        l = float(mid["l"])
+        cl = float(mid["c"])
+        bid_open = float(bid["o"])
+        bid_close = float(bid["c"])
+        ask_open = float(ask["o"])
+        ask_close = float(ask["c"])
         vol = int(c.get("volume", 0) or 0)
         t = pd.Timestamp(c["time"])
-        rows.append((t, o, h, l, cl, vol))
+        rows.append((t, o, h, l, cl, vol, bid_open, bid_close, ask_open, ask_close))
     if not rows:
         return pd.DataFrame()
-    df = pd.DataFrame(rows, columns=["ts", "open", "high", "low", "close", "volume"])
+    df = pd.DataFrame(
+        rows,
+        columns=[
+            "ts",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "bid_open",
+            "bid_close",
+            "ask_open",
+            "ask_close",
+        ],
+    )
     df = df.set_index("ts").sort_index()
     if df.index.tzinfo is None:
         df.index = df.index.tz_localize("UTC")
@@ -318,15 +395,16 @@ def _candles_to_df(candles: list) -> pd.DataFrame:
 
 def _fetch_oanda(symbol: str, granularity: str, n_bars: int) -> pd.DataFrame:
     """
-    Fetch up to `n_bars` of mid OHLC candles from OANDA v3 REST.
+    Fetch up to `n_bars` of MBA (mid + bid + ask) candles from OANDA v3 REST.
 
     - GET {OANDA_BASE_URL}/v3/instruments/{symbol}/candles
-    - Query: count, price=M, granularity
+    - Query: count, price=MBA, granularity
     - Authorization: Bearer {OANDA_API_TOKEN}
     - If n_bars > 5000, paginate backwards using the `to` parameter (exclusive end time).
 
     `symbol` must be an OANDA instrument id (e.g. EUR_USD), not a CandleLab label.
-    Returns a DataFrame with UTC datetime index and columns open, high, low, close, volume.
+    Returns a DataFrame with UTC datetime index and columns open, high, low, close,
+    volume, bid_open, bid_close, ask_open, ask_close (mid OHLC + bid/ask open-close).
     """
     token = (os.environ.get("OANDA_API_TOKEN") or "").strip()
     base = (os.environ.get("OANDA_BASE_URL") or "").strip().rstrip("/")
@@ -344,7 +422,7 @@ def _fetch_oanda(symbol: str, granularity: str, n_bars: int) -> pd.DataFrame:
     while remaining > 0:
         batch = min(5000, remaining)
         params: dict[str, str] = {
-            "price": "M",
+            "price": "MBA",
             "granularity": granularity,
             "count": str(batch),
         }
@@ -433,7 +511,9 @@ def backfill_instrument(instrument: str, interval: str = "5m"):
             n_bars = _INITIAL_BARS.get(interval, 12000)
             df = _fetch_oanda(oanda_symbol, granularity, n_bars=n_bars)
             if not df.empty:
-                insert_bars(instrument, df, interval)
+                insert_oanda_candles(oanda_symbol, df)
+                df_mid = df[["open", "high", "low", "close", "volume"]]
+                insert_bars(instrument, df_mid, interval)
                 log.info(f"{instrument} @ {interval}: inserted {len(df)} bars")
             else:
                 log.error(
@@ -452,7 +532,9 @@ def backfill_instrument(instrument: str, interval: str = "5m"):
 
         if not df.empty:
             new_bars = df[df.index > since]
-            insert_bars(instrument, new_bars, interval)
+            insert_oanda_candles(oanda_symbol, new_bars)
+            df_mid = new_bars[["open", "high", "low", "close", "volume"]]
+            insert_bars(instrument, df_mid, interval)
             log.info(f"{instrument} @ {interval}: inserted {len(new_bars)} new bars")
         else:
             log.error(
