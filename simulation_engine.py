@@ -7,6 +7,7 @@ Signal schema (list of dicts):
     direction    'BUY' or 'SELL'
     sl           absolute stop loss price
     tp           absolute take profit price
+    sl_dist      optional stop distance in price (required for dollar P&L sizing)
 
 oanda_candles DataFrame (indexed by UTC DatetimeIndex):
     open, high, low, close      mid OHLC
@@ -22,6 +23,8 @@ import logging
 from typing import Any
 
 import pandas as pd
+
+from position_utils import INST_CONFIG, calculate_position_units
 
 log = logging.getLogger(__name__)
 
@@ -213,6 +216,38 @@ def _scan_tp_sl_timeout(
     }
 
 
+def _inst_config_for_symbol(instrument: str) -> dict:
+    """Map OANDA code (e.g. EUR_USD) or slash label to ``INST_CONFIG`` entry."""
+    if not instrument:
+        return {}
+    u = str(instrument).strip().upper()
+    if u in INST_CONFIG:
+        return INST_CONFIG[u]
+    if "_" in u:
+        a, b = u.split("_", 1)
+        k = f"{a}/{b}"
+        return INST_CONFIG.get(k, {})
+    return {}
+
+
+def _compute_pnl_dollars(
+    sig: dict,
+    out: dict,
+    direction: str,
+    pip: float,
+    pip_val: float,
+) -> float | None:
+    if out.get("pnl_pips") is None:
+        return None
+    if "sl_dist" not in sig:
+        log.warning(
+            "simulation_engine: signal missing sl_dist, using DEFAULT_UNITS for position sizing"
+        )
+    sl_dist_sig = float(sig["sl_dist"]) if sig.get("sl_dist") is not None else 0.0
+    units = calculate_position_units(direction, sl_dist_sig, pip, pip_val)
+    return round(float(out["pnl_pips"]) * pip_val * abs(units) / 100_000.0, 2)
+
+
 def _signal_idx(candle_index: pd.DatetimeIndex, signal_time: pd.Timestamp) -> int:
     ts = pd.Timestamp(signal_time)
     if ts.tzinfo is None:
@@ -238,6 +273,13 @@ def run_simulation(
     Run execution physics for each signal. No pattern detection, DB, or strategy config.
     """
     pip = get_pip(instrument)
+    cfg = _inst_config_for_symbol(instrument)
+    pip_val = float(cfg.get("pip_val", 10.0))
+    if not cfg:
+        log.warning(
+            "position_utils: instrument %r not in INST_CONFIG, pip_val defaulting to 10.0",
+            instrument,
+        )
     candle_index = candles.index
     arrays = {
         "high": candles["high"].values,
@@ -271,6 +313,7 @@ def run_simulation(
                     "sl": sl,
                     "tp": tp,
                     "pnl_pips": None,
+                    "pnl_dollars": None,
                     "result": "DATA_INVALID",
                     "exit_reason": "DATA_INVALID",
                     "entry_time": None,
@@ -292,6 +335,7 @@ def run_simulation(
                         "sl": sl,
                         "tp": tp,
                         "pnl_pips": None,
+                        "pnl_dollars": None,
                         "result": "DATA_INVALID",
                         "exit_reason": "DATA_INVALID",
                         "entry_time": None,
@@ -323,6 +367,7 @@ def run_simulation(
                     "direction": direction,
                     "mode": m,
                     **out,
+                    "pnl_dollars": _compute_pnl_dollars(sig, out, direction, pip, pip_val),
                 }
             )
             continue
@@ -341,6 +386,7 @@ def run_simulation(
                     "sl": sl,
                     "tp": tp,
                     "pnl_pips": None,
+                    "pnl_dollars": None,
                     "result": "DATA_INVALID",
                     "exit_reason": "DATA_INVALID",
                     "entry_time": None,
@@ -376,6 +422,7 @@ def run_simulation(
                                 "sl": sl,
                                 "tp": tp,
                                 "pnl_pips": None,
+                                "pnl_dollars": None,
                                 "result": "LOSS",
                                 "exit_reason": "SL_SAME_CANDLE",
                                 "entry_time": None,
@@ -395,6 +442,7 @@ def run_simulation(
                                 "sl": sl,
                                 "tp": tp,
                                 "pnl_pips": None,
+                                "pnl_dollars": None,
                                 "result": "MISSED",
                                 "exit_reason": "MISSED_TP",
                                 "entry_time": None,
@@ -430,6 +478,7 @@ def run_simulation(
                                 "sl": sl,
                                 "tp": tp,
                                 "pnl_pips": None,
+                                "pnl_dollars": None,
                                 "result": "LOSS",
                                 "exit_reason": "SL_SAME_CANDLE",
                                 "entry_time": None,
@@ -449,6 +498,7 @@ def run_simulation(
                                 "sl": sl,
                                 "tp": tp,
                                 "pnl_pips": None,
+                                "pnl_dollars": None,
                                 "result": "MISSED",
                                 "exit_reason": "MISSED_TP",
                                 "entry_time": None,
@@ -476,6 +526,7 @@ def run_simulation(
                     "sl": sl,
                     "tp": tp,
                     "pnl_pips": None,
+                    "pnl_dollars": None,
                     "result": "SKIPPED",
                     "exit_reason": "TIMEOUT_NO_FILL",
                     "entry_time": None,
@@ -503,6 +554,7 @@ def run_simulation(
                 "direction": direction,
                 "mode": m,
                 **out,
+                "pnl_dollars": _compute_pnl_dollars(sig, out, direction, pip, pip_val),
             }
         )
 

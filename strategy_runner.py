@@ -174,12 +174,16 @@ def _aggregate_sim(results: list[dict], mode: str) -> dict:
     if count == 0:
         return _empty_agg(mode)
     wins = sum(1 for r in executed if r.get("result") == "WIN")
-    cum_net = sum(float(r["pnl_pips"]) for r in executed if r.get("pnl_pips") is not None)
+    cum_net = sum(
+        float(r["pnl_dollars"])
+        for r in executed
+        if r.get("pnl_dollars") is not None
+    )
     return {
         "signals": count,
         "wins": wins,
         "win_pct": round(wins / count * 100, 1),
-        "cum_net": round(cum_net, 1),
+        "cum_net": round(cum_net, 2),
         "mode": mode,
     }
 
@@ -250,7 +254,13 @@ def run_30d_backtest(
             sl = sig_close + sl_dist * sl_mult
             tp = sig_close - sl_dist * tp_mult
         signals.append(
-            {"signal_time": signal_time, "direction": direction, "sl": sl, "tp": tp}
+            {
+                "signal_time": signal_time,
+                "direction": direction,
+                "sl": sl,
+                "tp": tp,
+                "sl_dist": sl_dist,
+            }
         )
 
     results = run_simulation(
@@ -367,7 +377,13 @@ def run_since_live(
             sl = sig_close + sl_dist * sl_mult
             tp = sig_close - sl_dist * tp_mult
         signals.append(
-            {"signal_time": signal_time, "direction": direction, "sl": sl, "tp": tp}
+            {
+                "signal_time": signal_time,
+                "direction": direction,
+                "sl": sl,
+                "tp": tp,
+                "sl_dist": sl_dist,
+            }
         )
 
     if not signals:
