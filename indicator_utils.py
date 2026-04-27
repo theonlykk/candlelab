@@ -78,3 +78,46 @@ def passes_indicator(
         return check_ma_stable(df, sig_idx, dir_str)
     log.debug("Unknown indicator_filter %r — treating as pass", ind_cfg)
     return True
+
+
+def compute_h1_atr_from_m5(df_m5: pd.DataFrame | None, period: int = 14) -> float:
+    """
+    Resample M5 OHLC to H1, drop the last (incomplete) H1 bar, then Wilder-style ATR(period)
+    via EWM with alpha=1/period (adjust=False). Returns 0.0 when data is insufficient or invalid.
+    """
+    if df_m5 is None or df_m5.empty:
+        return 0.0
+    df_m5 = df_m5.copy()
+    df_m5 = df_m5.sort_index()
+    if not isinstance(df_m5.index, pd.DatetimeIndex):
+        try:
+            df_m5.index = pd.to_datetime(df_m5.index, utc=True)
+        except (TypeError, ValueError, pd.errors.OutOfBoundsDatetime):
+            return 0.0
+    if not isinstance(df_m5.index, pd.DatetimeIndex):
+        return 0.0
+    df_h1 = df_m5.resample("1h").agg(
+        {"open": "first", "high": "max", "low": "min", "close": "last"}
+    )
+    df_h1 = df_h1.dropna()
+    if len(df_h1) < 2:
+        return 0.0
+    df_h1 = df_h1.iloc[:-1]
+    if len(df_h1) < period:
+        return 0.0
+    hi = df_h1["high"]
+    lo = df_h1["low"]
+    cl = df_h1["close"]
+    prev_cl = cl.shift(1)
+    tr = pd.concat(
+        [hi - lo, (hi - prev_cl).abs(), (lo - prev_cl).abs()],
+        axis=1,
+    ).max(axis=1)
+    atr = tr.ewm(alpha=1.0 / period, adjust=False).mean()
+    atr_clean = atr.dropna()
+    if atr_clean.empty:
+        return 0.0
+    atr_val = float(atr_clean.iloc[-1])
+    if pd.isna(atr_val) or atr_val <= 0:
+        return 0.0
+    return atr_val
