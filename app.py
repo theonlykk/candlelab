@@ -2182,14 +2182,13 @@ def api_tweaks():
 @app.route("/api/strategy-pnl", methods=["POST"])
 def api_strategy_pnl():
     """
-    Backtest a strategy from saved_at to now, returning cum_net and signals.
-    Called by the My Strategies panel to show live PnL since save date.
+    Backtest a strategy over the last 30 days (server-side window), returning cum_net and signals.
+    Called by the My Strategies panel for the 30d backtest stat card.
     """
     body = request.get_json(force=True)
     instrument = body.get("instrument", "EURUSD")
     interval = body.get("interval", "5m")
     anchor = body.get("anchor")
-    saved_at = body.get("saved_at")
     sl_mult = float(body.get("sl_multiplier", 1.0))
     tp_mult = float(body.get("tp_multiplier", 3.0))
     timeout = int(body.get("timeout", TIMEOUT))
@@ -2230,13 +2229,12 @@ def api_strategy_pnl():
     if df.empty:
         return jsonify({"cum_net": 0.0, "signals": 0})
 
-    # Filter to only bars after saved_at
-    if saved_at:
-        try:
-            saved_ts = pd.Timestamp(saved_at, tz="UTC")
-            df = df[df.index >= saved_ts]
-        except Exception:
-            pass
+    cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+    if getattr(df.index, "tz", None) is None:
+        cutoff_cmp = cutoff.replace(tzinfo=None)
+    else:
+        cutoff_cmp = pd.Timestamp(cutoff)
+    df = df[df.index >= cutoff_cmp]
 
     if df.empty:
         return jsonify({"cum_net": 0.0, "signals": 0})
@@ -3055,12 +3053,50 @@ def _executor_compute_trade_detail(
     return trades
 
 
-def _fetch_true_pnl(strategy_name: str, go_live_ts: pd.Timestamp) -> dict | None:
+def _fetch_metrics_anchor_ts(strategy_name: str) -> pd.Timestamp | None:
+    """
+    Anchor for live metrics: ``metrics_from`` when set, else ``go_live_at`` from the
+    newest open live row for ``strategy_name``.
+    """
     base = (strategy_name or "").strip()
     if not base:
         return None
     try:
-        ts = pd.Timestamp(go_live_ts)
+        from data import get_conn
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT metrics_from, go_live_at FROM candlelab_strategies_live
+                WHERE strategy_name = %s AND closed_at IS NULL
+                ORDER BY id DESC LIMIT 1
+                """,
+                (base,),
+            )
+            row = cur.fetchone()
+    except Exception:
+        log.exception("_fetch_metrics_anchor_ts")
+        return None
+    if not row:
+        return None
+    mf, gl = row[0], row[1]
+    anchor_dt = mf if mf is not None else gl
+    if anchor_dt is None:
+        return None
+    ts = pd.Timestamp(anchor_dt)
+    if ts.tzinfo is None:
+        ts = ts.tz_localize("UTC")
+    else:
+        ts = ts.tz_convert("UTC")
+    return ts
+
+
+def _fetch_true_pnl(strategy_name: str, anchor_ts: pd.Timestamp) -> dict | None:
+    base = (strategy_name or "").strip()
+    if not base:
+        return None
+    try:
+        ts = pd.Timestamp(anchor_ts)
         ts = ts.tz_localize("UTC") if ts.tzinfo is None else ts.tz_convert("UTC")
         cutoff = ts.to_pydatetime()
     except Exception:
@@ -3069,37 +3105,46 @@ def _fetch_true_pnl(strategy_name: str, go_live_ts: pd.Timestamp) -> dict | None
         from data import get_conn
         with get_conn() as conn:
             cur = conn.cursor()
-            cur.execute("""
-                SELECT pnl_pips, result FROM trades
-                WHERE (strategy_name = %s OR strategy_name = %s)
+            cur.execute(
+                """
+                SELECT oanda_pl, result FROM trades
+                WHERE strategy_name = %s
                 AND opened_at >= %s
-            """, (base, f"CandleLab:{base}", cutoff))
+                AND status = 'CLOSED'
+                AND oanda_pl IS NOT NULL
+                """,
+                (base, cutoff),
+            )
             rows = cur.fetchall()
     except Exception:
+        log.exception("_fetch_true_pnl")
         return None
     if not rows:
-        return None
+        return {"signals": 0, "wins": 0, "win_pct": 0.0, "cum_net": 0.0}
     total = len(rows)
     wins = sum(1 for r in rows if str(r[1] or "").lower() in ("tp", "win"))
-    cum_pips = sum(float(r[0]) for r in rows if r[0] is not None)
+    cum_sum = sum(float(r[0]) for r in rows)
+    if cum_sum is None:
+        cum_sum = 0.0
     return {
         "signals": total,
         "wins": wins,
-        "win_pct": round(wins / total * 100, 1),
-        "cum_net": round(cum_pips, 1),
+        "win_pct": round(wins / total * 100, 1) if total > 0 else 0.0,
+        "cum_net": round(float(cum_sum), 2),
     }
 
 
 @app.route("/api/strategy/true-pnl", methods=["POST"])
 def api_strategy_true_pnl():
     body = request.get_json(force=True)
-    strategy_name = body.get("strategy_name", "")
-    go_live_at = body.get("go_live_at")
-    if not strategy_name or not go_live_at:
+    strategy_name = (body.get("strategy_name") or "").strip()
+    if not strategy_name:
+        return jsonify({}), 400
+    anchor_ts = _fetch_metrics_anchor_ts(strategy_name)
+    if anchor_ts is None:
         return jsonify({}), 400
     try:
-        go_live_ts = pd.Timestamp(go_live_at, tz="UTC")
-        result = _fetch_true_pnl(strategy_name, go_live_ts)
+        result = _fetch_true_pnl(strategy_name, anchor_ts)
         return jsonify(result or {})
     except Exception:
         return jsonify({}), 500
@@ -3296,16 +3341,19 @@ def api_strategy_executor_pnl():
     sl_mult = float(body.get("sl_multiplier", 1.0))
     tp_mult = float(body.get("tp_multiplier", 3.0))
     timeout = int(body.get("timeout", TIMEOUT))
-    go_live_at = body.get("go_live_at")
     tick_size = float(body.get("tick_size") or 0.0001)
     indicator_filter = body.get("indicator_filter")
     indicator_fn = _make_indicator_fn(indicator_filter) if indicator_filter else None
-    strategy_name = body.get("strategy_name", "")
+    strategy_name = (body.get("strategy_name") or "").strip()
 
     if not anchor:
         return jsonify({"error": "missing anchor"}), 400
-    if not go_live_at:
-        return jsonify({"error": "missing go_live_at"}), 400
+    if not strategy_name:
+        return jsonify({"error": "missing strategy_name"}), 400
+
+    anchor_ts = _fetch_metrics_anchor_ts(strategy_name)
+    if anchor_ts is None:
+        return jsonify({"error": "no active live strategy"}), 400
 
     meta = None
     instrument_label = None
@@ -3319,14 +3367,9 @@ def api_strategy_executor_pnl():
 
     pip = float(meta["pip"])
 
-    try:
-        go_live_ts = pd.Timestamp(go_live_at, tz="UTC")
-    except Exception:
-        return jsonify({"error": "bad go_live_at"}), 400
-
     oanda_id = _oanda_instrument_id(instrument_label)
     # Cap data window to 30 days max to prevent OOM on Railway free tier
-    capped_go_live_ts = max(go_live_ts, pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=30))
+    capped_go_live_ts = max(anchor_ts, pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=30))
     series_df = _executor_read_continuous_series(oanda_id, capped_go_live_ts)
     raw_t, all_t, clean_t, raw_spread_deduct_usd = _executor_compute_from_dataframe(
         series_df,
@@ -3352,7 +3395,7 @@ def api_strategy_executor_pnl():
     agg_clean = _executor_aggregate_trades(clean_t)
     insufficient = agg_raw["signals"] == 0
 
-    true_pnl = _fetch_true_pnl(strategy_name, go_live_ts) if strategy_name else None
+    true_pnl = _fetch_true_pnl(strategy_name, anchor_ts)
 
     return jsonify({
         "raw":          agg_raw,
