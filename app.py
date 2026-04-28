@@ -1138,9 +1138,108 @@ def _st_notable_differences(
     return " · ".join(parts), "plain"
 
 
+def _notable_diff(
+    agg: dict | None,
+    pas: dict | None,
+    oanda: dict | None,
+    pip: float,
+) -> str | None:
+    if agg is not None and oanda is None:
+        return "Not executed — geometry or filter rejection"
+    if oanda is not None and agg is None:
+        return "No signal match"
+    if oanda is not None and agg is not None:
+        try:
+            units = oanda.get("oanda_units")
+            if units is not None and abs(int(units)) >= 74000:
+                return "75k unit cap hit — sl_dist near floor"
+        except (TypeError, ValueError):
+            pass
+        try:
+            if agg.get("entry") is not None and oanda.get("oanda_fill") is not None and pip > 0:
+                slip = abs(float(agg["entry"]) - float(oanda["oanda_fill"])) / pip
+                if slip > 2.0:
+                    return f"Entry gap {slip:.1f} pips"
+        except (TypeError, ValueError):
+            pass
+        agg_res = agg.get("result")
+        oanda_res = (oanda.get("result") or "").upper()
+        if agg_res != oanda_res:
+            return f"Theo {agg_res} vs OANDA {oanda.get('result')}"
+    return None
+
+
+def _build_trades_detail_rows(
+    theo_raw: dict,
+    oanda_trades: list[dict],
+    pip: float,
+) -> list[dict]:
+    agg_list = theo_raw.get("aggressive", [])
+    pas_list = theo_raw.get("passive", [])
+
+    def _mk(ts):
+        try:
+            return to_utc_timestamp(ts).strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            return None
+
+    pas_lookup = {}
+    for r in pas_list:
+        k = _mk(r.get("signal_time"))
+        if k:
+            pas_lookup[k] = r
+
+    oanda_lookup = {}
+    for t in oanda_trades:
+        k = _mk(t.get("signal_time") or t.get("opened_at"))
+        if k:
+            oanda_lookup[k] = t
+
+    rows = []
+    seen_keys = set()
+    for agg in agg_list:
+        k = _mk(agg.get("signal_time"))
+        if not k:
+            continue
+        seen_keys.add(k)
+        pas = pas_lookup.get(k)
+        oanda = oanda_lookup.get(k)
+        nd = _notable_diff(agg, pas, oanda, pip)
+        rows.append(
+            {
+                "signal_time": agg.get("signal_time"),
+                "direction": agg.get("direction"),
+                "theo_agg": agg,
+                "theo_pas": pas,
+                "oanda": oanda,
+                "notable_diff": nd,
+            }
+        )
+
+    for t in oanda_trades:
+        k = _mk(t.get("signal_time") or t.get("opened_at"))
+        if k and k not in seen_keys:
+            rows.append(
+                {
+                    "signal_time": (t.get("signal_time") or t.get("opened_at")),
+                    "direction": t.get("direction"),
+                    "theo_agg": None,
+                    "theo_pas": None,
+                    "oanda": t,
+                    "notable_diff": "No signal match",
+                }
+            )
+
+    rows.sort(
+        key=lambda r: to_utc_timestamp(r["signal_time"]) if r["signal_time"] else pd.Timestamp.min,
+        reverse=True,
+    )
+    return rows
+
+
 @app.route("/trades/<int:strategy_id>")
 def strategy_trades(strategy_id):
-    """Trade blotter: live trades read from Postgres ``trades`` (diagnostic JSON in template until Prompt 2)."""
+    """Trade detail view: merged Theo aggressive/passive and OANDA actual rows."""
     init_strategy_tables()
     row = _fetch_live_strategy_row(strategy_id)
     if row is None:
@@ -1165,12 +1264,9 @@ def strategy_trades(strategy_id):
 
     pip = float(INSTRUMENTS[instrument_label]["pip"])
     raw_strategy_name = (row.get("strategy_name") or "").strip()
-    raw_instrument = _oanda_instrument_id(instrument_label)
+    anchor_ts = to_utc_timestamp(row.get("metrics_from") or row.get("go_live_at"))
 
-    trades_rows: list[dict] = []
-    poll_rows: list = []
-    next_rows: list = []
-    used_opened_at_fallback = False
+    oanda_trades_raw: list = []
     try:
         from data import get_conn
 
@@ -1182,180 +1278,58 @@ def strategy_trades(strategy_id):
                 FROM trades
                 WHERE strategy_name = %s
                   AND status != 'CANCELLED'
-                ORDER BY signal_time DESC NULLS LAST, opened_at DESC
-                LIMIT 100
+                  AND signal_time >= %s
+                ORDER BY signal_time DESC
+                LIMIT 200
                 """,
-                (raw_strategy_name,),
+                (raw_strategy_name, anchor_ts),
             )
-            trades_rows = [dict(r) for r in cur.fetchall()]
-
-            signal_times: list = []
-            for t in trades_rows:
-                st = t.get("signal_time")
-                if st is not None:
-                    dt_st = _st_utc_dt(st)
-                    if dt_st is not None:
-                        signal_times.append(dt_st)
-                else:
-                    oa = t.get("opened_at")
-                    if oa is not None:
-                        dt_oa = _st_utc_dt(oa)
-                        if dt_oa is not None:
-                            signal_times.append(dt_oa)
-                            t["bounds_note"] = (
-                                "Signal time unavailable — bounds estimated from opened_at"
-                            )
-                            used_opened_at_fallback = True
-
-            if signal_times:
-                min_bound = min(signal_times) - timedelta(days=1)
-                max_bound = max(signal_times) + timedelta(days=1)
-            else:
-                max_bound = datetime.now(timezone.utc)
-                min_bound = max_bound - timedelta(days=90)
-
-            sql_poll = """
-                SELECT DISTINCT ON (candle_time, instrument)
-                    id AS poll_log_id,
-                    candle_time,
-                    instrument,
-                    open AS bar_open,
-                    strategies_evaluated
-                FROM executor_poll_log
-                WHERE instrument = %s
-                  AND candle_time >= %s
-                  AND candle_time <= %s
-                  AND strategies_evaluated @> %s::jsonb
-                ORDER BY candle_time, instrument, id DESC
-            """
-            sql_next = """
-                SELECT
-                    a.candle_time AS signal_time,
-                    b.open AS next_bar_open
-                FROM (
-                    SELECT DISTINCT ON (candle_time)
-                        candle_time, open
-                    FROM executor_poll_log
-                    WHERE instrument = %s
-                      AND candle_time >= %s
-                      AND candle_time <= %s
-                      AND strategies_evaluated @> %s::jsonb
-                    ORDER BY candle_time, id DESC
-                ) a
-                JOIN (
-                    SELECT DISTINCT ON (candle_time)
-                        candle_time, open
-                    FROM executor_poll_log
-                    WHERE instrument = %s
-                    ORDER BY candle_time, id DESC
-                ) b ON b.candle_time = a.candle_time + INTERVAL '5 minutes'
-            """
-            cur.execute(
-                sql_poll,
-                (
-                    raw_instrument,
-                    min_bound,
-                    max_bound,
-                    _STRATEGY_DETAIL_PLACED_JSONB,
-                ),
-            )
-            poll_rows = cur.fetchall()
-            cur.execute(
-                sql_next,
-                (
-                    raw_instrument,
-                    min_bound,
-                    max_bound,
-                    _STRATEGY_DETAIL_PLACED_JSONB,
-                    raw_instrument,
-                ),
-            )
-            next_rows = cur.fetchall()
+            oanda_trades_raw = cur.fetchall()
     except Exception as e:
-        log.warning("strategy_trades: trades table fetch failed: %s", e)
-        trades_rows = []
-        poll_rows = []
-        next_rows = []
+        log.warning("strategy_trades: oanda trades fetch failed: %s", e)
+        oanda_trades_raw = []
 
-    next_bar_lookup: dict = {}
-    for nr in next_rows:
-        rd = dict(nr)
-        k = _st_floor_minute_utc(rd.get("signal_time"))
-        if k is not None:
-            next_bar_lookup[k] = rd.get("next_bar_open")
+    from strategy_runner import run_since_live_detail
 
-    signals = _st_parse_placed_signals([dict(r) for r in poll_rows])
-    consumed_sigs: set = set()
-    match_by_tid: dict = {}
-    for tr in trades_rows:
-        sig = _st_best_signal_for_trade(
-            tr, signals, consumed_sigs, instrument_label
-        )
-        if sig is not None:
-            consumed_sigs.add(_st_sig_fp(sig))
-            tid = tr.get("id")
-            if tid is not None:
-                match_by_tid[tid] = sig
-
-    log.debug(
-        "strategy_trades strategy_id=%s bounds_used_opened_at_fallback=%s",
-        strategy_id,
-        used_opened_at_fallback,
+    theo_raw = run_since_live_detail(
+        raw_strategy_name,
+        instrument_label,
+        float(row.get("sl_mult") or 1.0),
+        float(row.get("tp_mult") or 3.0),
+        int(row.get("timeout") or TIMEOUT),
+        anchor_ts,
+    )
+    merged_rows = _build_trades_detail_rows(
+        theo_raw,
+        [dict(r) for r in oanda_trades_raw],
+        pip,
     )
 
-    for tr in trades_rows:
-        sig = match_by_tid.get(tr.get("id"))
-        matched = sig is not None
-        mcandle = sig.get("candle_time") if sig else None
-        execution_label = _st_execution_label(matched, tr, mcandle)
+    theo_agg_rows = [
+        r for r in merged_rows
+        if r.get("theo_agg") is not None
+        and r["theo_agg"].get("result") in ("WIN", "LOSS", "BREAKEVEN")
+    ]
+    theo_agg_signals = len(theo_agg_rows)
+    theo_agg_wins = sum(1 for r in theo_agg_rows if r["theo_agg"].get("result") == "WIN")
+    theo_agg_net = sum(float(r["theo_agg"].get("pnl_dollars", 0.0) or 0.0) for r in theo_agg_rows)
 
-        rk = _st_floor_minute_utc(mcandle) if sig else None
-        replay_entry = next_bar_lookup.get(rk) if rk is not None else None
+    theo_pas_rows = [
+        r for r in merged_rows
+        if r.get("theo_pas") is not None
+        and r["theo_pas"].get("result") in ("WIN", "LOSS", "BREAKEVEN")
+    ]
+    theo_pas_signals = len(theo_pas_rows)
+    theo_pas_wins = sum(1 for r in theo_pas_rows if r["theo_pas"].get("result") == "WIN")
+    theo_pas_net = sum(float(r["theo_pas"].get("pnl_dollars", 0.0) or 0.0) for r in theo_pas_rows)
 
-        ox = tr.get("oanda_exit")
-        direction = (tr.get("direction") or "").strip().upper()
-        replay_pips = None
-        if replay_entry is not None and ox is not None and pip > 0:
-            try:
-                rep = float(replay_entry)
-                exv = float(ox)
-                if direction in ("BUY", "LONG"):
-                    replay_pips = round((exv - rep) / pip, 1)
-                elif direction in ("SELL", "SHORT"):
-                    replay_pips = round((rep - exv) / pip, 1)
-            except (TypeError, ValueError):
-                replay_pips = None
-
-        nd_str, nd_kind = _st_notable_differences(execution_label, tr, pip)
-        tr["execution_label"] = execution_label
-        tr["replay_entry"] = replay_entry
-        tr["replay_pips"] = replay_pips
-        tr["notable_differences"] = nd_str
-        tr["notable_kind"] = nd_kind
-
-    total = len(trades_rows)
-    wins = sum(1 for r in trades_rows if str(r.get("result") or "").strip().upper() == "WIN")
-    if total > 0:
-        win_pct = round(wins / total * 100.0, 1)
-    else:
-        win_pct = 0.0
-    _oanda_pls: list[float] = []
-    for r in trades_rows:
-        v = r.get("oanda_pl")
-        if v is None:
-            continue
-        try:
-            fv = float(v)
-        except (TypeError, ValueError):
-            continue
-        if not math.isnan(fv):
-            _oanda_pls.append(fv)
-    oanda_pnl_total = round(sum(_oanda_pls), 2) if _oanda_pls else None
-
-    try:
-        trades = json.loads(json.dumps(trades_rows, default=str))
-    except (TypeError, ValueError):
-        trades = trades_rows
+    oanda_rows = [
+        r for r in merged_rows
+        if r.get("oanda") is not None and str(r["oanda"].get("status") or "").upper() != "OPEN"
+    ]
+    oanda_total = len(oanda_rows)
+    oanda_wins = sum(1 for r in oanda_rows if str(r["oanda"].get("result") or "").upper() == "WIN")
+    oanda_net = sum(float(r["oanda"].get("oanda_pl", 0.0) or 0.0) for r in oanda_rows)
 
     strategy_name = (row.get("strategy_name") or "Strategy").strip()
     gl_str = ""
@@ -1370,14 +1344,27 @@ def strategy_trades(strategy_id):
         instrument=instrument_label,
         anchor=anchor,
         complement=complement or "—",
-        connector=connector or "—",
         go_live_at=gl_str,
         strategy_id=strategy_id,
-        total=total,
-        wins=wins,
-        win_pct=win_pct,
-        oanda_pnl_total=oanda_pnl_total,
-        trades=trades,
+        merged_rows=merged_rows,
+        theo_agg_signals=theo_agg_signals,
+        theo_agg_wins=theo_agg_wins,
+        theo_agg_net=round(theo_agg_net, 2),
+        theo_agg_win_pct=round(
+            theo_agg_wins / theo_agg_signals * 100, 1
+        ) if theo_agg_signals else 0.0,
+        theo_pas_signals=theo_pas_signals,
+        theo_pas_wins=theo_pas_wins,
+        theo_pas_net=round(theo_pas_net, 2),
+        theo_pas_win_pct=round(
+            theo_pas_wins / theo_pas_signals * 100, 1
+        ) if theo_pas_signals else 0.0,
+        oanda_total=oanda_total,
+        oanda_wins=oanda_wins,
+        oanda_net=round(oanda_net, 2),
+        oanda_win_pct=round(
+            oanda_wins / oanda_total * 100, 1
+        ) if oanda_total else 0.0,
         pip=pip,
     )
 
@@ -3432,7 +3419,10 @@ def api_strategy_executor_pnl():
     if meta is None:
         return jsonify({"error": "unknown instrument"}), 400
 
-    from strategy_runner import run_since_live
+    from strategy_runner import (
+        run_since_live,
+        run_since_live_detail,
+    )
 
     agg = run_since_live(
         strategy_name, instrument_label, sl_mult, tp_mult, timeout, "aggressive", anchor_ts

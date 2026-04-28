@@ -139,6 +139,11 @@
       color: #c62828;
       font-weight: 700;
     }
+    .badge-skipped {
+      background: rgba(255,152,0,0.15);
+      color: #e65100;
+      font-weight: 600;
+    }
 
     .text-muted { color: #888; }
     .mono-id {
@@ -168,23 +173,41 @@
 </div>
 
 <div class="summary">
-  <div class="summary-card">
-    <div class="label">Total trades</div>
-    <div class="value">{{ total }}</div>
+  <div class="summary-card" style="border-left:3px solid #4caf50;">
+    <div class="label">Theo Agg Signals</div>
+    <div class="value">{{ theo_agg_signals }}</div>
   </div>
-  <div class="summary-card">
-    <div class="label">Wins</div>
-    <div class="value">{{ wins }}</div>
+  <div class="summary-card" style="border-left:3px solid #4caf50;">
+    <div class="label">Theo Agg Win %</div>
+    <div class="value {{ 'green' if theo_agg_win_pct >= 50 else 'red' }}">{{ theo_agg_win_pct }}%</div>
   </div>
-  <div class="summary-card">
-    <div class="label">Win %</div>
-    <div class="value {{ 'green' if win_pct >= 50 else 'red' }}">{{ win_pct | round(1) }}%</div>
+  <div class="summary-card" style="border-left:3px solid #4caf50;">
+    <div class="label">Theo Agg Net</div>
+    <div class="value {{ 'green' if theo_agg_net > 0 else ('red' if theo_agg_net < 0 else '') }}">${{ theo_agg_net }}</div>
   </div>
-  <div class="summary-card" style="border-left: 3px solid #1a56db;">
+  <div class="summary-card" style="border-left:3px solid #1a56db;">
+    <div class="label">Theo Pas Signals</div>
+    <div class="value">{{ theo_pas_signals }}</div>
+  </div>
+  <div class="summary-card" style="border-left:3px solid #1a56db;">
+    <div class="label">Theo Pas Win %</div>
+    <div class="value {{ 'green' if theo_pas_win_pct >= 50 else 'red' }}">{{ theo_pas_win_pct }}%</div>
+  </div>
+  <div class="summary-card" style="border-left:3px solid #1a56db;">
+    <div class="label">Theo Pas Net</div>
+    <div class="value {{ 'green' if theo_pas_net > 0 else ('red' if theo_pas_net < 0 else '') }}">${{ theo_pas_net }}</div>
+  </div>
+  <div class="summary-card" style="border-left:3px solid #f59e0b;">
+    <div class="label">OANDA Trades</div>
+    <div class="value">{{ oanda_total }}</div>
+  </div>
+  <div class="summary-card" style="border-left:3px solid #f59e0b;">
+    <div class="label">OANDA Win %</div>
+    <div class="value {{ 'green' if oanda_win_pct >= 50 else 'red' }}">{{ oanda_win_pct }}%</div>
+  </div>
+  <div class="summary-card" style="border-left:3px solid #f59e0b;">
     <div class="label">OANDA P&amp;L</div>
-    <div class="value {% if oanda_pnl_total is not none %}{{ 'green' if oanda_pnl_total > 0 else ('red' if oanda_pnl_total < 0 else '') }}{% endif %}">
-      {% if oanda_pnl_total is not none %}${{ oanda_pnl_total | round(2) }}{% else %}—{% endif %}
-    </div>
+    <div class="value {{ 'green' if oanda_net > 0 else ('red' if oanda_net < 0 else '') }}">${{ oanda_net }}</div>
   </div>
 </div>
 
@@ -194,57 +217,46 @@
       <tr>
         <th>Signal time</th>
         <th>Dir</th>
-        <th>Execution label</th>
-        <th>Replay entry</th>
-        <th>OANDA fill</th>
-        <th title="Pips: (entry − fill) ÷ pip. Positive = price improvement, negative = slippage.">
-          Entry diff
-          <span class="th-hint">pips · + improv. / − slip</span>
-        </th>
+        <th>Theo Agg Entry</th>
+        <th>Theo Agg Exit</th>
+        <th>Theo Agg Result</th>
+        <th>Theo Agg P&amp;L</th>
+        <th>Theo Pas Entry</th>
+        <th>Theo Pas Exit</th>
+        <th>Theo Pas Result</th>
+        <th>Theo Pas P&amp;L</th>
+        <th>OANDA Fill</th>
         <th>OANDA exit</th>
-        <th>Replay P&amp;L (pips)</th>
+        <th>OANDA Result</th>
         <th>OANDA P&amp;L</th>
-        <th>OANDA SL</th>
-        <th>OANDA TP</th>
         <th>Units</th>
-        <th>Status</th>
-        <th>Notable differences</th>
-        <th>Trade ID</th>
+        <th>Notable Diff</th>
       </tr>
     </thead>
     <tbody>
-      {% if not trades %}
+      {% if not merged_rows %}
       <tr>
-        <td colspan="15" style="text-align:center; padding:32px; color:#888;">
-          No trades recorded for this strategy.
+        <td colspan="16" style="text-align:center; padding:32px; color:#888;">
+          No trades recorded.
         </td>
       </tr>
       {% else %}
-      {% for t in trades %}
+      {% for row in merged_rows %}
       {% set jpy = (pip >= 0.01) %}
-      {% set ep = t.get('entry_price') %}
-      {% set of = t.get('oanda_fill') %}
-      {% set st = t.get('signal_time') %}
-      {% set oa = t.get('opened_at') %}
-      {% set el = t.get('execution_label') %}
-      {% set nd = t.get('notable_differences') %}
-      {% set nk = t.get('notable_kind') or 'empty' %}
-      {% set re = t.get('replay_entry') %}
-      {% set rp = t.get('replay_pips') %}
+      {% set agg = row.get('theo_agg') %}
+      {% set pas = row.get('theo_pas') %}
+      {% set oanda = row.get('oanda') %}
+      {% set st = row.get('signal_time') %}
       <tr>
         <td>
-          {% if st is not none and st != '' %}
-            {% set s = st|string|trim %}
-            {% if s|length >= 16 %}{{ s[8:10] }}/{{ s[5:7] }} {{ s[11:16] }}{% else %}{{ s }}{% endif %}
-          {% elif oa is not none and oa != '' %}
-            {% set s = oa|string|trim %}
-            {% if s|length >= 16 %}{{ s[8:10] }}/{{ s[5:7] }} {{ s[11:16] }}{% else %}{{ s }}{% endif %}<span class="text-muted"> *</span>
+          {% if st %}
+            {{ st.strftime("%d/%m %H:%M") if st.strftime is defined else (st|string)[8:10] ~ "/" ~ (st|string)[5:7] ~ " " ~ (st|string)[11:16] }} UTC
           {% else %}
             —
           {% endif %}
         </td>
         <td>
-          {% set d = (t.get('direction') or '')|string|trim|upper %}
+          {% set d = (row.get('direction') or '')|string|trim|upper %}
           {% if d == 'BUY' %}
             <span class="badge badge-dir-buy">BUY</span>
           {% elif d == 'SELL' %}
@@ -255,98 +267,55 @@
             —
           {% endif %}
         </td>
+        <td>{% if agg and agg.get('entry') is not none %}{% if jpy %}{{ "%.3f"|format(agg.get('entry')|float) }}{% else %}{{ "%.5f"|format(agg.get('entry')|float) }}{% endif %}{% else %}—{% endif %}</td>
+        <td>{% if agg and agg.get('exit_price') is not none %}{% if jpy %}{{ "%.3f"|format(agg.get('exit_price')|float) }}{% else %}{{ "%.5f"|format(agg.get('exit_price')|float) }}{% endif %}{% else %}—{% endif %}</td>
         <td>
-          {% if el == 'EXECUTED' %}
-            <span class="badge badge-res-win" title="EXECUTED">EXECUTED</span>
-          {% elif el == 'Pre-refactor - fill data unavailable' %}
-            <span class="badge badge-exec-muted" title="Pre-refactor - fill data unavailable">Pre-refactor</span>
-          {% elif el == 'Early system - data unavailable' %}
-            <span class="badge badge-exec-muted" title="Early system - data unavailable">Early system</span>
-          {% elif el == 'SYSTEM_INTEGRITY_GAP' %}
-            <span class="badge badge-exec-gap" title="SYSTEM_INTEGRITY_GAP">Gap</span>
-          {% elif el %}
-            <span class="badge">{{ el }}</span>
-          {% else %}
-            <span class="text-muted">—</span>
-          {% endif %}
-        </td>
-        <td class="num">
-          {% if re is none %}
-            <span class="replay-pending">Pending</span>
-          {% elif jpy %}
-            {{ "%.3f"|format(re|float) }}
-          {% else %}
-            {{ "%.5f"|format(re|float) }}
-          {% endif %}
-        </td>
-        <td>
-          {% if of is none or of == '' %}—{% elif jpy %}{{ "%.3f"|format(of|float) }}{% else %}{{ "%.5f"|format(of|float) }}{% endif %}
-        </td>
-        <td>
-          {% if ep is none or ep == '' or of is none or of == '' %}
-            —
-          {% else %}
-            {% set diffp = ((ep|float) - (of|float)) / pip %}
-            {% set diff1 = diffp|round(1) %}
-            <span class="{{ 'diff-pos' if diff1 > 0 else ('diff-neg' if diff1 < 0 else 'text-muted') }}" title="Pips: (entry − fill) ÷ pip. Positive = improvement.">{{ diff1 }}</span>
-            <span class="text-muted" style="font-size:11px;"> pips</span>
-          {% endif %}
-        </td>
-        <td>{% set v = t.get('oanda_exit') %}{% if v is none or v == '' %}—{% elif jpy %}{{ "%.3f"|format(v|float) }}{% else %}{{ "%.5f"|format(v|float) }}{% endif %}</td>
-        <td class="num">
-          {% if rp is none %}—{% else %}{{ "%+.1f"|format(rp|float) }}{% endif %}
-        </td>
-        <td>
-          {% set pl = t.get('oanda_pl') %}
-          {% if pl is none %}—{% else %}<span class="{{ 'pnl-pos' if pl|float > 0 else ('pnl-neg' if pl|float < 0 else 'text-muted') }}">${{ pl|float | round(2) }}</span>{% endif %}
-        </td>
-        <td>{% set v = t.get('oanda_sl') %}{% if v is none or v == '' %}—{% elif jpy %}{{ "%.3f"|format(v|float) }}{% else %}{{ "%.5f"|format(v|float) }}{% endif %}</td>
-        <td>{% set v = t.get('oanda_tp') %}{% if v is none or v == '' %}—{% elif jpy %}{{ "%.3f"|format(v|float) }}{% else %}{{ "%.5f"|format(v|float) }}{% endif %}</td>
-        <td>
-          {% set u = t.get('oanda_units') %}
-          {% if u is none %}—{% else %}{{ "{:,}".format(u|int) }}{% endif %}
-        </td>
-        <td>
-          {% set stt = (t.get('status') or '')|string|trim|upper %}
-          {% if stt == 'OPEN' %}
-            <span class="badge badge-open">OPEN</span>
-          {% elif stt == 'CLOSED' %}
-            {% set res = (t.get('result') or '')|string|trim|upper %}
-            {% if res == 'WIN' %}
-              <span class="badge badge-res-win">WIN</span>
-            {% elif res == 'LOSS' %}
-              <span class="badge badge-res-loss">LOSS</span>
-            {% elif res == 'BREAKEVEN' %}
-              <span class="badge badge-res-be">BREAKEVEN</span>
-            {% elif res %}
-              <span class="badge">{{ res }}</span>
-            {% else %}
-              <span class="text-muted">—</span>
-            {% endif %}
-          {% elif stt %}
-            <span class="badge">{{ t.get('status') }}</span>
+          {% if agg %}
+            {% set ar = (agg.get('result') or '')|upper %}
+            {% if ar == 'WIN' %}<span class="badge badge-res-win">WIN</span>
+            {% elif ar == 'LOSS' %}<span class="badge badge-res-loss">LOSS</span>
+            {% elif ar == 'BREAKEVEN' %}<span class="badge badge-res-be">BREAKEVEN</span>
+            {% elif ar in ['SKIPPED', 'TIMEOUT_NO_FILL', 'MISSED'] %}<span class="badge badge-skipped">{{ ar }}</span>
+            {% elif ar == 'DATA_INVALID' %}<span class="badge badge-exec-muted">DATA_INVALID</span>
+            {% else %}<span class="text-muted">—</span>{% endif %}
           {% else %}
             —
           {% endif %}
         </td>
-        <td style="white-space:normal;max-width:220px;">
-          {% if nk == 'empty' or (nd is none) %}
-            <span class="text-muted">—</span>
-          {% elif nk == 'gap' %}
-            <span class="badge badge-exec-gap" title="{{ nd }}">Gap</span>
-          {% elif nk == 'label' %}
-            {% if nd == 'Pre-refactor - fill data unavailable' %}
-              <span class="badge badge-exec-muted" title="{{ nd }}">Pre-refactor</span>
-            {% elif nd == 'Early system - data unavailable' %}
-              <span class="badge badge-exec-muted" title="{{ nd }}">Early system</span>
-            {% else %}
-              <span class="badge badge-exec-muted" title="{{ nd }}">{{ nd }}</span>
-            {% endif %}
+        <td>{% if agg and agg.get('pnl_dollars') is not none %}{% set v = agg.get('pnl_dollars')|float %}<span class="{{ 'pnl-pos' if v > 0 else ('pnl-neg' if v < 0 else 'text-muted') }}">${{ "%.2f"|format(v) }}</span>{% else %}—{% endif %}</td>
+        <td>{% if pas and pas.get('entry') is not none %}{% if jpy %}{{ "%.3f"|format(pas.get('entry')|float) }}{% else %}{{ "%.5f"|format(pas.get('entry')|float) }}{% endif %}{% else %}—{% endif %}</td>
+        <td>{% if pas and pas.get('exit_price') is not none %}{% if jpy %}{{ "%.3f"|format(pas.get('exit_price')|float) }}{% else %}{{ "%.5f"|format(pas.get('exit_price')|float) }}{% endif %}{% else %}—{% endif %}</td>
+        <td>
+          {% if pas %}
+            {% set pr = (pas.get('result') or '')|upper %}
+            {% if pr in ['SKIPPED', 'TIMEOUT_NO_FILL'] %}
+              <span class="badge badge-skipped">No fill</span>
+            {% elif pr == 'WIN' %}<span class="badge badge-res-win">WIN</span>
+            {% elif pr == 'LOSS' %}<span class="badge badge-res-loss">LOSS</span>
+            {% elif pr == 'BREAKEVEN' %}<span class="badge badge-res-be">BREAKEVEN</span>
+            {% elif pr in ['MISSED'] %}<span class="badge badge-skipped">{{ pr }}</span>
+            {% elif pr == 'DATA_INVALID' %}<span class="badge badge-exec-muted">DATA_INVALID</span>
+            {% else %}<span class="text-muted">—</span>{% endif %}
           {% else %}
-            <span>{{ nd }}</span>
+            —
           {% endif %}
         </td>
-        <td class="mono-id">{% set oid = t.get('oanda_trade_id') %}{% if oid is none or oid == '' %}—{% else %}{{ oid }}{% endif %}</td>
+        <td>{% if pas and pas.get('pnl_dollars') is not none %}{% set v = pas.get('pnl_dollars')|float %}<span class="{{ 'pnl-pos' if v > 0 else ('pnl-neg' if v < 0 else 'text-muted') }}">${{ "%.2f"|format(v) }}</span>{% else %}—{% endif %}</td>
+        <td>{% if oanda and oanda.get('oanda_fill') is not none %}{% if jpy %}{{ "%.3f"|format(oanda.get('oanda_fill')|float) }}{% else %}{{ "%.5f"|format(oanda.get('oanda_fill')|float) }}{% endif %}{% else %}—{% endif %}</td>
+        <td>{% if oanda and oanda.get('oanda_exit') is not none %}{% if jpy %}{{ "%.3f"|format(oanda.get('oanda_exit')|float) }}{% else %}{{ "%.5f"|format(oanda.get('oanda_exit')|float) }}{% endif %}{% else %}—{% endif %}</td>
+        <td>
+          {% if oanda %}
+            {% set ores = (oanda.get('result') or '')|upper %}
+            {% if ores == 'WIN' %}<span class="badge badge-res-win">WIN</span>
+            {% elif ores == 'LOSS' %}<span class="badge badge-res-loss">LOSS</span>
+            {% elif ores == 'BREAKEVEN' %}<span class="badge badge-res-be">BREAKEVEN</span>
+            {% elif ores %}<span class="badge">{{ ores }}</span>
+            {% else %}—{% endif %}
+          {% else %}—{% endif %}
+        </td>
+        <td>{% if oanda and oanda.get('oanda_pl') is not none %}{% set v = oanda.get('oanda_pl')|float %}<span class="{{ 'pnl-pos' if v > 0 else ('pnl-neg' if v < 0 else 'text-muted') }}">${{ "%.2f"|format(v) }}</span>{% else %}—{% endif %}</td>
+        <td>{% if oanda and oanda.get('oanda_units') is not none %}{{ "{:,}".format(oanda.get('oanda_units')|int) }}{% else %}—{% endif %}</td>
+        <td style="white-space:normal;max-width:220px;">{{ row.get('notable_diff') or "—" }}</td>
       </tr>
       {% endfor %}
       {% endif %}
