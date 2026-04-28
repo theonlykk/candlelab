@@ -3,7 +3,7 @@
 # This file (indicator_utils.py) exists in BOTH oanda-trading AND candlelab.
 # If you modify logic here, you MUST manually copy the changes to the other repo.
 # Do not add repo-specific dependencies to this file.
-# Last synced: 2026-04-27
+# Last synced: 2026-04-28
 # ==============================================================================
 
 import json
@@ -121,3 +121,44 @@ def compute_h1_atr_from_m5(df_m5: pd.DataFrame | None, period: int = 14) -> floa
     if pd.isna(atr_val) or atr_val <= 0:
         return 0.0
     return atr_val
+
+
+def compute_h1_atr_series_from_m5(
+    df_m5: pd.DataFrame,
+    period: int = 14,
+) -> pd.Series:
+    """
+    Returns the full hourly-indexed Wilder RMA ATR(14) Series from an M5 DataFrame.
+    Always drops the last incomplete H1 bar before computing. Use
+    compute_h1_atr_from_m5() when only the latest scalar value is needed.
+    """
+    if df_m5 is None or df_m5.empty:
+        return pd.Series(dtype=float)
+    df_m5 = df_m5.copy()
+    df_m5 = df_m5.sort_index()
+    if not isinstance(df_m5.index, pd.DatetimeIndex):
+        try:
+            df_m5.index = pd.to_datetime(df_m5.index, utc=True)
+        except (TypeError, ValueError, pd.errors.OutOfBoundsDatetime):
+            return pd.Series(dtype=float)
+    if not isinstance(df_m5.index, pd.DatetimeIndex):
+        return pd.Series(dtype=float)
+    df_h1 = df_m5.resample("1h").agg(
+        {"open": "first", "high": "max", "low": "min", "close": "last"}
+    )
+    df_h1 = df_h1.dropna()
+    if len(df_h1) < 2:
+        return pd.Series(dtype=float)
+    df_h1 = df_h1.iloc[:-1]
+    if len(df_h1) < period:
+        return pd.Series(dtype=float)
+    hi = df_h1["high"]
+    lo = df_h1["low"]
+    cl = df_h1["close"]
+    prev_cl = cl.shift(1)
+    tr = pd.concat(
+        [hi - lo, (hi - prev_cl).abs(), (lo - prev_cl).abs()],
+        axis=1,
+    ).max(axis=1)
+    atr = tr.ewm(alpha=1.0 / period, adjust=False).mean()
+    return atr

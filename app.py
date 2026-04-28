@@ -24,6 +24,7 @@ from psycopg2.extras import RealDictCursor
 from data import get_ohlc, INSTRUMENTS, _oanda_instrument_id
 from chart_renderer import render_trade_panels
 from backtest import compute_atr
+from indicator_utils import compute_h1_atr_series_from_m5
 from patterns import detect_all, PATTERNS
 from signal_engine import (
     detect_signal,
@@ -298,7 +299,7 @@ def _sl_distance_price(atr: float, pip: float) -> float:
 def _simulate_trades(
     df: pd.DataFrame,
     signals_series: pd.Series,
-    atr: pd.Series,
+    h1_atr_series: pd.Series,
     pip: float,
     sl_mult: float,
     tp_mult: float,
@@ -329,19 +330,30 @@ def _simulate_trades(
             if not indicator_fn(df, i, dir_str):
                 continue
 
-        trade_atr = float(atr.iloc[i])
-        if trade_atr == 0 or np.isnan(trade_atr):
+        sig_ts = df.index[i]
+        hkey = pd.Timestamp(sig_ts).floor("h")
+        if hkey in h1_atr_series.index:
+            raw_atr = float(h1_atr_series.loc[hkey])
+        else:
+            raw_atr = 0.0
+        atr_val = max(MIN_SL_PIPS * pip, raw_atr)
+        if atr_val == 0 or np.isnan(atr_val):
             continue
 
         pip_val  = PIP_VALUES.get(instrument, 10.0)
-        sl_dist  = _sl_distance_price(trade_atr, pip)
+        sl_dist  = atr_val * sl_mult
         sl_pips  = sl_dist / pip if pip > 0 else 0.0
-        tp_pips  = sl_pips * (tp_mult / sl_mult)
+        tp_pips  = (atr_val * tp_mult) / pip if pip > 0 else 0.0
         lot_size = (RISK_DOLLARS / (sl_pips * pip_val)) if sl_pips > 0 and pip_val > 0 else 0.0
 
+        sig_close = float(df["close"].iloc[i])
         entry = float(df["open"].iloc[i + 1])
-        tp = entry + direction * tp_mult * trade_atr
-        sl = entry - direction * _sl_distance_price(trade_atr, pip)
+        if direction == 1:
+            sl = sig_close - atr_val * sl_mult
+            tp = sig_close + atr_val * tp_mult
+        else:
+            sl = sig_close + atr_val * sl_mult
+            tp = sig_close - atr_val * tp_mult
 
         future_hi      = df["high"].iloc[i + 1: i + 1 + timeout].to_numpy()
         future_lo      = df["low"].iloc[i + 1: i + 1 + timeout].to_numpy()
@@ -422,7 +434,7 @@ def _simulate_trades(
             "entry_idx": entry_idx,
             "exit_idx":  exit_idx,
             "entry_price": round(entry, 5),
-            "atr":       trade_atr,
+            "atr":       atr_val,
             "tp":        tp,
             "sl":        sl,
             "exit_price":  round(exit_price, 5),
@@ -461,7 +473,15 @@ def _backtest_pattern(
     - apply an optional indicator confirmation function,
     - parameterize SL/TP multipliers and timeouts.
     """
-    atr = compute_atr(df)
+    h1_atr_series = compute_h1_atr_series_from_m5(df)
+    if h1_atr_series.empty:
+        return {
+            "signals": 0,
+            "wins": 0,
+            "win_pct": 0.0,
+            "cum_net": 0.0,
+            "trades": [],
+        }
     signals_df = detect_all(df)
     if pattern_name not in signals_df.columns:
         return {"signals": 0, "wins": 0, "win_pct": 0.0, "cum_net": 0.0, "trades": []}
@@ -479,7 +499,7 @@ def _backtest_pattern(
     signals_series = pd.Series(sig_array, index=signals_df.index)
 
     trades = _simulate_trades(
-        df, signals_series, atr, pip,
+        df, signals_series, h1_atr_series, pip,
         sl_mult, tp_mult, timeout, session, indicator_fn,
         instrument=instrument,
     )
@@ -507,7 +527,7 @@ def _backtest_pattern_multi_timeout(
     instrument: str = "EUR/USD",
 ) -> dict:
     """Run a single pattern at timeouts 5, 10, 20 and return combined results."""
-    atr = compute_atr(df)
+    h1_atr_series = compute_h1_atr_series_from_m5(df)
     signals_df = detect_all(df)
     if pattern_name not in signals_df.columns:
         return {"signals": 0, "win_pct_5": 0.0, "win_pct_10": 0.0, "win_pct_20": 0.0}
@@ -519,7 +539,7 @@ def _backtest_pattern_multi_timeout(
     results = {}
     for timeout in (5, 10, 20):
         trades = _simulate_trades(
-            df, sig_series, atr, pip, sl_mult, tp_mult, timeout, session,
+            df, sig_series, h1_atr_series, pip, sl_mult, tp_mult, timeout, session,
             instrument=instrument,
         )
         total = len(trades)
@@ -812,13 +832,13 @@ def strategy_chart(strategy_id):
             comp_disp = complement
             conn_disp = connector or "ordered"
 
-        atr = compute_atr(df)
+        h1_atr_series = compute_h1_atr_series_from_m5(df)
         signals_series = pd.Series(np.asarray(sig_array, dtype=np.int8), index=df.index)
 
         trades = _simulate_trades(
             df,
             signals_series,
-            atr,
+            h1_atr_series,
             pip,
             sl_mult,
             tp_mult,

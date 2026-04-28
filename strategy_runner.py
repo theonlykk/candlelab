@@ -13,7 +13,11 @@ import pandas as pd
 from psycopg2.extras import RealDictCursor
 
 from data import get_conn
-from indicator_utils import _parse_indicator_filter_config, passes_indicator
+from indicator_utils import (
+    _parse_indicator_filter_config,
+    compute_h1_atr_series_from_m5,
+    passes_indicator,
+)
 from patterns import detect_all
 from signal_engine import detect_signal
 from simulation_engine import get_pip, run_simulation
@@ -23,15 +27,6 @@ log = logging.getLogger(__name__)
 
 WARMUP_BARS = 200
 COMPLEMENT_WINDOW = 10
-
-
-def _compute_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
-    hi, lo, cl = df["high"], df["low"], df["close"]
-    tr = pd.concat(
-        [hi - lo, (hi - cl.shift(1)).abs(), (lo - cl.shift(1)).abs()],
-        axis=1,
-    ).max(axis=1)
-    return tr.ewm(alpha=1.0 / period, adjust=False).mean()
 
 
 def _instrument_to_oanda(instrument_label: str) -> str:
@@ -89,21 +84,7 @@ def _fetch_oanda_candles(oanda_instrument: str, from_ts) -> pd.DataFrame:
 
 
 def _get_h1_atr(df_m5: pd.DataFrame) -> pd.Series:
-    if df_m5 is None or df_m5.empty:
-        return pd.Series(dtype=float)
-    need = ["open", "high", "low", "close"]
-    for c in need:
-        if c not in df_m5.columns:
-            return pd.Series(dtype=float)
-    df_h1 = (
-        df_m5[need]
-        .resample("1h")
-        .agg({"open": "first", "high": "max", "low": "min", "close": "last"})
-        .dropna()
-    )
-    if df_h1.empty:
-        return pd.Series(dtype=float)
-    return _compute_atr(df_h1, 14)
+    return compute_h1_atr_series_from_m5(df_m5)
 
 
 def _resolve_col(signals_df: pd.DataFrame, pattern_name: str) -> str | None:
