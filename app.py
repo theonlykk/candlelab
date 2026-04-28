@@ -644,6 +644,75 @@ def _fetch_live_strategy_row(strategy_id: int) -> dict | None:
             conn.close()
 
 
+def _hydrate_strategy_config(strategy_name: str) -> dict | None:
+    """
+    Load active live strategy row from ``candlelab_strategies_live`` for 30d P&L hydration.
+    Returns None when no row exists or DATABASE_URL is unset.
+    """
+    url = os.environ.get("DATABASE_URL")
+    if not url:
+        return None
+
+    def _str_none(v):
+        if v is None:
+            return None
+        s = str(v).strip()
+        return None if s == "" else s
+
+    conn = psycopg2.connect(url)
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT pattern_1, pattern_2, continuation,
+                       connector, tp_mult, sl_mult, timeout,
+                       instrument, interval, session,
+                       indicator_filter, strategy_type
+                FROM candlelab_strategies_live
+                WHERE strategy_name = %s
+                  AND closed_at IS NULL
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (strategy_name.strip(),),
+            )
+            row = cur.fetchone()
+        if row is None:
+            return None
+        row = dict(row)
+    finally:
+        conn.close()
+
+    complement = _str_none(row.get("pattern_2"))
+    continuation = _str_none(row.get("continuation"))
+    connector = _str_none(row.get("connector"))
+    if complement is None:
+        connector = None
+
+    sess = row.get("session")
+    if sess is None or str(sess).strip() == "" or str(sess).strip().lower() == "all":
+        session_filter = None
+    else:
+        session_filter = str(sess).strip()
+
+    tp_raw = row.get("tp_mult")
+    sl_raw = row.get("sl_mult")
+    to_raw = row.get("timeout")
+
+    return {
+        "anchor": row.get("pattern_1") or "",
+        "complement": complement,
+        "continuation": continuation,
+        "connector": connector,
+        "tp_mult": float(tp_raw if tp_raw is not None else 3.0),
+        "sl_mult": float(sl_raw if sl_raw is not None else 1.0),
+        "timeout": int(to_raw if to_raw is not None else TIMEOUT),
+        "instrument": row.get("instrument") or "EUR/USD",
+        "session_filter": session_filter,
+        "indicator_filter": row.get("indicator_filter"),
+    }
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.route("/")
@@ -2184,32 +2253,23 @@ def api_strategy_pnl():
     """
     Backtest a strategy over the last 30 days (server-side window), returning cum_net and signals.
     Called by the My Strategies panel for the 30d backtest stat card.
+    Config is loaded from ``candlelab_strategies_live`` (single source of truth); body carries only ``strategy_name``.
     """
     body = request.get_json(force=True)
-    instrument = body.get("instrument", "EURUSD")
-    anchor = body.get("anchor")
-    sl_mult = float(body.get("sl_multiplier", 1.0))
-    tp_mult = float(body.get("tp_multiplier", 3.0))
-    timeout = int(body.get("timeout", TIMEOUT))
-    session_filter = body.get("session_filter")
-    complement = body.get("complement")
-    if complement is not None and str(complement).strip() == "":
-        complement = None
-    connector = None
-    if complement is not None:
-        connector = body.get("connector") or "ordered"
+    strategy_name = (body.get("strategy_name") or "").strip()
+    if not strategy_name:
+        return jsonify({"error": "missing strategy_name"}), 400
 
-    indicator_filter = body.get("indicator_filter")
+    cfg = _hydrate_strategy_config(strategy_name)
+    if cfg is None:
+        return jsonify({"error": "strategy not found"}), 404
 
-    if not anchor:
-        return jsonify({"error": "missing anchor"}), 400
-
-    # Resolve instrument label to code
+    instrument = (cfg.get("instrument") or "").strip()
     meta = None
     instrument_label = None
-    for label, cfg in INSTRUMENTS.items():
-        if cfg["symbol"].replace("/", "") == instrument or label == instrument:
-            meta = cfg
+    for label, icfg in INSTRUMENTS.items():
+        if icfg["symbol"].replace("/", "") == instrument or label == instrument:
+            meta = icfg
             instrument_label = label
             break
     if meta is None:
@@ -2219,14 +2279,15 @@ def api_strategy_pnl():
 
     result = run_30d_backtest(
         instrument_label,
-        anchor,
-        complement,
-        connector,
-        session_filter,
-        indicator_filter,
-        sl_mult,
-        tp_mult,
-        timeout,
+        cfg["anchor"],
+        cfg["complement"],
+        cfg["connector"],
+        cfg["session_filter"],
+        cfg["indicator_filter"],
+        cfg["sl_mult"],
+        cfg["tp_mult"],
+        cfg["timeout"],
+        continuation=cfg["continuation"],
     )
     return jsonify(result)
 

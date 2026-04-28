@@ -198,6 +198,7 @@ def run_30d_backtest(
     sl_mult: float,
     tp_mult: float,
     timeout: int,
+    continuation: str | None = None,
 ) -> dict:
     oanda_instrument = _instrument_to_oanda(instrument_label)
     pip = get_pip(oanda_instrument)
@@ -220,6 +221,10 @@ def run_30d_backtest(
     if complement is not None and str(complement).strip():
         comp_col = _resolve_col(signals_df, str(complement).strip())
 
+    continuation_col = None
+    if continuation is not None and str(continuation).strip():
+        continuation_col = _resolve_col(signals_df, str(continuation).strip())
+
     sig_array = detect_signal(
         signals_df,
         anchor_col,
@@ -227,6 +232,7 @@ def run_30d_backtest(
         connector,
         "both",
         window=COMPLEMENT_WINDOW,
+        continuation=continuation_col,
     )
     ind_cfg = _parse_indicator_filter_config(indicator_filter)
 
