@@ -323,7 +323,8 @@ def _fetch_placed_signals(oanda_instrument: str, strategy_name: str, anchor_ts) 
             d = str(item.get("direction", "")).upper().strip()
             if d not in ("BUY", "SELL"):
                 continue
-            out.append((st, d))
+            signal_candle_ts = st - timedelta(minutes=5)
+            out.append((signal_candle_ts, d))
             break
     return out
 
