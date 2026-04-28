@@ -349,14 +349,18 @@ def _build_since_live_simulation(
 
     h1_atr = _get_h1_atr(candles)
     signals: list[dict] = []
-    for st, direction in placed:
+    for poll_time, direction in placed:
+        # Correct: signal candle is N, poll candle is N+1. Subtract one M5 bar to get
+        # the true signal candle timestamp.
+        signal_time = to_utc_timestamp(poll_time) - timedelta(minutes=5)
         try:
-            sig_close = float(candles["close"].loc[st])
+            sig_close = float(candles["close"].loc[signal_time])
         except (KeyError, TypeError, ValueError):
             continue
-        signal_time = to_utc_timestamp(st)
         if signal_time is None:
             continue
+        # ATR lookup MUST use signal_time (N) — not poll_time — to align volatility
+        # to the moment the signal fired.
         sl_dist = _lookup_h1_atr(h1_atr, signal_time, pip)
         if direction == "BUY":
             sl = sig_close - sl_dist * sl_mult
