@@ -35,6 +35,7 @@ from signal_engine import (
 from cache import cache_set, cache_get
 from scheduler import start_scheduler
 from poll_log import init_candlelab_poll_log_table, read_poll_log_pg, read_poll_log_view_rows
+from time_utils import to_utc_timestamp
 from strategy_store import (
     save_strategy,
     get_strategies_by_device,
@@ -693,7 +694,7 @@ def _hydrate_strategy_config(strategy_name: str) -> dict | None:
                 """
                 SELECT pattern_1, pattern_2, continuation,
                        connector, tp_mult, sl_mult, timeout,
-                       instrument, interval, session,
+                       instrument, interval, session, go_live_at,
                        indicator_filter, strategy_type
                 FROM candlelab_strategies_live
                 WHERE strategy_name = %s
@@ -725,6 +726,11 @@ def _hydrate_strategy_config(strategy_name: str) -> dict | None:
     tp_raw = row.get("tp_mult")
     sl_raw = row.get("sl_mult")
     to_raw = row.get("timeout")
+    raw_go_live = row.get("go_live_at")
+    if raw_go_live is not None:
+        go_live_at = to_utc_timestamp(raw_go_live)
+    else:
+        go_live_at = to_utc_timestamp(datetime.now(timezone.utc))
 
     return {
         "anchor": row.get("pattern_1") or "",
@@ -737,6 +743,7 @@ def _hydrate_strategy_config(strategy_name: str) -> dict | None:
         "instrument": row.get("instrument") or "EUR/USD",
         "session_filter": session_filter,
         "indicator_filter": row.get("indicator_filter"),
+        "go_live_at": go_live_at,
     }
 
 
@@ -2299,6 +2306,8 @@ def api_strategy_pnl():
     if cfg is None:
         return jsonify({"error": "strategy not found"}), 404
 
+    reference_date = cfg.get("go_live_at")
+
     instrument = (cfg.get("instrument") or "").strip()
     meta = None
     instrument_label = None
@@ -2323,6 +2332,7 @@ def api_strategy_pnl():
         cfg["tp_mult"],
         cfg["timeout"],
         continuation=cfg["continuation"],
+        reference_date=reference_date,
     )
     return jsonify(result)
 

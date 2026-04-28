@@ -180,10 +180,14 @@ def run_30d_backtest(
     tp_mult: float,
     timeout: int,
     continuation: str | None = None,
+    reference_date=None,
 ) -> dict:
     oanda_instrument = _instrument_to_oanda(instrument_label)
     pip = get_pip(oanda_instrument)
-    now = datetime.now(timezone.utc)
+    if reference_date is not None:
+        now = to_utc_timestamp(reference_date)
+    else:
+        now = to_utc_timestamp(datetime.now(timezone.utc))
     from_ts = now - timedelta(days=30) - timedelta(minutes=WARMUP_BARS * 5)
     strict_cutoff = to_utc_timestamp(now - timedelta(days=30))
 
