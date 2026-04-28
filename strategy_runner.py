@@ -328,27 +328,23 @@ def _fetch_placed_signals(oanda_instrument: str, strategy_name: str, anchor_ts) 
     return out
 
 
-def run_since_live(
+def _build_since_live_simulation(
     strategy_name: str,
     instrument_label: str,
     sl_mult: float,
     tp_mult: float,
     timeout: int,
-    mode: str,
-    anchor_ts: pd.Timestamp,
+    anchor_ts,
 ) -> dict:
-    m = str(mode).lower()
-    if m not in ("aggressive", "passive"):
-        m = "aggressive"
     oanda_instrument = _instrument_to_oanda(instrument_label)
     pip = get_pip(oanda_instrument)
     placed = _fetch_placed_signals(oanda_instrument, strategy_name, anchor_ts)
     if not placed:
-        return _empty_agg(m)
+        return {"aggressive": [], "passive": []}
 
     candles = _fetch_oanda_candles(oanda_instrument, anchor_ts)
     if candles.empty:
-        return _empty_agg(m)
+        return {"aggressive": [], "passive": []}
 
     h1_atr = _get_h1_atr(candles)
     signals: list[dict] = []
@@ -378,9 +374,56 @@ def run_since_live(
         )
 
     if not signals:
-        return _empty_agg(m)
+        return {"aggressive": [], "passive": []}
 
-    results = run_simulation(
-        signals, candles, oanda_instrument, timeout, mode=m
+    results_agg = run_simulation(
+        signals, candles, oanda_instrument, timeout, mode="aggressive"
     )
+    results_pas = run_simulation(
+        signals, candles, oanda_instrument, timeout, mode="passive"
+    )
+    return {
+        "aggressive": results_agg,
+        "passive": results_pas,
+    }
+
+
+def run_since_live(
+    strategy_name: str,
+    instrument_label: str,
+    sl_mult: float,
+    tp_mult: float,
+    timeout: int,
+    mode: str,
+    anchor_ts: pd.Timestamp,
+) -> dict:
+    m = str(mode).lower()
+    if m not in ("aggressive", "passive"):
+        m = "aggressive"
+    raw = _build_since_live_simulation(
+        strategy_name, instrument_label, sl_mult, tp_mult, timeout, anchor_ts
+    )
+    results = raw.get(m, [])
     return _aggregate_sim(results, m)
+
+
+def run_since_live_detail(
+    strategy_name: str,
+    instrument_label: str,
+    sl_mult: float,
+    tp_mult: float,
+    timeout: int,
+    anchor_ts,
+) -> dict:
+    """
+    Returns unaggregated simulation results for the See Trades detail view. Dict has keys:
+      aggressive: list[dict] — one dict per signal
+      passive:    list[dict] — one dict per signal
+    Each dict is a run_simulation result with keys:
+    signal_time, direction, mode, entry, exit_price,
+    sl, tp, pnl_pips, pnl_dollars, result,
+    exit_reason, entry_time, exit_time.
+    """
+    return _build_since_live_simulation(
+        strategy_name, instrument_label, sl_mult, tp_mult, timeout, anchor_ts
+    )
