@@ -1190,10 +1190,14 @@ def _build_trades_detail_rows(
             pas_lookup[k] = r
 
     oanda_lookup = {}
+    oanda_mk_lookup = {}
     for t in oanda_trades:
+        pid = t.get("poll_log_id")
+        if pid is not None:
+            oanda_lookup[int(pid)] = t
         k = _mk(t.get("signal_time") or t.get("opened_at"))
         if k:
-            oanda_lookup[k] = t
+            oanda_mk_lookup[k] = t
 
     rows = []
     seen_keys = set()
@@ -1203,7 +1207,12 @@ def _build_trades_detail_rows(
             continue
         seen_keys.add(k)
         pas = pas_lookup.get(k)
-        oanda = oanda_lookup.get(k)
+        pid = agg.get("poll_log_id")
+        oanda = (
+            oanda_lookup.get(int(pid))
+            if pid is not None
+            else oanda_mk_lookup.get(k)
+        )
         nd = _notable_diff(agg, pas, oanda, pip)
         rows.append(
             {
@@ -1216,9 +1225,18 @@ def _build_trades_detail_rows(
             }
         )
 
+    seen_poll_ids = {
+        int(agg.get("poll_log_id"))
+        for agg in agg_list
+        if agg.get("poll_log_id") is not None
+    }
     for t in oanda_trades:
+        pid = t.get("poll_log_id")
+        already_matched = (
+            pid is not None and int(pid) in seen_poll_ids
+        )
         k = _mk(t.get("signal_time") or t.get("opened_at"))
-        if k and k not in seen_keys:
+        if not already_matched and k and k not in seen_keys:
             rows.append(
                 {
                     "signal_time": (t.get("signal_time") or t.get("opened_at")),

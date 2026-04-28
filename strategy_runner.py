@@ -273,8 +273,10 @@ def _parse_strategies_evaluated(raw) -> list:
     return []
 
 
-def _fetch_placed_signals(oanda_instrument: str, strategy_name: str, anchor_ts) -> list[tuple[pd.Timestamp, str]]:
-    out: list[tuple[pd.Timestamp, str]] = []
+def _fetch_placed_signals(
+    oanda_instrument: str, strategy_name: str, anchor_ts
+) -> list[tuple[pd.Timestamp, str, int | None]]:
+    out: list[tuple[pd.Timestamp, str, int | None]] = []
     inst = (oanda_instrument or "").strip()
     base = (strategy_name or "").strip()
     if not inst or not base:
@@ -289,6 +291,7 @@ def _fetch_placed_signals(oanda_instrument: str, strategy_name: str, anchor_ts) 
         ts_db = anchor_ts
     sql = """
         SELECT DISTINCT ON (candle_time)
+            id AS poll_log_id,
             candle_time, strategies_evaluated
         FROM executor_poll_log
         WHERE instrument = %s
@@ -323,8 +326,9 @@ def _fetch_placed_signals(oanda_instrument: str, strategy_name: str, anchor_ts) 
             d = str(item.get("direction", "")).upper().strip()
             if d not in ("BUY", "SELL"):
                 continue
-            signal_candle_ts = st - timedelta(minutes=5)
-            out.append((signal_candle_ts, d))
+            poll_log_id = row.get("poll_log_id")
+            pid = int(poll_log_id) if poll_log_id is not None else None
+            out.append((st, d, pid))
             break
     return out
 
@@ -349,14 +353,19 @@ def _build_since_live_simulation(
 
     h1_atr = _get_h1_atr(candles)
     signals: list[dict] = []
-    for poll_time, direction in placed:
-        # Correct: signal candle is N, poll candle is N+1. Subtract one M5 bar to get
-        # the true signal candle timestamp.
-        signal_time = to_utc_timestamp(poll_time) - timedelta(minutes=5)
+    for poll_time, direction, poll_log_id in placed:
+        poll_ts = to_utc_timestamp(poll_time)
+        if poll_ts is None:
+            continue
+        prior = candles.index[candles.index <= poll_ts]
+        if len(prior) == 0:
+            continue
+        signal_time = prior[-1]
         try:
             sig_close = float(candles["close"].loc[signal_time])
         except (KeyError, TypeError, ValueError):
             continue
+        signal_time = to_utc_timestamp(signal_time)
         if signal_time is None:
             continue
         # ATR lookup MUST use signal_time (N) — not poll_time — to align volatility
@@ -375,6 +384,7 @@ def _build_since_live_simulation(
                 "sl": sl,
                 "tp": tp,
                 "sl_dist": sl_dist,
+                "poll_log_id": poll_log_id,
             }
         )
 
