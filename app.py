@@ -463,6 +463,7 @@ def _backtest_pattern(
     instrument: str = "EUR/USD",
     complement: str | None = None,
     connector: str | None = None,
+    continuation: str | None = None,
 ) -> dict:
     """
     Backtest a single pattern using the local engine.
@@ -486,6 +487,11 @@ def _backtest_pattern(
     if pattern_name not in signals_df.columns:
         return {"signals": 0, "wins": 0, "win_pct": 0.0, "cum_net": 0.0, "trades": []}
 
+    continuation_col = None
+    if continuation is not None and str(continuation).strip():
+        if continuation in signals_df.columns:
+            continuation_col = continuation
+
     direction_str = "both"
 
     sig_array = detect_signal(
@@ -495,6 +501,7 @@ def _backtest_pattern(
         connector,
         direction_str,
         window=10,
+        continuation=continuation_col,
     )
     signals_series = pd.Series(sig_array, index=signals_df.index)
 
@@ -1753,7 +1760,14 @@ def api_finalise():
 
     anchor = pattern_1
     complement = pattern_2 if has_pattern_2 else (continuation if has_continuation else None)
-    connector = "any-order" if has_pattern_2 else ("ordered" if has_continuation else None)
+    if has_pattern_2 and has_continuation:
+        connector = "type4"
+    elif has_pattern_2:
+        connector = "any-order"
+    elif has_continuation:
+        connector = "ordered"
+    else:
+        connector = None
 
     has_complement = complement is not None and str(complement).strip() != ""
     indicator_filter = body.get("indicator_filter")
@@ -1792,6 +1806,7 @@ def api_finalise():
             instrument=instrument,
             complement=complement if has_complement else None,
             connector=connector if has_complement else None,
+            continuation=continuation if has_continuation else None,
         )
         return r
 
