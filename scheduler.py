@@ -196,8 +196,17 @@ def update_recent_request(instrument: str, interval: str, days: int):
 
 def _scheduled_refresh():
     """APScheduler callback: refresh the cached payload for the most recent request."""
-    instrument, interval, days = _get_recent_request()
-    _compute_and_cache(instrument, interval, days)
+    instrument, _, days = _get_recent_request()
+    for ivl in ["5m", "15m", "1h"]:
+        try:
+            _compute_and_cache(instrument, ivl, days)
+        except Exception:
+            log.exception(
+                "Scheduler: _compute_and_cache failed instrument=%s interval=%s days=%s",
+                instrument,
+                ivl,
+                days,
+            )
     try:
         from poll_log import append_cycle_poll_logs
 
@@ -217,11 +226,19 @@ def start_scheduler():
     if _scheduler is not None and _scheduler.running:
         return
 
+    def _startup_refresh_all_intervals():
+        for ivl in ["5m", "15m", "1h"]:
+            try:
+                _compute_and_cache(DEFAULT_INSTRUMENT, ivl, DEFAULT_DAYS)
+            except Exception:
+                log.exception(
+                    "Scheduler: startup _compute_and_cache failed interval=%s days=%s",
+                    ivl,
+                    DEFAULT_DAYS,
+                )
+
     # Pre-compute default on startup without blocking Flask startup
-    t = threading.Thread(
-        target=lambda: _compute_and_cache(DEFAULT_INSTRUMENT, DEFAULT_INTERVAL, DEFAULT_DAYS),
-        daemon=True,
-    )
+    t = threading.Thread(target=_startup_refresh_all_intervals, daemon=True)
     t.start()
 
     from apscheduler.schedulers.background import BackgroundScheduler

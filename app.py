@@ -21,7 +21,7 @@ import psycopg2
 import requests
 from psycopg2.extras import RealDictCursor
 
-from data import get_ohlc, INSTRUMENTS, _oanda_instrument_id
+from data import get_ohlc, INSTRUMENTS, INTERVAL_MAP, _oanda_instrument_id
 from chart_renderer import render_trade_panels
 from backtest import compute_atr
 from indicator_utils import compute_h1_atr_series_from_m5
@@ -732,6 +732,13 @@ def _hydrate_strategy_config(strategy_name: str) -> dict | None:
     else:
         go_live_at = to_utc_timestamp(datetime.now(timezone.utc))
 
+    iv = row.get("interval")
+    strat_interval = (
+        str(iv).strip()
+        if iv is not None and str(iv).strip() != ""
+        else "5m"
+    )
+
     return {
         "anchor": row.get("pattern_1") or "",
         "complement": complement,
@@ -741,6 +748,7 @@ def _hydrate_strategy_config(strategy_name: str) -> dict | None:
         "sl_mult": float(sl_raw if sl_raw is not None else 1.0),
         "timeout": int(to_raw if to_raw is not None else TIMEOUT),
         "instrument": row.get("instrument") or "EUR/USD",
+        "interval": strat_interval,
         "session_filter": session_filter,
         "indicator_filter": row.get("indicator_filter"),
         "go_live_at": go_live_at,
@@ -1309,6 +1317,9 @@ def strategy_trades(strategy_id):
 
     from strategy_runner import run_since_live_detail
 
+    strat_interval = row.get("interval", "5m")
+    granularity = INTERVAL_MAP.get(strat_interval, "M5")
+
     theo_raw = run_since_live_detail(
         raw_strategy_name,
         instrument_label,
@@ -1316,6 +1327,7 @@ def strategy_trades(strategy_id):
         float(row.get("tp_mult") or 3.0),
         int(row.get("timeout") or TIMEOUT),
         anchor_ts,
+        granularity=granularity,
     )
     merged_rows = _build_trades_detail_rows(
         theo_raw,
@@ -2326,6 +2338,9 @@ def api_strategy_pnl():
 
     from strategy_runner import run_30d_backtest
 
+    strat_interval = cfg.get("interval", "5m")
+    granularity = INTERVAL_MAP.get(strat_interval, "M5")
+
     result = run_30d_backtest(
         instrument_label,
         cfg["anchor"],
@@ -2338,6 +2353,7 @@ def api_strategy_pnl():
         cfg["timeout"],
         continuation=cfg["continuation"],
         reference_date=reference_date,
+        granularity=granularity,
     )
     return jsonify(result)
 

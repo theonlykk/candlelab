@@ -232,9 +232,9 @@ def insert_bars(instrument: str, df: pd.DataFrame, interval: str = "5m"):
         conn.commit()
 
 
-def insert_oanda_candles(instrument: str, df: pd.DataFrame) -> None:
+def insert_oanda_candles(instrument: str, df: pd.DataFrame, granularity: str = "M5") -> None:
     """
-    Bulk UPSERT MBA rows into ``oanda_candles`` (instrument + time PK).
+    Bulk UPSERT MBA rows into ``oanda_candles`` (instrument + granularity + time PK).
 
     ``instrument`` is the OANDA instrument id (e.g. EUR_USD). ``df`` must include
     open, high, low, close, volume, bid_open, bid_close, ask_open, ask_close.
@@ -252,6 +252,7 @@ def insert_oanda_candles(instrument: str, df: pd.DataFrame) -> None:
         tuples.append(
             (
                 instrument,
+                granularity,
                 _ts_to_utc_aware(ts),
                 float(row["open"]),
                 float(row["high"]),
@@ -266,10 +267,10 @@ def insert_oanda_candles(instrument: str, df: pd.DataFrame) -> None:
         )
     insert_sql = """
 INSERT INTO oanda_candles
-    (instrument, time, open, high, low, close,
+    (instrument, granularity, time, open, high, low, close,
      bid_open, bid_close, ask_open, ask_close, volume)
 VALUES %s
-ON CONFLICT (instrument, time) DO UPDATE SET
+ON CONFLICT (instrument, granularity, time) DO UPDATE SET
     open = EXCLUDED.open,
     high = EXCLUDED.high,
     low = EXCLUDED.low,
@@ -286,7 +287,7 @@ ON CONFLICT (instrument, time) DO UPDATE SET
             cur,
             insert_sql,
             tuples,
-            template="(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            template="(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             page_size=500,
         )
         conn.commit()
@@ -511,7 +512,7 @@ def backfill_instrument(instrument: str, interval: str = "5m"):
             n_bars = _INITIAL_BARS.get(interval, 12000)
             df = _fetch_oanda(oanda_symbol, granularity, n_bars=n_bars)
             if not df.empty:
-                insert_oanda_candles(oanda_symbol, df)
+                insert_oanda_candles(oanda_symbol, df, granularity=granularity)
                 df_mid = df[["open", "high", "low", "close", "volume"]]
                 insert_bars(instrument, df_mid, interval)
                 log.info(f"{instrument} @ {interval}: inserted {len(df)} bars")
@@ -532,7 +533,7 @@ def backfill_instrument(instrument: str, interval: str = "5m"):
 
         if not df.empty:
             new_bars = df[df.index > since]
-            insert_oanda_candles(oanda_symbol, new_bars)
+            insert_oanda_candles(oanda_symbol, new_bars, granularity=granularity)
             df_mid = new_bars[["open", "high", "low", "close", "volume"]]
             insert_bars(instrument, df_mid, interval)
             log.info(f"{instrument} @ {interval}: inserted {len(new_bars)} new bars")

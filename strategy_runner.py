@@ -25,6 +25,8 @@ from time_utils import to_utc_timestamp
 
 log = logging.getLogger(__name__)
 
+GRANULARITY_MINS = {"M5": 5, "M15": 15, "H1": 60, "H4": 240, "D1": 1440}
+
 WARMUP_BARS = 200
 COMPLEMENT_WINDOW = 10
 
@@ -33,7 +35,7 @@ def _instrument_to_oanda(instrument_label: str) -> str:
     return str(instrument_label).replace("/", "_")
 
 
-def _fetch_oanda_candles(oanda_instrument: str, from_ts) -> pd.DataFrame:
+def _fetch_oanda_candles(oanda_instrument: str, from_ts, granularity: str = "M5") -> pd.DataFrame:
     cols = [
         "open",
         "high",
@@ -61,13 +63,13 @@ def _fetch_oanda_candles(oanda_instrument: str, from_ts) -> pd.DataFrame:
     sql = """
         SELECT time, open, high, low, close, bid_open, bid_close, ask_open, ask_close, volume
         FROM oanda_candles
-        WHERE instrument = %s AND time >= %s
+        WHERE instrument = %s AND granularity = %s AND time >= %s
         ORDER BY time ASC
     """
     try:
         with get_conn() as conn:
             cur = conn.cursor(cursor_factory=RealDictCursor)
-            cur.execute(sql, (inst, ts_db))
+            cur.execute(sql, (inst, granularity, ts_db))
             rows = cur.fetchall()
     except Exception:
         log.exception("_fetch_oanda_candles")
@@ -181,6 +183,7 @@ def run_30d_backtest(
     timeout: int,
     continuation: str | None = None,
     reference_date=None,
+    granularity: str = "M5",
 ) -> dict:
     oanda_instrument = _instrument_to_oanda(instrument_label)
     pip = get_pip(oanda_instrument)
@@ -188,10 +191,11 @@ def run_30d_backtest(
         now = to_utc_timestamp(reference_date)
     else:
         now = to_utc_timestamp(datetime.now(timezone.utc))
-    from_ts = now - timedelta(days=30) - timedelta(minutes=WARMUP_BARS * 5)
+    gran_mins = GRANULARITY_MINS.get(granularity, 5)
+    from_ts = now - timedelta(days=30) - timedelta(minutes=WARMUP_BARS * gran_mins)
     strict_cutoff = to_utc_timestamp(now - timedelta(days=30))
 
-    candles = _fetch_oanda_candles(oanda_instrument, from_ts)
+    candles = _fetch_oanda_candles(oanda_instrument, from_ts, granularity)
     if candles.empty:
         return _empty_agg("aggressive")
 
@@ -340,6 +344,7 @@ def _build_since_live_simulation(
     tp_mult: float,
     timeout: int,
     anchor_ts,
+    granularity: str = "M5",
 ) -> dict:
     oanda_instrument = _instrument_to_oanda(instrument_label)
     pip = get_pip(oanda_instrument)
@@ -347,7 +352,7 @@ def _build_since_live_simulation(
     if not placed:
         return {"aggressive": [], "passive": []}
 
-    candles = _fetch_oanda_candles(oanda_instrument, anchor_ts)
+    candles = _fetch_oanda_candles(oanda_instrument, anchor_ts, granularity)
     if candles.empty:
         return {"aggressive": [], "passive": []}
 
@@ -411,12 +416,13 @@ def run_since_live(
     timeout: int,
     mode: str,
     anchor_ts: pd.Timestamp,
+    granularity: str = "M5",
 ) -> dict:
     m = str(mode).lower()
     if m not in ("aggressive", "passive"):
         m = "aggressive"
     raw = _build_since_live_simulation(
-        strategy_name, instrument_label, sl_mult, tp_mult, timeout, anchor_ts
+        strategy_name, instrument_label, sl_mult, tp_mult, timeout, anchor_ts, granularity
     )
     results = raw.get(m, [])
     return _aggregate_sim(results, m)
@@ -429,6 +435,7 @@ def run_since_live_detail(
     tp_mult: float,
     timeout: int,
     anchor_ts,
+    granularity: str = "M5",
 ) -> dict:
     """
     Returns unaggregated simulation results for the See Trades detail view. Dict has keys:
@@ -440,5 +447,5 @@ def run_since_live_detail(
     exit_reason, entry_time, exit_time.
     """
     return _build_since_live_simulation(
-        strategy_name, instrument_label, sl_mult, tp_mult, timeout, anchor_ts
+        strategy_name, instrument_label, sl_mult, tp_mult, timeout, anchor_ts, granularity
     )
