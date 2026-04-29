@@ -548,13 +548,14 @@ def backfill_instrument(instrument: str, interval: str = "5m"):
 
 
 def _backfill_all_worker():
-    """Background worker that performs initial backfills for all instruments."""
+    """Background worker that performs initial backfills for all instruments and intervals."""
     for inst in INSTRUMENTS:
-        try:
-            backfill_instrument(inst, DEFAULT_INTERVAL)
-        except Exception as e:
-            log.warning(f"Backfill failed for {inst}: {e}")
-        time.sleep(1)
+        for ivl in ["5m", "15m", "1h"]:
+            try:
+                backfill_instrument(inst, ivl)
+            except Exception as e:
+                log.warning(f"Backfill failed for {inst} @ {ivl}: {e}")
+            time.sleep(1)
 
 
 def backfill_all():
