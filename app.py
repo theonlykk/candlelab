@@ -3439,15 +3439,22 @@ def api_strategy_executor_pnl():
     if not strategy_name:
         return jsonify({"error": "missing strategy_name"}), 400
 
+    cfg = _hydrate_strategy_config(strategy_name)
+    if cfg is None:
+        return jsonify({"error": "strategy not found"}), 404
+
+    strat_interval = cfg.get("interval", "5m")
+    granularity = INTERVAL_MAP.get(strat_interval, "M5")
+
     anchor_ts = _fetch_metrics_anchor_ts(strategy_name)
     if anchor_ts is None:
         return jsonify({"error": "no active live strategy"}), 400
 
     meta = None
     instrument_label = None
-    for label, cfg in INSTRUMENTS.items():
-        if cfg["symbol"].replace("/", "") == instrument or label == instrument:
-            meta = cfg
+    for label, icfg in INSTRUMENTS.items():
+        if icfg["symbol"].replace("/", "") == instrument or label == instrument:
+            meta = icfg
             instrument_label = label
             break
     if meta is None:
@@ -3459,10 +3466,24 @@ def api_strategy_executor_pnl():
     )
 
     agg = run_since_live(
-        strategy_name, instrument_label, sl_mult, tp_mult, timeout, "aggressive", anchor_ts
+        strategy_name,
+        instrument_label,
+        sl_mult,
+        tp_mult,
+        timeout,
+        "aggressive",
+        anchor_ts,
+        granularity=granularity,
     )
     pas = run_since_live(
-        strategy_name, instrument_label, sl_mult, tp_mult, timeout, "passive", anchor_ts
+        strategy_name,
+        instrument_label,
+        sl_mult,
+        tp_mult,
+        timeout,
+        "passive",
+        anchor_ts,
+        granularity=granularity,
     )
     true_pnl = _fetch_true_pnl(strategy_name, anchor_ts)
 
