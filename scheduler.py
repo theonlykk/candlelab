@@ -237,9 +237,16 @@ def start_scheduler():
                     DEFAULT_DAYS,
                 )
 
-    # Pre-compute default on startup without blocking Flask startup
+    # Pre-compute default instrument on startup
     t = threading.Thread(target=_startup_refresh_all_intervals, daemon=True)
     t.start()
+
+    # ADR-032 rev — spawn unconditional multi-instrument, multi-timeframe backfill daemon
+    try:
+        from data import backfill_all
+        backfill_all()
+    except Exception:
+        log.exception("Scheduler: backfill_all failed on startup")
 
     from apscheduler.schedulers.background import BackgroundScheduler
     _scheduler = BackgroundScheduler(daemon=True)
