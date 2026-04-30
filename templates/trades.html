@@ -230,7 +230,7 @@
         <th>OANDA Result</th>
         <th>OANDA P&amp;L</th>
         <th>Units</th>
-        <th>Notable Diff</th>
+        <th style="min-width:260px;">Notable Diff</th>
       </tr>
     </thead>
     <tbody>
@@ -315,7 +315,7 @@
         </td>
         <td>{% if oanda and oanda.get('oanda_pl') is not none %}{% set v = oanda.get('oanda_pl')|float %}<span class="{{ 'pnl-pos' if v > 0 else ('pnl-neg' if v < 0 else 'text-muted') }}">${{ "%.2f"|format(v) }}</span>{% else %}—{% endif %}</td>
         <td>{% if oanda and oanda.get('oanda_units') is not none %}{{ "{:,}".format(oanda.get('oanda_units')|int) }}{% else %}—{% endif %}</td>
-        <td style="white-space:normal;max-width:220px;">{{ row.get('notable_diff') or "—" }}</td>
+        <td style="white-space:nowrap;min-width:260px;max-width:380px;overflow:hidden;text-overflow:ellipsis;" title="{{ row.get('notable_diff') or '' }}">{{ row.get('notable_diff') or "—" }}</td>
       </tr>
       {% endfor %}
       {% endif %}
