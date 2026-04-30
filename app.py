@@ -2549,7 +2549,7 @@ def api_strategy_backtest_trades(strategy_id):
 
     from strategy_runner import run_30d_backtest
 
-    _, raw = run_30d_backtest(
+    stats, raw = run_30d_backtest(
         instrument_label,
         cfg["anchor"],
         cfg["complement"],
@@ -2584,7 +2584,18 @@ def api_strategy_backtest_trades(strategy_id):
         )
 
     trades.reverse()  # newest first
-    return jsonify({"trades": trades, "count": len(trades)})
+    return jsonify(
+        {
+            "trades": trades,
+            "count": len(trades),
+            "summary": {
+                "signals": stats.get("signals", 0),
+                "wins": stats.get("wins", 0),
+                "win_pct": stats.get("win_pct", 0.0),
+                "cum_net": stats.get("cum_net", 0.0),
+            },
+        }
+    )
 
 
 def _executor_parse_patterns_cell(raw) -> list:

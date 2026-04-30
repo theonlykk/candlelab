@@ -323,6 +323,21 @@
   </table>
 </div>
 
+<div class="summary" id="bt-summary" style="margin-top:32px;">
+  <div class="summary-card" style="border-left:3px solid #7c3aed;">
+    <div class="label">30d Signals</div>
+    <div class="value" id="bt-signals">—</div>
+  </div>
+  <div class="summary-card" style="border-left:3px solid #7c3aed;">
+    <div class="label">30d Win %</div>
+    <div class="value" id="bt-win-pct">—</div>
+  </div>
+  <div class="summary-card" style="border-left:3px solid #7c3aed;">
+    <div class="label">30d Net</div>
+    <div class="value" id="bt-cum-net">—</div>
+  </div>
+</div>
+
 <!-- 30d Backtest Blotter -->
 <style>
   .bt-badge { display:inline-block; padding:2px 6px; border-radius:4px; font-size:11px; font-weight:600; text-transform:uppercase; }
@@ -365,6 +380,23 @@
   fetch(`/api/strategy/${strategyId}/backtest-trades`)
     .then(r => r.json())
     .then(data => {
+      // Populate summary cards
+      if (data.summary) {
+        const s = data.summary;
+        document.getElementById("bt-signals").textContent = s.signals ?? "—";
+        const wpEl = document.getElementById("bt-win-pct");
+        wpEl.textContent = s.win_pct != null ? s.win_pct.toFixed(1) + "%" : "—";
+        wpEl.className = "value " + (s.win_pct >= 50 ? "green" : "red");
+        const pnlEl = document.getElementById("bt-cum-net");
+        const pnl = s.cum_net ?? 0;
+        pnlEl.textContent =
+          pnl != null
+            ? (pnl >= 0 ? "+$" : "-$") + Math.abs(pnl).toFixed(2)
+            : "—";
+        pnlEl.className =
+          "value " + (pnl > 0 ? "green" : pnl < 0 ? "red" : "");
+      }
+
       if (!data.trades || data.trades.length === 0) {
         tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#888;padding:20px;">No backtest signals in last 30 days</td></tr>';
         return;
