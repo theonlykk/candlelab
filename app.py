@@ -864,7 +864,7 @@ def strategy_chart(strategy_id):
         ind_cfg = _parse_indicator_filter_config(row.get("indicator_filter"))
 
         # Signal detection on pre_live_df only — matches run_30d_backtest() exactly
-        signals_df = detect_all(pre_live_df)
+        signals_df = detect_all(df)
         anchor_col = _resolve_col(signals_df, anchor)
         if anchor_col is None:
             chart_b64 = ""
