@@ -38,12 +38,14 @@ from poll_log import init_candlelab_poll_log_table, read_poll_log_pg, read_poll_
 from time_utils import to_utc_timestamp
 from simulation_engine import run_simulation
 from strategy_runner import (
+    COMPLEMENT_WINDOW,
+    GRANULARITY_MINS,
+    WARMUP_BARS,
     _fetch_oanda_candles,
     _get_h1_atr,
     _lookup_h1_atr,
     _resolve_col,
     _session_bar_ok,
-    COMPLEMENT_WINDOW,
 )
 from strategy_store import (
     save_strategy,
@@ -827,7 +829,8 @@ def strategy_chart(strategy_id):
     live_df = _executor_read_continuous_series(oanda_id, go_live_ts)
 
     granularity = INTERVAL_MAP.get(interval, "M5")
-    from_ts_chart = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=30)
+    gran_mins = GRANULARITY_MINS.get(granularity, 5)
+    from_ts_chart = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=30) - pd.Timedelta(minutes=WARMUP_BARS * gran_mins)
     pre_live_df = _fetch_oanda_candles(oanda_id, from_ts_chart, granularity)
 
     frames = []
