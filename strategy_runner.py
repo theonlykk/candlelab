@@ -12,7 +12,7 @@ from datetime import datetime, timezone, timedelta
 import pandas as pd
 from psycopg2.extras import RealDictCursor
 
-from data import get_conn
+from data import get_conn, _oanda_instrument_id
 from indicator_utils import (
     _parse_indicator_filter_config,
     compute_h1_atr_series_from_m5,
@@ -29,10 +29,6 @@ GRANULARITY_MINS = {"M5": 5, "M15": 15, "H1": 60, "H4": 240, "D1": 1440}
 
 WARMUP_BARS = 200
 COMPLEMENT_WINDOW = 10
-
-
-def _instrument_to_oanda(instrument_label: str) -> str:
-    return str(instrument_label).replace("/", "_")
 
 
 def _fetch_oanda_candles(oanda_instrument: str, from_ts, granularity: str = "M5") -> pd.DataFrame:
@@ -185,7 +181,7 @@ def run_30d_backtest(
     reference_date=None,
     granularity: str = "M5",
 ) -> dict:
-    oanda_instrument = _instrument_to_oanda(instrument_label)
+    oanda_instrument = _oanda_instrument_id(instrument_label)
     pip = get_pip(oanda_instrument)
     if reference_date is not None:
         now = to_utc_timestamp(reference_date)
@@ -346,7 +342,7 @@ def _build_since_live_simulation(
     anchor_ts,
     granularity: str = "M5",
 ) -> dict:
-    oanda_instrument = _instrument_to_oanda(instrument_label)
+    oanda_instrument = _oanda_instrument_id(instrument_label)
     pip = get_pip(oanda_instrument)
     placed = _fetch_placed_signals(oanda_instrument, strategy_name, anchor_ts)
     if not placed:
