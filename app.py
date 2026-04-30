@@ -925,6 +925,13 @@ def strategy_chart(strategy_id):
                     }
                 )
 
+            log.warning(
+                "strategy_chart debug signals: strategy=%s signals=%d times=%s",
+                (row.get("strategy_name") or ""),
+                len(signals),
+                [str(s.get("signal_time"))[:19] for s in signals],
+            )
+
             # Run simulation using canonical engine
             raw_trades = run_simulation(
                 signals, pre_live_df, oanda_id, timeout, mode="aggressive"
