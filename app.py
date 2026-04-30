@@ -24,7 +24,7 @@ from psycopg2.extras import RealDictCursor
 from data import get_ohlc, INSTRUMENTS, INTERVAL_MAP, _oanda_instrument_id
 from chart_renderer import render_trade_panels
 from backtest import compute_atr
-from indicator_utils import compute_h1_atr_series_from_m5
+from indicator_utils import compute_h1_atr_series_from_m5, passes_indicator
 from patterns import detect_all, PATTERNS
 from signal_engine import (
     detect_signal,
@@ -36,6 +36,14 @@ from cache import cache_set, cache_get
 from scheduler import start_scheduler
 from poll_log import init_candlelab_poll_log_table, read_poll_log_pg, read_poll_log_view_rows
 from time_utils import to_utc_timestamp
+from simulation_engine import run_simulation
+from strategy_runner import (
+    _get_h1_atr,
+    _lookup_h1_atr,
+    _resolve_col,
+    _session_bar_ok,
+    COMPLEMENT_WINDOW,
+)
 from strategy_store import (
     save_strategy,
     get_strategies_by_device,
@@ -839,54 +847,147 @@ def strategy_chart(strategy_id):
     conn_disp = "—"
     indicator_type = _indicator_type_string_for_chart(row.get("indicator_filter"))
 
-    if not df.empty:
-        signals_df = detect_all(df)
-        sig_array = detect_signal(
-            signals_df,
-            anchor,
-            complement,
-            connector,
-            "both",
-            window=10,
+    if not pre_live_df.empty:
+        # Resolve continuation column
+        raw_cont = row.get("continuation")
+        continuation = (
+            str(raw_cont).strip()
+            if raw_cont is not None and str(raw_cont).strip() != ""
+            else None
         )
 
-        if complement and complement in signals_df.columns:
-            comp_disp = complement
-            conn_disp = connector or "ordered"
+        # Resolve indicator config
+        ind_cfg = _parse_indicator_filter_config(row.get("indicator_filter"))
 
-        h1_atr_series = compute_h1_atr_series_from_m5(df)
-        signals_series = pd.Series(np.asarray(sig_array, dtype=np.int8), index=df.index)
+        # Signal detection on pre_live_df only — matches run_30d_backtest() exactly
+        signals_df = detect_all(pre_live_df)
+        anchor_col = _resolve_col(signals_df, anchor)
+        if anchor_col is None:
+            chart_b64 = ""
+        else:
+            comp_col = None
+            if complement is not None and str(complement).strip():
+                comp_col = _resolve_col(signals_df, str(complement).strip())
+            if comp_col is not None:
+                comp_disp = complement
+                conn_disp = connector or "ordered"
 
-        trades = _simulate_trades(
-            df,
-            signals_series,
-            h1_atr_series,
-            pip,
-            sl_mult,
-            tp_mult,
-            timeout,
-            session=session_filter,
-            indicator_fn=None,
-            instrument=instrument_label,
-        )
+            continuation_col = None
+            if continuation is not None and str(continuation).strip():
+                continuation_col = _resolve_col(signals_df, str(continuation).strip())
 
-        ma_live_map = _executor_read_ma_live_map_from_poll_log(oanda_id, go_live_ts)
-        ma_fast_series, ma_slow_series = _chart_ma_series_aligned(
-            df, pre_live_df, ma_live_map
-        )
-        chart_b64 = render_trade_panels(
-            df,
-            trades,
-            pip,
-            instrument_label,
-            signals_df=signals_df,
-            anchor=anchor,
-            complement=complement or None,
-            indicator_type=indicator_type,
-            go_live_at=go_live_ts,
-            ma_fast_series=ma_fast_series,
-            ma_slow_series=ma_slow_series,
-        )
+            sig_array = detect_signal(
+                signals_df,
+                anchor_col,
+                comp_col,
+                connector,
+                "both",
+                window=COMPLEMENT_WINDOW,
+                continuation=continuation_col,
+            )
+
+            # Build signals list — matches run_30d_backtest() signal loop exactly
+            h1_atr = _get_h1_atr(pre_live_df)
+            now_ts = to_utc_timestamp(datetime.now(timezone.utc))
+            strict_cutoff = now_ts - timedelta(days=30)
+            signals: list[dict] = []
+            n = len(sig_array)
+            for i in range(n):
+                if int(sig_array[i]) == 0:
+                    continue
+                tsi = to_utc_timestamp(pre_live_df.index[i])
+                if tsi < strict_cutoff:
+                    continue
+                if not _session_bar_ok(tsi, session_filter):
+                    continue
+                dir_str = "long" if int(sig_array[i]) == 1 else "short"
+                if not passes_indicator(ind_cfg, pre_live_df, i, dir_str):
+                    continue
+                sl_dist = _lookup_h1_atr(h1_atr, tsi, pip)
+                sig_close = float(pre_live_df["close"].iloc[i])
+                direction = "BUY" if int(sig_array[i]) == 1 else "SELL"
+                if direction == "BUY":
+                    sl = sig_close - sl_dist * sl_mult
+                    tp = sig_close + sl_dist * tp_mult
+                else:
+                    sl = sig_close + sl_dist * sl_mult
+                    tp = sig_close - sl_dist * tp_mult
+                signals.append(
+                    {
+                        "signal_time": tsi,
+                        "direction": direction,
+                        "sl": sl,
+                        "tp": tp,
+                        "sl_dist": sl_dist,
+                    }
+                )
+
+            # Run simulation using canonical engine
+            raw_trades = run_simulation(
+                signals, pre_live_df, oanda_id, timeout, mode="aggressive"
+            )
+
+            # Adapter — map run_simulation() output to render_trade_panels() shape.
+            # Use get_indexer(method='pad') to handle wall-clock timestamp drift.
+            # Rows without entry/exit times (e.g. DATA_INVALID) are omitted — no panel.
+            raw_trades_idx = [
+                t
+                for t in raw_trades
+                if t.get("entry_time") is not None and t.get("exit_time") is not None
+            ]
+            if raw_trades_idx:
+                entry_times = [t["entry_time"] for t in raw_trades_idx]
+                exit_times = [t["exit_time"] for t in raw_trades_idx]
+                entry_indices = pre_live_df.index.get_indexer(
+                    entry_times, method="pad"
+                )
+                exit_indices = pre_live_df.index.get_indexer(exit_times, method="pad")
+                last_idx = len(pre_live_df) - 1
+
+                trades = []
+                for i, t in enumerate(raw_trades_idx):
+                    e_idx = int(entry_indices[i])
+                    x_idx = int(exit_indices[i])
+                    # Cap exits beyond pre_live_df window — never drop
+                    if x_idx < 0 or x_idx >= len(pre_live_df):
+                        x_idx = last_idx
+                    if e_idx < 0:
+                        e_idx = 0
+                    trades.append(
+                        {
+                            "entry_idx": e_idx,
+                            "exit_idx": x_idx,
+                            "entry_price": (t.get("entry") or 0),
+                            "exit_price": (t.get("exit_price") or 0),
+                            "win": str(t.get("result", "")).upper() == "WIN",
+                            "ts": t.get("signal_time"),
+                            "signal": 1 if t.get("direction") == "BUY" else -1,
+                        }
+                    )
+            else:
+                trades = []
+
+            # MA series for overlay — uses full concatenated df for visual context
+            ma_live_map = _executor_read_ma_live_map_from_poll_log(
+                oanda_id, go_live_ts
+            )
+            ma_fast_series, ma_slow_series = _chart_ma_series_aligned(
+                df, pre_live_df, ma_live_map
+            )
+
+            chart_b64 = render_trade_panels(
+                pre_live_df,
+                trades,
+                pip,
+                instrument_label,
+                signals_df=signals_df,
+                anchor=anchor,
+                complement=complement or None,
+                indicator_type=indicator_type,
+                go_live_at=go_live_ts,
+                ma_fast_series=ma_fast_series,
+                ma_slow_series=ma_slow_series,
+            )
 
     strategy_name = (row.get("strategy_name") or "Strategy").strip() or "Strategy"
     gl_str = ""
