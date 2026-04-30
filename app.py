@@ -930,6 +930,19 @@ def strategy_chart(strategy_id):
                 signals, pre_live_df, oanda_id, timeout, mode="aggressive"
             )
 
+            log.warning(
+                "strategy_chart debug: strategy=%s raw_trades=%d results=%s",
+                (row.get("strategy_name") or "Strategy").strip() or "Strategy",
+                len(raw_trades),
+                [
+                    (
+                        t.get("result"),
+                        str(t.get("entry_time"))[:19] if t.get("entry_time") else None,
+                    )
+                    for t in raw_trades
+                ],
+            )
+
             # Adapter — map run_simulation() output to render_trade_panels() shape.
             # Use get_indexer(method='pad') to handle wall-clock timestamp drift.
             # Rows without entry/exit times (e.g. DATA_INVALID) are omitted — no panel.
