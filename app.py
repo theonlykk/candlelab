@@ -830,7 +830,8 @@ def strategy_chart(strategy_id):
 
     granularity = INTERVAL_MAP.get(interval, "M5")
     gran_mins = GRANULARITY_MINS.get(granularity, 5)
-    from_ts_chart = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=30) - pd.Timedelta(minutes=WARMUP_BARS * gran_mins)
+    anchor_ts_chart = go_live_ts if go_live_ts is not None else pd.Timestamp.now(tz="UTC")
+    from_ts_chart = anchor_ts_chart - pd.Timedelta(days=30) - pd.Timedelta(minutes=WARMUP_BARS * gran_mins)
     pre_live_df = _fetch_oanda_candles(oanda_id, from_ts_chart, granularity)
 
     frames = []
@@ -891,8 +892,7 @@ def strategy_chart(strategy_id):
 
             # Build signals list — matches run_30d_backtest() signal loop exactly
             h1_atr = _get_h1_atr(pre_live_df)
-            now_ts = to_utc_timestamp(datetime.now(timezone.utc))
-            strict_cutoff = now_ts - timedelta(days=30)
+            strict_cutoff = anchor_ts_chart - timedelta(days=30)
             signals: list[dict] = []
             n = len(sig_array)
             for i in range(n):
@@ -970,6 +970,72 @@ def strategy_chart(strategy_id):
             else:
                 trades = []
 
+            # Since-live trades — executor poll log path for maximum fidelity
+            raw_strategy_name = (row.get("strategy_name") or "").strip()
+            if anchor_ts_chart is not None:
+                try:
+                    from strategy_runner import run_since_live_detail
+
+                    since_live_raw = run_since_live_detail(
+                        raw_strategy_name,
+                        instrument_label,
+                        sl_mult,
+                        tp_mult,
+                        timeout,
+                        anchor_ts_chart,
+                        granularity=granularity,
+                    )
+                    sl_agg = (
+                        since_live_raw.get("aggressive", [])
+                        if isinstance(since_live_raw, dict)
+                        else []
+                    )
+                    if sl_agg:
+                        sl_valid = [
+                            t
+                            for t in sl_agg
+                            if t.get("entry_time") is not None
+                            and t.get("exit_time") is not None
+                        ]
+                        if sl_valid:
+                            sl_entry_times = [t["entry_time"] for t in sl_valid]
+                            sl_exit_times = [t["exit_time"] for t in sl_valid]
+                            sl_entry_indices = df.index.get_indexer(
+                                sl_entry_times, method="pad"
+                            )
+                            sl_exit_indices = df.index.get_indexer(
+                                sl_exit_times, method="pad"
+                            )
+                            last_idx_df = len(df) - 1
+                            for i, t in enumerate(sl_valid):
+                                e_idx = int(sl_entry_indices[i])
+                                x_idx = int(sl_exit_indices[i])
+                                if x_idx < 0 or x_idx >= len(df):
+                                    x_idx = last_idx_df
+                                if e_idx < 0:
+                                    e_idx = 0
+                                trades.append(
+                                    {
+                                        "entry_idx": e_idx,
+                                        "exit_idx": x_idx,
+                                        "entry_price": (t.get("entry") or 0),
+                                        "exit_price": (t.get("exit_price") or 0),
+                                        "win": str(t.get("result", "")).upper()
+                                        == "WIN",
+                                        "ts": t.get("signal_time"),
+                                        "signal": 1
+                                        if t.get("direction") == "BUY"
+                                        else -1,
+                                    }
+                                )
+                except Exception:
+                    log.exception(
+                        "strategy_chart: since_live_detail failed — backtest panels only"
+                    )
+
+            # Sort combined trades chronologically by ts
+            trades.sort(key=lambda t: t.get("ts") or pd.Timestamp.min)
+
             # MA series for overlay — uses full concatenated df for visual context
             ma_live_map = _executor_read_ma_live_map_from_poll_log(
                 oanda_id, go_live_ts
@@ -979,7 +1045,7 @@ def strategy_chart(strategy_id):
             )
 
             chart_b64 = render_trade_panels(
-                pre_live_df,
+                df,
                 trades,
                 pip,
                 instrument_label,
