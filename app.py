@@ -894,7 +894,7 @@ def strategy_chart(strategy_id):
             h1_atr = _get_h1_atr(pre_live_df)
             strict_cutoff = anchor_ts_chart - timedelta(days=30)
             signals: list[dict] = []
-            n = len(sig_array)
+            n = len(pre_live_df)
             for i in range(n):
                 if int(sig_array[i]) == 0:
                     continue
