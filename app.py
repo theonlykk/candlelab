@@ -3366,6 +3366,8 @@ def api_strategy_oanda_fills():
     total_pl = 0.0
     wins = 0
     losses = 0
+    breakevens = 0
+    EPSILON = 1e-4  # treat micro-dust below 0.01 cent as breakeven
 
     for tid, open_tx in sorted(strategy_opens.items(), key=lambda x: x[1]["time"]):
         oanda_time = pd.Timestamp(open_tx["time"], tz="UTC")
@@ -3380,10 +3382,12 @@ def api_strategy_oanda_fills():
             oanda_pl = float(close_info["detail"].get("realizedPL", 0) or 0)
             close_type = close_info["tx"].get("reason", "")
             total_pl += oanda_pl
-            if oanda_pl > 0:
+            if oanda_pl > EPSILON:
                 wins += 1
-            elif oanda_pl < 0:
+            elif oanda_pl < -EPSILON:
                 losses += 1
+            else:
+                breakevens += 1
 
         # Match to Postgres row by time proximity (2 min window)
         pg_match = None
@@ -3408,12 +3412,13 @@ def api_strategy_oanda_fills():
             "slippage_pips": round(abs(oanda_price - pg_match["entry_price"]) / 0.0001, 1) if pg_match and pg_match["entry_price"] else None,
         })
 
-    total = wins + losses
+    total = wins + losses + breakevens
     summary = {
         "total_fills": len(strategy_opens),
         "closed": total,
         "wins": wins,
         "losses": losses,
+        "breakevens": breakevens,
         "win_pct": round(wins / total * 100, 1) if total > 0 else 0,
         "total_pl_usd": round(total_pl, 2),
     }
