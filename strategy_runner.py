@@ -180,7 +180,8 @@ def run_30d_backtest(
     continuation: str | None = None,
     reference_date=None,
     granularity: str = "M5",
-) -> dict:
+    return_raw: bool = False,
+) -> dict | tuple[dict, list[dict]]:
     oanda_instrument = _oanda_instrument_id(instrument_label)
     pip = get_pip(oanda_instrument)
     if reference_date is not None:
@@ -193,14 +194,16 @@ def run_30d_backtest(
 
     candles = _fetch_oanda_candles(oanda_instrument, from_ts, granularity)
     if candles.empty:
-        return _empty_agg("aggressive")
+        st = _empty_agg("aggressive")
+        return (st, []) if return_raw else st
 
     h1_atr = _get_h1_atr(candles)
     ohlc = candles[["open", "high", "low", "close"]]
     signals_df = detect_all(ohlc)
     anchor_col = _resolve_col(signals_df, anchor)
     if anchor_col is None:
-        return _empty_agg("aggressive")
+        st = _empty_agg("aggressive")
+        return (st, []) if return_raw else st
 
     comp_col = None
     if complement is not None and str(complement).strip():
@@ -257,7 +260,10 @@ def run_30d_backtest(
     results = run_simulation(
         signals, candles, oanda_instrument, timeout, mode="aggressive"
     )
-    return _aggregate_sim(results, "aggressive")
+    stats = _aggregate_sim(results, "aggressive")
+    if return_raw:
+        return stats, results
+    return stats
 
 
 def _parse_strategies_evaluated(raw) -> list:

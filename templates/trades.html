@@ -323,5 +323,89 @@
   </table>
 </div>
 
+<!-- 30d Backtest Blotter -->
+<style>
+  .bt-badge { display:inline-block; padding:2px 6px; border-radius:4px; font-size:11px; font-weight:600; text-transform:uppercase; }
+  .bt-buy  { background:#e8f5e9; color:#2e7d32; }
+  .bt-sell { background:#ffebee; color:#c62828; }
+  .bt-win  { background:#e3f2fd; color:#1565c0; }
+  .bt-loss { background:#fce4ec; color:#ad1457; }
+  .bt-be   { background:#f5f5f5; color:#616161; }
+  .bt-pnl-pos { color:#2e7d32; font-weight:600; }
+  .bt-pnl-neg { color:#c62828; font-weight:600; }
+</style>
+
+<div style="margin:32px 0 12px;">
+  <h3 style="font-size:15px;font-weight:600;color:#212121;">30-Day Backtest</h3>
+</div>
+<div class="table-wrap" id="bt-wrap">
+  <table id="bt-table" style="min-width:800px;">
+    <thead>
+      <tr>
+        <th>Signal Time</th>
+        <th>Dir</th>
+        <th>Entry</th>
+        <th>Exit</th>
+        <th>Result</th>
+        <th>Exit Reason</th>
+        <th>P&amp;L</th>
+      </tr>
+    </thead>
+    <tbody id="bt-tbody">
+      <tr><td colspan="7" style="text-align:center;color:#888;padding:20px;">Loading…</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<script>
+(function() {
+  const strategyId = {{ strategy_id }};
+  const tbody = document.getElementById("bt-tbody");
+
+  fetch(`/api/strategy/${strategyId}/backtest-trades`)
+    .then(r => r.json())
+    .then(data => {
+      if (!data.trades || data.trades.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#888;padding:20px;">No backtest signals in last 30 days</td></tr>';
+        return;
+      }
+      tbody.innerHTML = data.trades.map(t => {
+        const ts = t.signal_time
+          ? t.signal_time.replace("T", " ").slice(0, 16) + " UTC"
+          : "—";
+        const dir = t.direction === "BUY"
+          ? '<span class="bt-badge bt-buy">BUY</span>'
+          : '<span class="bt-badge bt-sell">SELL</span>';
+        const decimals = t.entry_price != null && t.entry_price > 100 ? 3 : 5;
+        const entry = t.entry_price != null ? t.entry_price.toFixed(decimals) : "—";
+        const exit  = t.exit_price  != null ? t.exit_price.toFixed(decimals)  : "—";
+        const res = t.result === "WIN"
+          ? '<span class="bt-badge bt-win">WIN</span>'
+          : t.result === "LOSS"
+          ? '<span class="bt-badge bt-loss">LOSS</span>'
+          : t.result === "BREAKEVEN"
+          ? '<span class="bt-badge bt-be">BREAKEVEN</span>'
+          : `<span class="bt-badge">${t.result || "—"}</span>`;
+        const exitReason = t.exit_reason || "—";
+        const pnl = t.pnl != null
+          ? `<span class="${t.pnl > 0 ? 'bt-pnl-pos' : t.pnl < 0 ? 'bt-pnl-neg' : ''}">${t.pnl >= 0 ? '+' : ''}$${t.pnl.toFixed(2)}</span>`
+          : "—";
+        return `<tr>
+          <td>${ts}</td>
+          <td>${dir}</td>
+          <td>${entry}</td>
+          <td>${exit}</td>
+          <td>${res}</td>
+          <td>${exitReason}</td>
+          <td>${pnl}</td>
+        </tr>`;
+      }).join("");
+    })
+    .catch(() => {
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#888;padding:20px;">Unavailable</td></tr>';
+    });
+})();
+</script>
+
 </body>
 </html>

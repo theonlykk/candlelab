@@ -2462,6 +2462,65 @@ def api_strategy_pnl():
     return jsonify(result)
 
 
+@app.route("/api/strategy/<int:strategy_id>/backtest-trades", methods=["GET"])
+def api_strategy_backtest_trades(strategy_id):
+    """30d backtest raw trade ledger for the blotter in trades.html."""
+    row = _fetch_live_strategy_row(strategy_id)
+    if row is None:
+        return jsonify({"error": "not found"}), 404
+
+    strategy_name = (row.get("strategy_name") or "").strip()
+    cfg = _hydrate_strategy_config(strategy_name)
+    if cfg is None:
+        return jsonify({"error": "strategy not found"}), 404
+
+    instrument_label = _norm_instrument(row.get("instrument") or "EUR/USD")
+    if instrument_label not in INSTRUMENTS:
+        return jsonify({"error": "unknown instrument"}), 400
+
+    strat_interval = cfg.get("interval", "5m")
+    granularity = INTERVAL_MAP.get(strat_interval, "M5")
+
+    from strategy_runner import run_30d_backtest
+
+    _, raw = run_30d_backtest(
+        instrument_label,
+        cfg["anchor"],
+        cfg["complement"],
+        cfg["connector"],
+        cfg["session_filter"],
+        cfg["indicator_filter"],
+        cfg["sl_mult"],
+        cfg["tp_mult"],
+        cfg["timeout"],
+        continuation=cfg.get("continuation"),
+        reference_date=cfg.get("go_live_at"),
+        granularity=granularity,
+        return_raw=True,
+    )
+
+    # View Model — filter DATA_INVALID, reshape for UI
+    trades = []
+    for t in raw:
+        if t.get("result") in ("DATA_INVALID", None):
+            continue
+        st = t.get("signal_time")
+        trades.append(
+            {
+                "signal_time": st.isoformat() if hasattr(st, "isoformat") else str(st),
+                "direction": t.get("direction", ""),
+                "entry_price": t.get("entry"),
+                "exit_price": t.get("exit_price"),
+                "result": t.get("result", ""),
+                "exit_reason": t.get("exit_reason", ""),
+                "pnl": t.get("pnl_dollars"),
+            }
+        )
+
+    trades.reverse()  # newest first
+    return jsonify({"trades": trades, "count": len(trades)})
+
+
 def _executor_parse_patterns_cell(raw) -> list:
     """Normalize JSONB ``patterns`` array to a Python list (logging / parity; signals use ``detect_all``)."""
     if raw is None:
