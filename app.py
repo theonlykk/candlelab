@@ -38,6 +38,7 @@ from poll_log import init_candlelab_poll_log_table, read_poll_log_pg, read_poll_
 from time_utils import to_utc_timestamp
 from simulation_engine import run_simulation
 from strategy_runner import (
+    _fetch_oanda_candles,
     _get_h1_atr,
     _lookup_h1_atr,
     _resolve_col,
@@ -825,10 +826,9 @@ def strategy_chart(strategy_id):
     oanda_id = _oanda_instrument_id(instrument_label)
     live_df = _executor_read_continuous_series(oanda_id, go_live_ts)
 
-    try:
-        pre_live_df = get_ohlc(instrument_label, days=30, interval=interval)
-    except Exception:
-        pre_live_df = pd.DataFrame()
+    granularity = INTERVAL_MAP.get(interval, "M5")
+    from_ts_chart = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=30)
+    pre_live_df = _fetch_oanda_candles(oanda_id, from_ts_chart, granularity)
 
     frames = []
     if pre_live_df is not None and not pre_live_df.empty:
