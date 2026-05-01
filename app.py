@@ -1079,29 +1079,39 @@ def strategy_chart(strategy_id):
     )
 
 
-def _fetch_cad_usd_rate() -> float | None:
-    """Fetch live CAD/USD rate from OANDA pricing endpoint. Returns None on failure."""
+def _fetch_local_cad_usd_map(from_ts, to_ts) -> dict:
+    """
+    Fetch USD_CAD M5 close prices from local oanda_candles DB for the given window.
+    Returns dict mapping floored-5min UTC timestamp -> CAD/USD rate (1/close).
+    Returns empty dict on failure.
+    """
     try:
-        token = os.environ.get("OANDA_API_TOKEN", "")
-        base = os.environ.get("OANDA_BASE_URL", "").rstrip("/")
-        account = os.environ.get("OANDA_ACCOUNT_ID", "")
-        if not token or not base or not account:
-            return None
-        r = requests.get(
-            f"{base}/v3/accounts/{account}/pricing",
-            headers={"Authorization": f"Bearer {token}"},
-            params={"instruments": "USD_CAD"},
-            timeout=5,
-        )
-        prices = r.json().get("prices", [])
-        if prices:
-            bid = float(prices[0]["bids"][0]["price"])
-            ask = float(prices[0]["asks"][0]["price"])
-            usd_cad = (bid + ask) / 2.0
-            return round(1.0 / usd_cad, 6)
+        from data import get_conn
+
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT time, close
+                FROM oanda_candles
+                WHERE instrument = 'USD_CAD'
+                AND granularity = 'M5'
+                AND time >= %s
+                AND time <= %s
+                ORDER BY time ASC
+                """,
+                (from_ts, to_ts),
+            )
+            rows = cur.fetchall()
+        result = {}
+        for time_val, close_val in rows:
+            if close_val and float(close_val) > 0:
+                ts = pd.Timestamp(time_val, tz="UTC")
+                result[ts] = round(1.0 / float(close_val), 6)
+        return result
     except Exception:
-        log.warning("_fetch_cad_usd_rate: failed to fetch live rate")
-    return None
+        log.warning("_fetch_local_cad_usd_map: failed")
+        return {}
 
 
 def _fetch_oanda_fills_for_strategy(strategy_name: str, go_live_ts: pd.Timestamp) -> dict:
@@ -1376,14 +1386,12 @@ def _build_trades_detail_rows(
     theo_raw: dict,
     oanda_trades: list[dict],
     pip: float,
-    cad_usd_rate: float | None = None,
+    cad_usd_map: dict | None = None,
 ) -> list[dict]:
     agg_list = theo_raw.get("aggressive", [])
     pas_list = theo_raw.get("passive", [])
 
-    def _compute_oanda_attrs(
-        oanda_row: dict | None, theo_pl_usd: float | None
-    ) -> dict:
+    def _compute_oanda_attrs(oanda_row: dict | None, theo_pl_usd: float | None) -> dict:
         """Compute OANDA P&L attribution: eq_usd, realized_usd, exec_delta, fx_delta."""
         result = {
             "oanda_eq_usd": None,
@@ -1394,40 +1402,63 @@ def _build_trades_detail_rows(
         if oanda_row is None:
             return result
         try:
-            _pnl_pips = oanda_row.get("pnl_pips")
             _units = oanda_row.get("oanda_units")
             _oanda_pl_cad = oanda_row.get("oanda_pl")
+            _fill = oanda_row.get("oanda_fill")
+            _exit_px = oanda_row.get("oanda_exit")
+            _direction = str(oanda_row.get("direction") or "").upper()
+            _closed_at = oanda_row.get("closed_at")
             _inst = _norm_instrument(
                 str(oanda_row.get("instrument") or "EUR/USD").replace("_", "/")
             )
             _pv = PIP_VALUES.get(_inst, 10.0)
+            _pip_size = INSTRUMENTS.get(_inst, {}).get("pip", 0.0001)
 
-            # OANDA Eq (USD) — same pip math as Theo, isolates exec slippage
-            if _pnl_pips is not None and _units is not None:
+            # OANDA Eq (USD) — gross price pips, no broker spread/fees
+            if _fill is not None and _exit_px is not None and _units is not None:
+                if _direction == "BUY":
+                    _pips = (float(_exit_px) - float(_fill)) / _pip_size
+                else:
+                    _pips = (float(_fill) - float(_exit_px)) / _pip_size
                 result["oanda_eq_usd"] = round(
-                    float(_pnl_pips) * _pv * abs(int(_units)) / 100_000.0, 2
+                    _pips * _pv * abs(int(_units)) / 100_000.0, 2
                 )
 
-            # OANDA Realized (USD) — CAD converted at live rate
-            if _oanda_pl_cad is not None and cad_usd_rate is not None:
-                result["oanda_realized_usd"] = round(
-                    float(_oanda_pl_cad) * cad_usd_rate, 2
-                )
+            # OANDA Realized (USD) — CAD × local M5 rate at close time
+            if _oanda_pl_cad is not None and _closed_at is not None and cad_usd_map:
+                try:
+                    _ts = (
+                        pd.Timestamp(_closed_at, tz="UTC")
+                        if not isinstance(_closed_at, pd.Timestamp)
+                        else _closed_at
+                    )
+                    if _ts.tzinfo is None:
+                        _ts = _ts.tz_localize("UTC")
+                    else:
+                        _ts = _ts.tz_convert("UTC")
+                    _m5 = _ts.floor("5min")
+                    _rate = cad_usd_map.get(_m5)
+                    if _rate is not None:
+                        result["oanda_realized_usd"] = round(
+                            float(_oanda_pl_cad) * _rate, 2
+                        )
+                except Exception:
+                    pass
 
-            # Exec Delta — pure execution slippage vs Theo (no FX noise)
+            # Exec Delta — pure execution slippage vs Theo
             if result["oanda_eq_usd"] is not None and theo_pl_usd is not None:
                 result["exec_delta"] = round(
                     result["oanda_eq_usd"] - theo_pl_usd, 2
                 )
 
-            # FX Delta — static pip_val approximation error vs realized
+            # FX Delta — static pip_val approximation vs realized
             if result["oanda_realized_usd"] is not None and result["oanda_eq_usd"] is not None:
                 result["fx_delta"] = round(
                     result["oanda_realized_usd"] - result["oanda_eq_usd"], 2
                 )
 
         except Exception:
-            pass
+            log.warning("_compute_oanda_attrs: failed")
         return result
 
     def _mk(ts):
@@ -1585,12 +1616,15 @@ def strategy_trades(strategy_id):
         anchor_ts,
         granularity=granularity,
     )
-    cad_usd_rate = _fetch_cad_usd_rate()
+    # Fetch local USD_CAD M5 rates for P&L attribution
+    _now = pd.Timestamp.now(tz="UTC")
+    _from = _now - pd.Timedelta(days=35)
+    cad_usd_map = _fetch_local_cad_usd_map(_from, _now)
     merged_rows = _build_trades_detail_rows(
         theo_raw,
         [dict(r) for r in oanda_trades_raw],
         pip,
-        cad_usd_rate=cad_usd_rate,
+        cad_usd_map=cad_usd_map,
     )
 
     theo_agg_rows = [
