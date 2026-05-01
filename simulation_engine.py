@@ -104,9 +104,11 @@ def _scan_tp_sl_timeout(
         }
 
     last_valid_bar_idx: int | None = None
+    data_exhausted = False
     for j in range(1, bars_remaining + 1):
         bar_idx = fill_idx + j
         if bar_idx >= n:
+            data_exhausted = True
             break
         last_valid_bar_idx = bar_idx
 
@@ -196,6 +198,20 @@ def _scan_tp_sl_timeout(
                     "entry_time": entry_time,
                     "exit_time": exit_time,
                 }
+
+    if data_exhausted:
+        return {
+            "entry": entry,
+            "exit_price": None,
+            "sl": sl,
+            "tp": tp,
+            "pnl_pips": None,
+            "pnl_dollars": None,
+            "result": "OPEN",
+            "exit_reason": "OPEN",
+            "entry_time": entry_time,
+            "exit_time": None,
+        }
 
     if last_valid_bar_idx is None:
         exit_price, exit_idx = _next_open_exit(arrays, candle_index, fill_idx, direction)

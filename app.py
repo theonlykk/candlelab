@@ -2568,7 +2568,7 @@ def api_strategy_backtest_trades(strategy_id):
     # View Model — filter DATA_INVALID, reshape for UI
     trades = []
     for t in raw:
-        if t.get("result") in ("DATA_INVALID", None):
+        if t.get("result") in ("DATA_INVALID", "OPEN", None):
             continue
         st = t.get("signal_time")
         trades.append(
