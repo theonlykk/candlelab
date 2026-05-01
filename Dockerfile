@@ -5,7 +5,7 @@ ENV HOME=/home/user \
     PATH=/home/user/.local/bin:$PATH
 
 WORKDIR $HOME/app
-
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
 COPY --chown=user:user requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
