@@ -85,7 +85,7 @@ def _scan_tp_sl_timeout(
 ) -> dict[str, Any]:
     n = len(candle_index)
     d = str(direction).upper()
-    bars_remaining = timeout_bars - (fill_idx - sig_idx)
+    bars_remaining = max(0, (sig_idx + timeout_bars - fill_idx) - 1)
 
     if bars_remaining <= 0:
         exit_price, exit_idx = _next_open_exit(arrays, candle_index, fill_idx, direction)
