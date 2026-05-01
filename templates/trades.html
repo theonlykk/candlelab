@@ -229,6 +229,8 @@
         <th>OANDA exit</th>
         <th>OANDA Result</th>
         <th>OANDA P&amp;L</th>
+        <th>Theo Exit</th>
+        <th>OANDA Exit</th>
         <th>Units</th>
         <th style="min-width:260px;">Notable Diff</th>
       </tr>
@@ -236,7 +238,7 @@
     <tbody>
       {% if not merged_rows %}
       <tr>
-        <td colspan="16" style="text-align:center; padding:32px; color:#888;">
+        <td colspan="18" style="text-align:center; padding:32px; color:#888;">
           No trades recorded.
         </td>
       </tr>
@@ -314,6 +316,18 @@
           {% else %}—{% endif %}
         </td>
         <td>{% if oanda and oanda.get('oanda_pl') is not none %}{% set v = oanda.get('oanda_pl')|float %}<span class="{{ 'pnl-pos' if v > 0 else ('pnl-neg' if v < 0 else 'text-muted') }}">${{ "%.2f"|format(v) }}</span>{% else %}—{% endif %}</td>
+        <td>
+          {% set te = row.get('theo_agg') %}
+          {% if te and te.get('exit_time') %}
+            {{ te['exit_time'].strftime('%d/%m %H:%M') if te['exit_time'] is not string else te['exit_time'][:16].replace('T',' ') }} UTC
+          {% else %}—{% endif %}
+        </td>
+        <td>
+          {% set oa = row.get('oanda') %}
+          {% if oa and oa.get('closed_at') %}
+            {{ oa['closed_at'].strftime('%d/%m %H:%M') if oa['closed_at'] is not string else oa['closed_at'][:16].replace('T',' ') }} UTC
+          {% else %}—{% endif %}
+        </td>
         <td>{% if oanda and oanda.get('oanda_units') is not none %}{{ "{:,}".format(oanda.get('oanda_units')|int) }}{% else %}—{% endif %}</td>
         <td style="white-space:nowrap;min-width:260px;max-width:380px;overflow:hidden;text-overflow:ellipsis;" title="{{ row.get('notable_diff') or '' }}">{{ row.get('notable_diff') or "—" }}</td>
       </tr>
