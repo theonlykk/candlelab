@@ -18,7 +18,7 @@ import pandas as pd
 import psycopg2
 from psycopg2.extras import Json, RealDictCursor
 
-from indicators import _rsi, _sma, check_ma_cross, check_ma_stable, check_rsi_extreme
+from candlelab_core.indicators import _rsi, _sma, check_ma_cross, check_ma_stable, check_rsi_extreme
 
 log = logging.getLogger(__name__)
 

@@ -18,7 +18,7 @@ import matplotlib.gridspec as gridspec
 import matplotlib.transforms as mtransforms
 from matplotlib.ticker import FixedLocator, FuncFormatter, MaxNLocator, NullFormatter, NullLocator
 
-from indicators import _rsi
+from candlelab_core.indicators import _rsi
 
 # Colour palette
 C_BULL        = "#26a69a"

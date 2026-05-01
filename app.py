@@ -60,7 +60,7 @@ from strategy_store import (
     lifecycle_list_my_strategies,
     lifecycle_register_user,
 )
-from indicators import check_ma_cross_direction, check_rsi_extreme, check_ma_stable
+from candlelab_core.indicators import check_ma_cross_direction, check_rsi_extreme, check_ma_stable
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
