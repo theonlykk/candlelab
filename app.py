@@ -1365,24 +1365,59 @@ def _notable_diff(
         return "Not executed — geometry or filter rejection"
     if oanda is not None and agg is None:
         return "No signal match"
-    if oanda is not None and agg is not None:
-        try:
-            units = oanda.get("oanda_units")
-            if units is not None and abs(int(units)) >= 74000:
-                return "75k unit cap hit — sl_dist near floor"
-        except (TypeError, ValueError):
-            pass
-        try:
-            if agg.get("entry") is not None and oanda.get("oanda_fill") is not None and pip > 0:
-                slip = abs(float(agg["entry"]) - float(oanda["oanda_fill"])) / pip
-                if slip > 2.0:
-                    return f"Entry gap {slip:.1f} pips"
-        except (TypeError, ValueError):
-            pass
-        agg_res = agg.get("result")
-        oanda_res = (oanda.get("result") or "").upper()
-        if agg_res != oanda_res:
-            return f"Theo {agg_res} vs OANDA {oanda.get('result')}"
+    if oanda is None or agg is None:
+        return None
+
+    # Result mismatch — highest priority
+    agg_res = (agg.get("result") or "").upper()
+    oanda_res = (oanda.get("result") or "").upper()
+    if agg_res and oanda_res and agg_res != oanda_res:
+        return f"Theo {agg_res} vs OANDA {oanda_res}"
+
+    # Entry/exit slippage breakdown (pure pips)
+    try:
+        direction = (agg.get("direction") or "").upper()
+        theo_entry = agg.get("entry")
+        theo_exit = agg.get("exit_price")
+        oa_fill = oanda.get("oanda_fill")
+        oa_exit = oanda.get("oanda_exit")
+
+        parts = []
+
+        # Entry slippage — positive = OANDA got better entry
+        if theo_entry is not None and oa_fill is not None and pip > 0:
+            if direction == "BUY":
+                entry_slip = (float(theo_entry) - float(oa_fill)) / pip
+            else:
+                entry_slip = (float(oa_fill) - float(theo_entry)) / pip
+            if abs(entry_slip) >= 0.1:
+                sign = "+" if entry_slip > 0 else ""
+                parts.append(f"Entry {sign}{entry_slip:.1f}pip")
+
+        # Exit slippage — positive = OANDA got better exit
+        if theo_exit is not None and oa_exit is not None and pip > 0:
+            if direction == "BUY":
+                exit_slip = (float(oa_exit) - float(theo_exit)) / pip
+            else:
+                exit_slip = (float(theo_exit) - float(oa_exit)) / pip
+            if abs(exit_slip) >= 0.1:
+                sign = "+" if exit_slip > 0 else ""
+                parts.append(f"Exit {sign}{exit_slip:.1f}pip")
+
+        if parts:
+            return ", ".join(parts)
+
+    except (TypeError, ValueError):
+        pass
+
+    # Unit cap fallback
+    try:
+        units = oanda.get("oanda_units")
+        if units is not None and abs(int(units)) >= 74000:
+            return "75k unit cap hit"
+    except (TypeError, ValueError):
+        pass
+
     return None
 
 
