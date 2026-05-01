@@ -1355,6 +1355,25 @@ def _build_trades_detail_rows(
     agg_list = theo_raw.get("aggressive", [])
     pas_list = theo_raw.get("passive", [])
 
+    def _compute_oanda_pl_usd(oanda_row: dict | None):
+        oanda_pl_usd = None
+        if oanda_row is not None:
+            try:
+                _pnl_pips = oanda_row.get("pnl_pips")
+                _units = oanda_row.get("oanda_units")
+                _inst = _norm_instrument(
+                    str(oanda_row.get("instrument") or "EUR/USD").replace("_", "/")
+                )
+                _pv = PIP_VALUES.get(_inst, 10.0)
+                if _pnl_pips is not None and _units is not None:
+                    oanda_pl_usd = round(
+                        float(_pnl_pips) * _pv * abs(int(_units)) / 100_000.0,
+                        2,
+                    )
+            except Exception:
+                oanda_pl_usd = None
+        return oanda_pl_usd
+
     def _mk(ts):
         try:
             return to_utc_timestamp(ts).strftime("%Y-%m-%d %H:%M")
@@ -1399,6 +1418,7 @@ def _build_trades_detail_rows(
                 "theo_agg": agg,
                 "theo_pas": pas,
                 "oanda": oanda,
+                "oanda_pl_usd": _compute_oanda_pl_usd(oanda),
                 "notable_diff": nd,
             }
         )
@@ -1422,6 +1442,7 @@ def _build_trades_detail_rows(
                     "theo_agg": None,
                     "theo_pas": None,
                     "oanda": t,
+                    "oanda_pl_usd": _compute_oanda_pl_usd(t),
                     "notable_diff": "No signal match",
                 }
             )

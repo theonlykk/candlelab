@@ -182,7 +182,7 @@
     <div class="value {{ 'green' if theo_agg_win_pct >= 50 else 'red' }}">{{ theo_agg_win_pct }}%</div>
   </div>
   <div class="summary-card" style="border-left:3px solid #4caf50;">
-    <div class="label">Theo Agg Net</div>
+    <div class="label">Theo Agg Net (USD)</div>
     <div class="value {{ 'green' if theo_agg_net > 0 else ('red' if theo_agg_net < 0 else '') }}">${{ theo_agg_net }}</div>
   </div>
   <div class="summary-card" style="border-left:3px solid #1a56db;">
@@ -194,7 +194,7 @@
     <div class="value {{ 'green' if theo_pas_win_pct >= 50 else 'red' }}">{{ theo_pas_win_pct }}%</div>
   </div>
   <div class="summary-card" style="border-left:3px solid #1a56db;">
-    <div class="label">Theo Pas Net</div>
+    <div class="label">Theo Pas Net (USD)</div>
     <div class="value {{ 'green' if theo_pas_net > 0 else ('red' if theo_pas_net < 0 else '') }}">${{ theo_pas_net }}</div>
   </div>
   <div class="summary-card" style="border-left:3px solid #f59e0b;">
@@ -220,15 +220,16 @@
         <th>Theo Agg Entry</th>
         <th>Theo Agg Exit</th>
         <th>Theo Agg Result</th>
-        <th>Theo Agg P&amp;L</th>
+        <th>Theo Agg P&amp;L (USD)</th>
         <th>Theo Pas Entry</th>
         <th>Theo Pas Exit</th>
         <th>Theo Pas Result</th>
-        <th>Theo Pas P&amp;L</th>
+        <th>Theo Pas P&amp;L (USD)</th>
         <th>OANDA Fill</th>
         <th>OANDA exit</th>
         <th>OANDA Result</th>
-        <th>OANDA P&amp;L</th>
+        <th>OANDA Eq. (USD)</th>
+        <th>OANDA Realized (CAD)</th>
         <th>Theo Exit</th>
         <th>OANDA Exit</th>
         <th>Units</th>
@@ -238,7 +239,7 @@
     <tbody>
       {% if not merged_rows %}
       <tr>
-        <td colspan="18" style="text-align:center; padding:32px; color:#888;">
+        <td colspan="19" style="text-align:center; padding:32px; color:#888;">
           No trades recorded.
         </td>
       </tr>
@@ -315,7 +316,21 @@
             {% else %}—{% endif %}
           {% else %}—{% endif %}
         </td>
-        <td>{% if oanda and oanda.get('oanda_pl') is not none %}{% set v = oanda.get('oanda_pl')|float %}<span class="{{ 'pnl-pos' if v > 0 else ('pnl-neg' if v < 0 else 'text-muted') }}">${{ "%.2f"|format(v) }}</span>{% else %}—{% endif %}</td>
+        <td>
+          {% if row.get('oanda_pl_usd') is not none %}
+            <span class="{{ 'pnl-pos' if row.oanda_pl_usd > 0 else ('pnl-neg' if row.oanda_pl_usd < 0 else '') }}">
+              {{ '+' if row.oanda_pl_usd > 0 else '' }}${{ "%.2f"|format(row.oanda_pl_usd) }}
+            </span>
+          {% else %}—{% endif %}
+        </td>
+        <td>
+          {% if row.get('oanda') and row['oanda'].get('oanda_pl') is not none %}
+            {% set v = row['oanda']['oanda_pl']|float %}
+            <span class="{{ 'pnl-pos' if v > 0 else ('pnl-neg' if v < 0 else '') }}">
+              ${{ "%.2f"|format(v) }} CAD
+            </span>
+          {% else %}—{% endif %}
+        </td>
         <td>
           {% set te = row.get('theo_agg') %}
           {% if te and te.get('exit_time') %}
