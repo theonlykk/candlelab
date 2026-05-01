@@ -1106,7 +1106,11 @@ def _fetch_local_cad_usd_map(from_ts, to_ts) -> dict:
         result = {}
         for time_val, close_val in rows:
             if close_val and float(close_val) > 0:
-                ts = pd.Timestamp(time_val, tz="UTC")
+                ts = pd.Timestamp(time_val)
+                if ts.tzinfo is None:
+                    ts = ts.tz_localize("UTC")
+                else:
+                    ts = ts.tz_convert("UTC")
                 result[ts] = round(1.0 / float(close_val), 6)
         return result
     except Exception:
