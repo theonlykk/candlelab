@@ -1079,6 +1079,31 @@ def strategy_chart(strategy_id):
     )
 
 
+def _fetch_cad_usd_rate() -> float | None:
+    """Fetch live CAD/USD rate from OANDA pricing endpoint. Returns None on failure."""
+    try:
+        token = os.environ.get("OANDA_API_TOKEN", "")
+        base = os.environ.get("OANDA_BASE_URL", "").rstrip("/")
+        account = os.environ.get("OANDA_ACCOUNT_ID", "")
+        if not token or not base or not account:
+            return None
+        r = requests.get(
+            f"{base}/v3/accounts/{account}/pricing",
+            headers={"Authorization": f"Bearer {token}"},
+            params={"instruments": "USD_CAD"},
+            timeout=5,
+        )
+        prices = r.json().get("prices", [])
+        if prices:
+            bid = float(prices[0]["bids"][0]["price"])
+            ask = float(prices[0]["asks"][0]["price"])
+            usd_cad = (bid + ask) / 2.0
+            return round(1.0 / usd_cad, 6)
+    except Exception:
+        log.warning("_fetch_cad_usd_rate: failed to fetch live rate")
+    return None
+
+
 def _fetch_oanda_fills_for_strategy(strategy_name: str, go_live_ts: pd.Timestamp) -> dict:
     """
     Read OANDA fill data from the trades table in Postgres.
@@ -1351,28 +1376,59 @@ def _build_trades_detail_rows(
     theo_raw: dict,
     oanda_trades: list[dict],
     pip: float,
+    cad_usd_rate: float | None = None,
 ) -> list[dict]:
     agg_list = theo_raw.get("aggressive", [])
     pas_list = theo_raw.get("passive", [])
 
-    def _compute_oanda_pl_usd(oanda_row: dict | None):
-        oanda_pl_usd = None
-        if oanda_row is not None:
-            try:
-                _pnl_pips = oanda_row.get("pnl_pips")
-                _units = oanda_row.get("oanda_units")
-                _inst = _norm_instrument(
-                    str(oanda_row.get("instrument") or "EUR/USD").replace("_", "/")
+    def _compute_oanda_attrs(
+        oanda_row: dict | None, theo_pl_usd: float | None
+    ) -> dict:
+        """Compute OANDA P&L attribution: eq_usd, realized_usd, exec_delta, fx_delta."""
+        result = {
+            "oanda_eq_usd": None,
+            "oanda_realized_usd": None,
+            "exec_delta": None,
+            "fx_delta": None,
+        }
+        if oanda_row is None:
+            return result
+        try:
+            _pnl_pips = oanda_row.get("pnl_pips")
+            _units = oanda_row.get("oanda_units")
+            _oanda_pl_cad = oanda_row.get("oanda_pl")
+            _inst = _norm_instrument(
+                str(oanda_row.get("instrument") or "EUR/USD").replace("_", "/")
+            )
+            _pv = PIP_VALUES.get(_inst, 10.0)
+
+            # OANDA Eq (USD) — same pip math as Theo, isolates exec slippage
+            if _pnl_pips is not None and _units is not None:
+                result["oanda_eq_usd"] = round(
+                    float(_pnl_pips) * _pv * abs(int(_units)) / 100_000.0, 2
                 )
-                _pv = PIP_VALUES.get(_inst, 10.0)
-                if _pnl_pips is not None and _units is not None:
-                    oanda_pl_usd = round(
-                        float(_pnl_pips) * _pv * abs(int(_units)) / 100_000.0,
-                        2,
-                    )
-            except Exception:
-                oanda_pl_usd = None
-        return oanda_pl_usd
+
+            # OANDA Realized (USD) — CAD converted at live rate
+            if _oanda_pl_cad is not None and cad_usd_rate is not None:
+                result["oanda_realized_usd"] = round(
+                    float(_oanda_pl_cad) * cad_usd_rate, 2
+                )
+
+            # Exec Delta — pure execution slippage vs Theo (no FX noise)
+            if result["oanda_eq_usd"] is not None and theo_pl_usd is not None:
+                result["exec_delta"] = round(
+                    result["oanda_eq_usd"] - theo_pl_usd, 2
+                )
+
+            # FX Delta — static pip_val approximation error vs realized
+            if result["oanda_realized_usd"] is not None and result["oanda_eq_usd"] is not None:
+                result["fx_delta"] = round(
+                    result["oanda_realized_usd"] - result["oanda_eq_usd"], 2
+                )
+
+        except Exception:
+            pass
+        return result
 
     def _mk(ts):
         try:
@@ -1411,6 +1467,8 @@ def _build_trades_detail_rows(
             else oanda_mk_lookup.get(k)
         )
         nd = _notable_diff(agg, pas, oanda, pip)
+        _theo_pl_usd = agg.get("pnl_dollars") if agg else None
+        _attrs = _compute_oanda_attrs(oanda, _theo_pl_usd)
         rows.append(
             {
                 "signal_time": agg.get("signal_time"),
@@ -1418,7 +1476,10 @@ def _build_trades_detail_rows(
                 "theo_agg": agg,
                 "theo_pas": pas,
                 "oanda": oanda,
-                "oanda_pl_usd": _compute_oanda_pl_usd(oanda),
+                "oanda_eq_usd": _attrs["oanda_eq_usd"],
+                "oanda_realized_usd": _attrs["oanda_realized_usd"],
+                "exec_delta": _attrs["exec_delta"],
+                "fx_delta": _attrs["fx_delta"],
                 "notable_diff": nd,
             }
         )
@@ -1435,6 +1496,7 @@ def _build_trades_detail_rows(
         )
         k = _mk(t.get("signal_time") or t.get("opened_at"))
         if not already_matched and k and k not in seen_keys:
+            _attrs = _compute_oanda_attrs(t, None)
             rows.append(
                 {
                     "signal_time": (t.get("signal_time") or t.get("opened_at")),
@@ -1442,7 +1504,10 @@ def _build_trades_detail_rows(
                     "theo_agg": None,
                     "theo_pas": None,
                     "oanda": t,
-                    "oanda_pl_usd": _compute_oanda_pl_usd(t),
+                    "oanda_eq_usd": _attrs["oanda_eq_usd"],
+                    "oanda_realized_usd": _attrs["oanda_realized_usd"],
+                    "exec_delta": None,
+                    "fx_delta": _attrs["fx_delta"],
                     "notable_diff": "No signal match",
                 }
             )
@@ -1520,10 +1585,12 @@ def strategy_trades(strategy_id):
         anchor_ts,
         granularity=granularity,
     )
+    cad_usd_rate = _fetch_cad_usd_rate()
     merged_rows = _build_trades_detail_rows(
         theo_raw,
         [dict(r) for r in oanda_trades_raw],
         pip,
+        cad_usd_rate=cad_usd_rate,
     )
 
     theo_agg_rows = [

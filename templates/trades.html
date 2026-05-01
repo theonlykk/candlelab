@@ -228,8 +228,11 @@
         <th>OANDA Fill</th>
         <th>OANDA exit</th>
         <th>OANDA Result</th>
-        <th>OANDA Eq. (USD)</th>
-        <th>OANDA Realized (CAD)</th>
+        <th>OANDA Eq (USD)</th>
+        <th>Exec Delta</th>
+        <th>OANDA Real (USD)</th>
+        <th>FX Delta</th>
+        <th>OANDA Real (CAD)</th>
         <th>Theo Exit</th>
         <th>OANDA Exit</th>
         <th>Units</th>
@@ -239,7 +242,7 @@
     <tbody>
       {% if not merged_rows %}
       <tr>
-        <td colspan="19" style="text-align:center; padding:32px; color:#888;">
+        <td colspan="22" style="text-align:center; padding:32px; color:#888;">
           No trades recorded.
         </td>
       </tr>
@@ -316,13 +319,43 @@
             {% else %}—{% endif %}
           {% else %}—{% endif %}
         </td>
+        {# OANDA Eq (USD) #}
         <td>
-          {% if row.get('oanda_pl_usd') is not none %}
-            <span class="{{ 'pnl-pos' if row.oanda_pl_usd > 0 else ('pnl-neg' if row.oanda_pl_usd < 0 else '') }}">
-              {{ '+' if row.oanda_pl_usd > 0 else '' }}${{ "%.2f"|format(row.oanda_pl_usd) }}
+          {% if row.get('oanda_eq_usd') is not none %}
+            {% set v = row.oanda_eq_usd %}
+            <span class="{{ 'pnl-pos' if v > 0 else ('pnl-neg' if v < 0 else '') }}">
+              {{ '+' if v > 0 else '' }}${{ "%.2f"|format(v) }}
             </span>
           {% else %}—{% endif %}
         </td>
+        {# Exec Delta #}
+        <td>
+          {% if row.get('exec_delta') is not none %}
+            {% set v = row.exec_delta %}
+            <span class="{{ 'pnl-pos' if v > 0 else ('pnl-neg' if v < 0 else '') }}">
+              {{ '+' if v > 0 else '' }}${{ "%.2f"|format(v) }}
+            </span>
+          {% else %}—{% endif %}
+        </td>
+        {# OANDA Real (USD) #}
+        <td>
+          {% if row.get('oanda_realized_usd') is not none %}
+            {% set v = row.oanda_realized_usd %}
+            <span class="{{ 'pnl-pos' if v > 0 else ('pnl-neg' if v < 0 else '') }}">
+              {{ '+' if v > 0 else '' }}${{ "%.2f"|format(v) }}
+            </span>
+          {% else %}—{% endif %}
+        </td>
+        {# FX Delta #}
+        <td>
+          {% if row.get('fx_delta') is not none %}
+            {% set v = row.fx_delta %}
+            <span class="{{ 'pnl-pos' if v > 0 else ('pnl-neg' if v < 0 else '') }}">
+              {{ '+' if v > 0 else '' }}${{ "%.2f"|format(v) }}
+            </span>
+          {% else %}—{% endif %}
+        </td>
+        {# OANDA Real (CAD) — book of record #}
         <td>
           {% if row.get('oanda') and row['oanda'].get('oanda_pl') is not none %}
             {% set v = row['oanda']['oanda_pl']|float %}
