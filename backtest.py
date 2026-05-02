@@ -11,7 +11,7 @@ Spread cost = 1 pip deducted per trade (instrument-adjusted).
 
 import numpy as np
 import pandas as pd
-from patterns import detect_all
+from candlelab_core.patterns import detect_all
 
 ATR_PERIOD   = 14
 TP_MULT      = 3.0

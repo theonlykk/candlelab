@@ -312,7 +312,7 @@ def _resolve_pattern_key(anchor: str | None) -> str | None:
     """Map anchor/complement string to the matching ``detect_all`` column name via slug equality."""
     if not anchor or not str(anchor).strip():
         return None
-    from patterns import PATTERNS
+    from candlelab_core.patterns import PATTERNS
 
     key = _pattern_slug(str(anchor).strip())
     if not key:
@@ -545,7 +545,7 @@ def _strategy_poll_row(
 
 def _build_record_for_instrument(inst_key: str) -> dict:
     from data import INSTRUMENTS, get_ohlc, _oanda_instrument_id
-    from patterns import detect_all
+    from candlelab_core.patterns import detect_all
     from strategy_store import list_open_live_for_instrument
 
     now = datetime.now(timezone.utc)

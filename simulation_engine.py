@@ -24,7 +24,8 @@ from typing import Any
 
 import pandas as pd
 
-from position_utils import INST_CONFIG, calculate_position_units
+from position_utils import INST_CONFIG
+from candlelab_core.position_utils import calculate_position_units
 
 log = logging.getLogger(__name__)
 

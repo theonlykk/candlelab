@@ -18,8 +18,8 @@ from indicator_utils import (
     compute_h1_atr_series_from_m5,
     passes_indicator,
 )
-from patterns import detect_all
-from signal_engine import detect_signal
+from candlelab_core.patterns import detect_all
+from candlelab_core.signal_engine import detect_signal
 from simulation_engine import get_pip, run_simulation
 from time_utils import to_utc_timestamp
 

@@ -25,8 +25,8 @@ from data import get_ohlc, INSTRUMENTS, INTERVAL_MAP, _oanda_instrument_id
 from chart_renderer import render_trade_panels
 from backtest import compute_atr
 from indicator_utils import compute_h1_atr_series_from_m5, passes_indicator
-from patterns import detect_all, PATTERNS
-from signal_engine import (
+from candlelab_core.patterns import detect_all, PATTERNS
+from candlelab_core.signal_engine import (
     detect_signal,
     SPREAD_COST_PIPS,
     SPREAD_CLEAN_THRESHOLD,

@@ -36,7 +36,7 @@ def _compute_and_cache(instrument: str, interval: str, days: int):
     """Run the full pipeline and store the /api/all payload in Redis."""
     from data import get_ohlc, INSTRUMENTS, atr_to_pips
     from backtest import run_backtest, leaderboard, compute_atr
-    from patterns import detect_all
+    from candlelab_core.patterns import detect_all
     from cache import cache_set, cache_key
 
     # This job is designed to run periodically in the background so the UI can load a

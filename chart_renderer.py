@@ -396,7 +396,7 @@ def _draw_regime_context_shading(
 
 def _annotate_patterns(ax, df, active_patterns, highs, lows):
     """Coloured borders + symbols on pattern candles; brackets on multi-candle."""
-    from patterns import PATTERN_LABELS
+    from candlelab_core.patterns import PATTERN_LABELS
     pat_cols = {
         name: f"pat_{name}" for name in active_patterns
         if f"pat_{name}" in df.columns
@@ -491,7 +491,7 @@ def _build_annotation(row: pd.Series, active_patterns: list) -> str:
         col = f"pat_{name}"
         val = row.get(col, 0)
         if val != 0:
-            from patterns import PATTERN_LABELS
+            from candlelab_core.patterns import PATTERN_LABELS
             label     = PATTERN_LABELS.get(name, name)
             direction = "Bull" if val == 1 else "Bear"
             parts.append(f"{label} ({direction})")
