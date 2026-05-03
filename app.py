@@ -880,7 +880,7 @@ def strategy_chart(strategy_id):
             if continuation is not None and str(continuation).strip():
                 continuation_col = _resolve_col(signals_df, str(continuation).strip())
 
-            sig_array = detect_signal(
+            sig_array, anchor_array = detect_signal(
                 signals_df,
                 anchor_col,
                 comp_col,
@@ -888,6 +888,7 @@ def strategy_chart(strategy_id):
                 "both",
                 window=COMPLEMENT_WINDOW,
                 continuation=continuation_col,
+                return_anchors=True,
             )
 
             # Build signals list — matches run_30d_backtest() signal loop exactly
@@ -904,7 +905,11 @@ def strategy_chart(strategy_id):
                 if not _session_bar_ok(tsi, session_filter):
                     continue
                 dir_str = "long" if int(sig_array[i]) == 1 else "short"
-                if not passes_indicator(ind_cfg, pre_live_df, i, dir_str):
+                if not passes_indicator(
+                    ind_cfg, pre_live_df, i, dir_str,
+                    anchor_idx=int(anchor_array[i]),
+                    has_continuation=bool(continuation_col),
+                ):
                     continue
                 sl_dist = _lookup_h1_atr(h1_atr, tsi, pip)
                 sig_close = float(pre_live_df["close"].iloc[i])
