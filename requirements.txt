@@ -1,4 +1,4 @@
-candlelab-core @ git+https://github.com/theonlykk/candlelab-core.git@v1.0.0
+candlelab-core @ git+https://github.com/theonlykk/candlelab-core.git@v1.0.1
 flask>=3.0.0
 gunicorn>=21.2.0
 pandas>=2.1.0
