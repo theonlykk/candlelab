@@ -167,8 +167,14 @@
 <h1>{{ strategy_name }}</h1>
 <div class="meta">
   <span>{{ instrument }}</span>
+  <span>{{ interval }}</span>
   <span>Anchor: {{ anchor }}</span>
   <span>Complement: {{ complement }}</span>
+  {% if continuation != "—" %}<span>Continuation: {{ continuation }}</span>{% endif %}
+  <span>Connector: {{ connector }}</span>
+  <span>Session: {{ session }}</span>
+  <span>Ind: {{ indicator }}</span>
+  <span>SL: {{ sl_mult }}× · TP: {{ tp_mult }}× · Timeout: {{ timeout }} bars</span>
   <span>Live since: {{ go_live_at }}</span>
 </div>
 
