@@ -1365,9 +1365,50 @@ def _notable_diff(
     pas: dict | None,
     oanda: dict | None,
     pip: float,
+    rejection_lookup: dict | None = None,
 ) -> str | None:
     if agg is not None and oanda is None:
-        return "Not executed — geometry or filter rejection"
+        if rejection_lookup is not None:
+            def _floor_min_utc(ts):
+                try:
+                    t = pd.Timestamp(ts)
+                    if t.tzinfo is None:
+                        t = t.tz_localize("UTC")
+                    else:
+                        t = t.tz_convert("UTC")
+                    return t.floor("min")
+                except Exception:
+                    return None
+            sig_k = _floor_min_utc(agg.get("signal_time"))
+            rej = rejection_lookup.get(sig_k) if sig_k is not None else None
+            if rej is not None:
+                reason = rej.get("reason", "")
+                detail_raw = rej.get("detail")
+                detail_str = ""
+                if detail_raw:
+                    try:
+                        import ast
+                        d = ast.literal_eval(str(detail_raw))
+                        if isinstance(d, dict):
+                            # Dynamically format all keys except redundant 'passed' flag
+                            parts = [f"{k}: {v}" for k, v in d.items() if k != "passed"]
+                            if parts:
+                                detail_str = " (" + ", ".join(parts) + ")"
+                    except Exception:
+                        detail_str = f" ({detail_raw})"
+                _REASON_LABELS = {
+                    "indicator_filter":            "Rejected: Indicator Filter",
+                    "direction_filter":            "Rejected: Direction Bias",
+                    "session_filter":              "Rejected: Outside Session Window",
+                    "internal_state_open_trade":   "Rejected: Max Concurrent Trades Reached",
+                    "invalid_geometry_pre_round":  "Rejected: Invalid SL/TP Geometry",
+                    "invalid_geometry_post_round": "Rejected: Invalid SL/TP Geometry (Post-Round)",
+                    "duplicate_intent_rejected":   "System: Duplicate Intent Blocked",
+                    "db_intent_failure":           "System: DB Error Pre-Execution",
+                }
+                label = _REASON_LABELS.get(reason, f"Rejected: {reason}")
+                return f"{label}{detail_str}"
+        return "Not executed — no log found (possible timeout/crash)"
     if oanda is not None and agg is None:
         return "No signal match"
     if oanda is None or agg is None:
@@ -1431,6 +1472,7 @@ def _build_trades_detail_rows(
     oanda_trades: list[dict],
     pip: float,
     cad_usd_map: dict | None = None,
+    rejection_lookup: dict | None = None,
 ) -> list[dict]:
     agg_list = theo_raw.get("aggressive", [])
     pas_list = theo_raw.get("passive", [])
@@ -1541,7 +1583,7 @@ def _build_trades_detail_rows(
             if pid is not None
             else oanda_mk_lookup.get(k)
         )
-        nd = _notable_diff(agg, pas, oanda, pip)
+        nd = _notable_diff(agg, pas, oanda, pip, rejection_lookup=rejection_lookup)
         _theo_pl_usd = agg.get("pnl_dollars") if agg else None
         _attrs = _compute_oanda_attrs(oanda, _theo_pl_usd)
         rows.append(
@@ -1627,6 +1669,7 @@ def strategy_trades(strategy_id):
     POLL_EPOCH = pd.Timestamp("2026-04-27 00:35", tz="UTC")
 
     oanda_trades_raw: list = []
+    rejection_lookup: dict = {}
     try:
         from data import get_conn
 
@@ -1646,9 +1689,47 @@ def strategy_trades(strategy_id):
                 (raw_strategy_name, anchor_ts),
             )
             oanda_trades_raw = cur.fetchall()
+
+            rejection_lookup = {}
+            try:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur2:
+                    cur2.execute(
+                        """
+                        SELECT signal_time, rejection_reason, detail
+                        FROM signal_rejections
+                        WHERE strategy_name = %s
+                          AND signal_time >= %s
+                        ORDER BY signal_time DESC
+                        LIMIT 200
+                        """,
+                        (raw_strategy_name, anchor_ts),
+                    )
+
+                    def _floor_to_minute(ts):
+                        try:
+                            t = pd.Timestamp(ts)
+                            if t.tzinfo is None:
+                                t = t.tz_localize("UTC")
+                            else:
+                                t = t.tz_convert("UTC")
+                            return t.floor("min")
+                        except Exception:
+                            return None
+
+                    for rej in cur2.fetchall():
+                        k = _floor_to_minute(rej["signal_time"])
+                        if k is not None:
+                            rejection_lookup[k] = {
+                                "reason": rej["rejection_reason"],
+                                "detail": rej["detail"],
+                            }
+            except Exception as e:
+                log.warning("strategy_trades: signal_rejections fetch failed: %s", e)
+                rejection_lookup = {}
     except Exception as e:
         log.warning("strategy_trades: oanda trades fetch failed: %s", e)
         oanda_trades_raw = []
+        rejection_lookup = {}
 
     from strategy_runner import run_since_live_detail
 
@@ -1673,6 +1754,7 @@ def strategy_trades(strategy_id):
         [dict(r) for r in oanda_trades_raw],
         pip,
         cad_usd_map=cad_usd_map,
+        rejection_lookup=rejection_lookup,
     )
 
     def _post_epoch(sig_time):
