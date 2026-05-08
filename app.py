@@ -1623,6 +1623,9 @@ def strategy_trades(strategy_id):
     raw_strategy_name = (row.get("strategy_name") or "").strip()
     anchor_ts = to_utc_timestamp(row.get("metrics_from") or row.get("go_live_at"))
 
+    # P1 epoch anchor — earliest trade with poll_log_id in production (commit 278d390, ADR-033)
+    POLL_EPOCH = pd.Timestamp("2026-04-27 00:35", tz="UTC")
+
     oanda_trades_raw: list = []
     try:
         from data import get_conn
@@ -1634,7 +1637,8 @@ def strategy_trades(strategy_id):
                 SELECT *
                 FROM trades
                 WHERE strategy_name = %s
-                  AND status != 'CANCELLED'
+                  AND status NOT IN ('CANCELLED', 'DUPLICATE')
+                  AND poll_log_id IS NOT NULL
                   AND signal_time >= %s
                 ORDER BY signal_time DESC
                 LIMIT 200
@@ -1670,6 +1674,21 @@ def strategy_trades(strategy_id):
         pip,
         cad_usd_map=cad_usd_map,
     )
+
+    def _post_epoch(sig_time):
+        try:
+            ts = pd.Timestamp(sig_time)
+            if ts.tzinfo is None:
+                ts = ts.tz_localize("UTC")
+            return ts >= POLL_EPOCH
+        except Exception:
+            return False
+
+    merged_rows = [
+        r for r in merged_rows
+        if r.get("oanda") is not None          # has a real OANDA execution, OR
+        or _post_epoch(r.get("signal_time"))   # post-epoch theo-only (missed fill)
+    ]
 
     theo_agg_rows = [
         r for r in merged_rows
