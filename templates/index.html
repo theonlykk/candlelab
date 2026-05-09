@@ -3826,21 +3826,35 @@ function buildDraftCard(d) {
   return card;
 }
 
+function _indLabel(type) {
+    if (type === 'ma_cross') return 'MA Cross';
+    if (type === 'rsi') return 'RSI Envelope';
+    return type || '—';
+}
+
 function buildLiveStratCard(l) {
   const card = document.createElement("div");
   card.className = "strat-card";
   card.dataset.liveId = l.id;
-  const when = l.go_live_at ? new Date(l.go_live_at).toLocaleString() : "—";
-  const indDisp = typeof l.indicator_filter === "object" && l.indicator_filter !== null
-    ? (l.indicator_filter.type || "—")
-    : (l.indicator_filter || "—");
+  const liveStr = l.go_live_at ? new Date(l.go_live_at).toLocaleString() : "—";
+  let indDisp = '—';
+  if (l.indicator_filter) {
+    if (Array.isArray(l.indicator_filter)) {
+      const types = l.indicator_filter.map(f => _indLabel(f.type)).join(' + ');
+      indDisp = types || '—';
+    } else if (typeof l.indicator_filter === 'object') {
+      indDisp = _indLabel(l.indicator_filter.type);
+    }
+  }
+  let patternDisp = l.pattern_1 || '—';
+  if (l.pattern_2) patternDisp += ' / ' + l.pattern_2;
   card.innerHTML = `
     <div style="cursor:pointer;" class="live-card-main">
       <div class="strat-card-top">
         <div class="strat-dot strat-dot-green" style="margin-top:5px;"></div>
         <div class="strat-card-name">${(l.strategy_name || "Live").replace(/</g, "")}</div>
       </div>
-      <div class="strat-card-meta">${(l.instrument || "").replace(/</g, "")} · Live since ${when} · Ind ${String(indDisp).replace(/</g, "")}</div>
+      <div class="strat-card-meta">${l.instrument} · ${l.interval || '5m'} · ${patternDisp} · Ind: ${indDisp} · Live since ${liveStr}</div>
       <div class="live-strat-stat-rows" aria-live="polite">
         <div class="live-strat-stat-row"><span>Theo P&L · aggressive</span><span class="live-strat-stat-vals live-stat-bt">Calculating…</span></div>
         <div class="live-strat-stat-row"><span>Theo P&L · passive</span><span class="live-strat-stat-vals live-stat-all">—</span></div>

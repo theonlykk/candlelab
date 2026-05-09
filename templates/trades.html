@@ -173,7 +173,20 @@
   {% if continuation != "—" %}<span>Continuation: {{ continuation }}</span>{% endif %}
   <span>Connector: {{ connector }}</span>
   <span>Session: {{ session }}</span>
-  <span>Ind: {{ indicator }}</span>
+  <span>Ind:
+    {% set ind_str = indicator | string %}
+    {% if ind_str == '—' or ind_str == 'None' %}
+      —
+    {% elif 'ma_cross' in ind_str and 'rsi' in ind_str %}
+      MA Cross + RSI
+    {% elif 'ma_cross' in ind_str %}
+      MA Cross
+    {% elif 'rsi' in ind_str %}
+      RSI Envelope
+    {% else %}
+      {{ ind_str }}
+    {% endif %}
+    </span>
   <span>SL: {{ sl_mult }}× · TP: {{ tp_mult }}× · Timeout: {{ timeout }} bars</span>
   <span>Live since: {{ go_live_at }}</span>
 </div>
