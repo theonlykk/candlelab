@@ -20,6 +20,7 @@ from indicator_utils import (
 )
 from candlelab_core.patterns import detect_all
 from candlelab_core.signal_engine import detect_signal
+from candlelab_core.utils import normalise_pattern
 from simulation_engine import get_pip, run_simulation
 from time_utils import to_utc_timestamp
 
@@ -86,12 +87,22 @@ def _get_h1_atr(df_m5: pd.DataFrame) -> pd.Series:
 
 
 def _resolve_col(signals_df: pd.DataFrame, pattern_name: str) -> str | None:
-    if pattern_name is None:
+    if not pattern_name:
         return None
-    key = str(pattern_name).strip().lower()
+
+    key = normalise_pattern(str(pattern_name))
+    if not key:
+        return None
+
+    # O(1) fast path: direct lookup (expected case)
+    if key in signals_df.columns:
+        return key
+
+    # O(N) fallback: normalize and loop if columns are slightly dirty
     for col in signals_df.columns:
-        if str(col).strip().lower() == key:
+        if normalise_pattern(str(col)) == key:
             return str(col)
+
     return None
 
 
