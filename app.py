@@ -830,14 +830,17 @@ def strategy_chart(strategy_id):
     granularity = INTERVAL_MAP.get(interval, "M5")
     gran_mins = GRANULARITY_MINS.get(granularity, 5)
     anchor_ts_chart = go_live_ts if go_live_ts is not None else pd.Timestamp.now(tz="UTC")
-    from_ts_chart = anchor_ts_chart - pd.Timedelta(days=30) - pd.Timedelta(minutes=WARMUP_BARS * gran_mins)
-    pre_live_df = _fetch_oanda_candles(oanda_id, from_ts_chart, granularity)
+    to_ts_chart = pd.Timestamp.now(tz="UTC")
+    max_lookback = to_ts_chart - pd.Timedelta(days=60)
+    ideal_start = anchor_ts_chart - pd.Timedelta(days=30) - pd.Timedelta(minutes=WARMUP_BARS * gran_mins)
+    from_ts_chart = max(ideal_start, max_lookback)
+    pre_live_df = _fetch_oanda_candles(oanda_id, from_ts_chart, granularity, to_ts=to_ts_chart)
 
     df = pre_live_df.copy()
     if df.index.tz is None:
         df.index = df.index.tz_localize("UTC")
 
-    pre_live_df = df[df.index < go_live_ts]
+    pre_live_df = df[df.index < anchor_ts_chart]
 
     chart_b64 = ""
     comp_disp = "—"

@@ -32,7 +32,7 @@ WARMUP_BARS = 200
 COMPLEMENT_WINDOW = 10
 
 
-def _fetch_oanda_candles(oanda_instrument: str, from_ts, granularity: str = "M5") -> pd.DataFrame:
+def _fetch_oanda_candles(oanda_instrument: str, from_ts, granularity: str = "M5", to_ts=None) -> pd.DataFrame:
     cols = [
         "open",
         "high",
@@ -58,15 +58,18 @@ def _fetch_oanda_candles(oanda_instrument: str, from_ts, granularity: str = "M5"
     if not inst:
         return empty
     sql = """
-        SELECT time, open, high, low, close, bid_open, bid_close, ask_open, ask_close, volume
+        SELECT time, open, high, low, close, bid_open, bid_close,
+               ask_open, ask_close, volume
         FROM oanda_candles
         WHERE instrument = %s AND granularity = %s AND time >= %s
+          AND (%s IS NULL OR time <= %s)
         ORDER BY time ASC
     """
     try:
         with get_conn() as conn:
             cur = conn.cursor(cursor_factory=RealDictCursor)
-            cur.execute(sql, (inst, granularity, ts_db))
+            to_db = (to_ts.to_pydatetime() if hasattr(to_ts, "to_pydatetime") else to_ts) if to_ts is not None else None
+            cur.execute(sql, (inst, granularity, ts_db, to_db, to_db))
             rows = cur.fetchall()
     except Exception:
         log.exception("_fetch_oanda_candles")
