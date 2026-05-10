@@ -1491,7 +1491,7 @@ def render_trade_panels(
             return False
 
     def _png_no_trades(msg: str = "No trades") -> str:
-        fig, ax = plt.subplots(1, 1, figsize=(4, 2.5), facecolor=C_BG)
+        fig, ax = plt.subplots(1, 1, figsize=(10, 5), facecolor=C_BG)
         ax.set_facecolor(C_BG)
         ax.text(
             0.5,
@@ -1505,7 +1505,7 @@ def render_trade_panels(
         )
         ax.axis("off")
         buf = io.BytesIO()
-        fig.savefig(buf, format="png", dpi=EXPORT_DPI, facecolor=C_BG)
+        fig.savefig(buf, format="png", dpi=100, facecolor=C_BG)
         buf.seek(0)
         plt.close(fig)
         return base64.b64encode(buf.read()).decode("utf-8")
@@ -1535,11 +1535,8 @@ def render_trade_panels(
 
     pre_candles = 25
     post_candles = 10
-    panel_width = 3.5
     n_trades = len(valid)
-    fig_width = n_trades * panel_width
-    fig_height = 4.0
-    fig, axes = plt.subplots(1, n_trades, figsize=(fig_width, fig_height), facecolor=C_BG)
+    fig, axes = plt.subplots(1, n_trades, figsize=(10, 5), facecolor=C_BG)
     if n_trades == 1:
         axes = [axes]
 
@@ -1763,7 +1760,7 @@ def render_trade_panels(
 
     plt.tight_layout(pad=0.5)
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=EXPORT_DPI, facecolor=C_BG)
+    fig.savefig(buf, format="png", dpi=100, facecolor=C_BG)
     buf.seek(0)
     plt.close(fig)
     return base64.b64encode(buf.read()).decode("utf-8")

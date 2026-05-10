@@ -826,7 +826,6 @@ def strategy_chart(strategy_id):
         abort(404)
 
     oanda_id = _oanda_instrument_id(instrument_label)
-    live_df = _executor_read_continuous_series(oanda_id, go_live_ts)
 
     granularity = INTERVAL_MAP.get(interval, "M5")
     gran_mins = GRANULARITY_MINS.get(granularity, 5)
@@ -834,17 +833,11 @@ def strategy_chart(strategy_id):
     from_ts_chart = anchor_ts_chart - pd.Timedelta(days=30) - pd.Timedelta(minutes=WARMUP_BARS * gran_mins)
     pre_live_df = _fetch_oanda_candles(oanda_id, from_ts_chart, granularity)
 
-    frames = []
-    if pre_live_df is not None and not pre_live_df.empty:
-        frames.append(pre_live_df)
-    if live_df is not None and not live_df.empty:
-        frames.append(live_df)
+    df = pre_live_df.copy()
+    if df.index.tz is None:
+        df.index = df.index.tz_localize("UTC")
 
-    df = pd.DataFrame()
-    if frames:
-        df = pd.concat(frames)
-        df = df[~df.index.duplicated(keep="last")]
-        df = df.sort_index()
+    pre_live_df = df[df.index < go_live_ts]
 
     chart_b64 = ""
     comp_disp = "—"
@@ -1041,12 +1034,25 @@ def strategy_chart(strategy_id):
             # Sort combined trades chronologically by ts
             trades.sort(key=lambda t: t.get("ts") or pd.Timestamp.min)
 
-            # MA series for overlay — uses full concatenated df for visual context
-            ma_live_map = _executor_read_ma_live_map_from_poll_log(
-                oanda_id, go_live_ts
+            fast_len = 5
+            slow_len = 20
+            if isinstance(ind_cfg, dict):
+                if ind_cfg.get("type") in ("ma_cross", "ma_alignment"):
+                    fast_len = ind_cfg.get("fast_period") or ind_cfg.get("fast") or 5
+                    slow_len = ind_cfg.get("slow_period") or ind_cfg.get("slow") or 20
+            elif isinstance(ind_cfg, list):
+                for _cfg in ind_cfg:
+                    if isinstance(_cfg, dict) and _cfg.get("type") in ("ma_cross", "ma_alignment"):
+                        fast_len = _cfg.get("fast_period") or _cfg.get("fast") or 5
+                        slow_len = _cfg.get("slow_period") or _cfg.get("slow") or 20
+                        break
+            from candlelab_core.indicators import _sma
+            close = df["close"].to_numpy(dtype=float)
+            ma_fast_series = pd.Series(
+                _sma(close, fast_len), index=df.index, name="ma_fast"
             )
-            ma_fast_series, ma_slow_series = _chart_ma_series_aligned(
-                df, pre_live_df, ma_live_map
+            ma_slow_series = pd.Series(
+                _sma(close, slow_len), index=df.index, name="ma_slow"
             )
 
             chart_b64 = render_trade_panels(
@@ -1081,6 +1087,7 @@ def strategy_chart(strategy_id):
         indicator_type=indicator_type,
         go_live_at=gl_str,
         chart_b64=chart_b64,
+        interval=granularity,
     )
 
 

@@ -54,9 +54,12 @@
 </head>
 <body>
   <a class="back" href="javascript:history.back()">← Back</a>
-  <h1>{{ strategy_name }}</h1>
+  <h1>{{ strategy_name }}
+  <span style="font-size:0.75em; color:#888; font-weight:normal;">
+    [{{ interval | default('M5', true) | upper }}]
+  </span></h1>
   <div class="meta">
-    <span><strong>Instrument</strong> — {{ instrument }}</span>
+    <span><strong>Instrument</strong> — {{ instrument }} · {{ interval | default('M5', true) | upper }}</span>
     <span><strong>Anchor</strong> — {{ anchor }}</span>
     <span><strong>Complement</strong> — {{ complement }}</span>
     <span><strong>Connector</strong> — {{ connector }}</span>
@@ -66,9 +69,10 @@
     <span><strong>Go live</strong> — {{ go_live_at }}</span>
   </div>
   {% if chart_b64 %}
-  <div style="overflow-x:auto; overflow-y:hidden; width:100%;">
-    <img src="data:image/png;base64,{{ chart_b64 | safe }}" alt="Strategy chart"
-         style="height:400px; width:auto; display:block; max-width:none;" />
+  <div style="display:flex; overflow-x:auto; scroll-snap-type:x mandatory; -webkit-overflow-scrolling:touch;">
+    <img src="data:image/png;base64,{{ chart_b64 | safe }}"
+         alt="Strategy chart"
+         style="width:100vw; max-width:100%; flex-shrink:0; scroll-snap-align:center; object-fit:contain;" />
   </div>
   {% else %}
   <p class="empty-note">Not enough OHLC data to render a chart yet.</p>
