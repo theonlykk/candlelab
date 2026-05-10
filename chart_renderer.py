@@ -1491,7 +1491,7 @@ def render_trade_panels(
             return False
 
     def _png_no_trades(msg: str = "No trades") -> str:
-        fig, ax = plt.subplots(1, 1, figsize=(10, 5), facecolor=C_BG)
+        fig, ax = plt.subplots(1, 1, figsize=(10, 6), facecolor=C_BG)
         ax.set_facecolor(C_BG)
         ax.text(
             0.5,
@@ -1538,7 +1538,7 @@ def render_trade_panels(
     n_trades = len(valid)
     panel_width = 3.5
     fig_width = max(10, n_trades * panel_width)
-    fig, axes = plt.subplots(1, n_trades, figsize=(fig_width, 5), facecolor=C_BG)
+    fig, axes = plt.subplots(1, n_trades, figsize=(fig_width, 6), facecolor=C_BG)
     if n_trades == 1:
         axes = [axes]
 
