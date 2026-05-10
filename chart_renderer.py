@@ -1536,7 +1536,7 @@ def render_trade_panels(
     pre_candles = 25
     post_candles = 10
     n_trades = len(valid)
-    panel_width = 5.2
+    panel_width = 4.8
     fig_width = max(10, n_trades * panel_width)
     fig, axes = plt.subplots(1, n_trades, figsize=(fig_width, 6), facecolor=C_BG)
     if n_trades == 1:
