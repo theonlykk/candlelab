@@ -1691,7 +1691,6 @@ def strategy_trades(strategy_id):
                 FROM trades
                 WHERE strategy_name = %s
                   AND status NOT IN ('CANCELLED', 'DUPLICATE')
-                  AND poll_log_id IS NOT NULL
                   AND signal_time >= %s
                 ORDER BY signal_time DESC
                 LIMIT 200
