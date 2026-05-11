@@ -1603,6 +1603,10 @@ def _build_trades_detail_rows(
         )
         if k == "2026-05-11 00:20":
             log.info(
+                "[DEBUG MERGE] pid=%s pid_is_none=%s",
+                pid, pid is None,
+            )
+            log.info(
                 "[DEBUG MERGE] key=%s in_mk_lookup=%s oanda=%s",
                 k, k in oanda_mk_lookup, oanda is not None,
             )
