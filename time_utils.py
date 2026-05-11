@@ -21,15 +21,19 @@ def to_utc_timestamp(dt_val) -> pd.Timestamp | None:
     """
     Normalize ``dt_val`` to a UTC-aware ``pd.Timestamp``.
 
-    Returns ``None`` if ``dt_val`` is ``None``. Raises ``ValueError`` if the
-    value is timezone-naive — callers must attach a zone before calling.
+    Returns ``None`` if ``dt_val`` is ``None``, invalid, or NaT. Naive values
+    are interpreted as UTC.
     """
     if dt_val is None:
         return None
-    ts = pd.Timestamp(dt_val)
-    if ts.tz is None:
-        raise ValueError(
-            "tz-naive datetime passed to to_utc_timestamp(): "
-            f"{dt_val!r}. Caller must supply tz-aware datetime."
-        )
-    return ts.tz_convert("UTC")
+    try:
+        ts_obj = pd.Timestamp(dt_val)
+        if pd.isna(ts_obj):
+            return None
+        if ts_obj.tz is None:
+            ts_obj = ts_obj.tz_localize("UTC")
+        else:
+            ts_obj = ts_obj.tz_convert("UTC")
+        return ts_obj
+    except Exception:
+        return None

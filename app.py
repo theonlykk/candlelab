@@ -1775,6 +1775,28 @@ def strategy_trades(strategy_id):
         except Exception:
             return False
 
+    if str(strategy_id) == "19":
+        agg_list = theo_raw.get("aggressive", [])
+        oanda_mk_lookup = {}
+        for _t in [dict(r) for r in oanda_trades_raw]:
+            _k = None
+            try:
+                _tu = to_utc_timestamp(_t.get("signal_time") or _t.get("opened_at"))
+                if _tu is not None:
+                    _k = _tu.strftime("%Y-%m-%d %H:%M")
+            except Exception:
+                pass
+            if _k:
+                oanda_mk_lookup[_k] = _t
+        sim_keys = [
+            r.get("signal_time").strftime("%Y-%m-%d %H:%M")
+            for r in agg_list
+            if r.get("signal_time")
+        ]
+        db_keys = list(oanda_mk_lookup.keys())
+        log.info("[DEBUG 19] Simulation keys: %s", sim_keys)
+        log.info("[DEBUG 19] DB oanda_mk_lookup keys: %s", db_keys)
+
     merged_rows = [
         r for r in merged_rows
         if r.get("oanda") is not None          # has a real OANDA execution, OR
