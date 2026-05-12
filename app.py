@@ -1051,23 +1051,6 @@ def strategy_chart(strategy_id):
                         "strategy_chart: since_live_detail failed — backtest panels only"
                     )
 
-            # TEMPORARY DIAGNOSTIC — remove after one test
-            from flask import jsonify as _jsonify
-            return _jsonify({
-                "signal_count": len(signals) if 'signals' in dir() else "signals_not_defined",
-                "ind_cfg": str(ind_cfg) if 'ind_cfg' in dir() else "not_defined",
-                "continuation_col": str(continuation_col) if 'continuation_col' in dir() else "not_defined",
-                "first_signals": [
-                    {"ts": str(s.get("signal_time")), "dir": s.get("direction")}
-                    for s in (signals[:5] if 'signals' in dir() else [])
-                ],
-                "trades_count": len(trades),
-                "first_trades": [
-                    {"ts": str(t.get("ts")), "entry_idx": t.get("entry_idx")}
-                    for t in trades[:5]
-                ],
-            })
-
             # Sort combined trades chronologically by ts
             trades.sort(key=lambda t: t.get("ts") or pd.Timestamp.min)
 
