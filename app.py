@@ -995,6 +995,45 @@ def strategy_chart(strategy_id):
                         if isinstance(since_live_raw, dict)
                         else []
                     )
+                    from candlelab_core.indicators import _rsi
+                    for t in sl_agg:
+                        sig_ts = t.get("signal_time")
+                        if sig_ts is None:
+                            t["is_orphaned"] = True
+                            continue
+                        try:
+                            idx = df.index.get_loc(sig_ts)
+                        except KeyError:
+                            t["is_orphaned"] = True
+                            continue
+                        try:
+                            sig_val = int(sig_array[idx])
+                            anc_val = int(anchor_array[idx])
+                        except (IndexError, TypeError):
+                            t["is_orphaned"] = True
+                            continue
+                        if sig_val == 0 or anc_val < 0:
+                            t["is_orphaned"] = True
+                        else:
+                            dir_str = "long" if sig_val == 1 else "short"
+                            passed, meta = passes_indicator_detailed(
+                                ind_cfg, df, idx, dir_str,
+                                anchor_idx=anc_val,
+                                has_continuation=bool(continuation_col),
+                            )
+                            if passed:
+                                t["indicator_meta"] = meta
+                            else:
+                                t["is_orphaned"] = True
+                        if t.get("is_orphaned"):
+                            try:
+                                close_arr = df["close"].to_numpy(dtype=float)
+                                rsi_arr = _rsi(close_arr[:idx + 1])
+                                rsi_val = float(rsi_arr[-1])
+                                if not pd.isna(rsi_val):
+                                    t["orphan_rsi"] = round(rsi_val, 1)
+                            except Exception:
+                                pass
                     if sl_agg:
                         sl_valid = [
                             t
@@ -1031,6 +1070,9 @@ def strategy_chart(strategy_id):
                                         "signal": 1
                                         if t.get("direction") == "BUY"
                                         else -1,
+                                        "indicator_meta": t.get("indicator_meta"),
+                                        "is_orphaned": t.get("is_orphaned", False),
+                                        "orphan_rsi": t.get("orphan_rsi"),
                                     }
                                 )
                 except Exception:
@@ -1044,7 +1086,8 @@ def strategy_chart(strategy_id):
             # Inject indicator metadata for annotation layer
             # TODO: populate indicator_meta in run_since_live_detail
             for t in trades:
-                t["indicator_meta"] = meta_lookup.get(t.get("ts"))
+                if "indicator_meta" not in t or t["indicator_meta"] is None:
+                    t["indicator_meta"] = meta_lookup.get(t.get("ts"))
 
             fast_len = 5
             slow_len = 20

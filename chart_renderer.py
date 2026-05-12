@@ -1730,6 +1730,26 @@ def render_trade_panels(
                 zorder=6,
             )
 
+        if trade.get("is_orphaned"):
+            rsi_val = trade.get("orphan_rsi", "N/A")
+            orphan_text = f"ORPHANED\nRaw RSI: {rsi_val}"
+            ax.text(
+                0.02, 0.95, orphan_text,
+                transform=ax.transAxes,
+                color="#d32f2f",
+                fontsize=7,
+                fontweight="bold",
+                verticalalignment="top",
+                horizontalalignment="left",
+                bbox=dict(
+                    facecolor="white",
+                    alpha=0.8,
+                    edgecolor="#d32f2f",
+                    boxstyle="round,pad=0.3",
+                ),
+                zorder=10,
+            )
+
         ax.plot(
             [entry_x, exit_x],
             [ep, ep],
