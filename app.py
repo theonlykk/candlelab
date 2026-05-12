@@ -25,6 +25,7 @@ from data import get_ohlc, INSTRUMENTS, INTERVAL_MAP, _oanda_instrument_id
 from chart_renderer import render_trade_panels
 from backtest import compute_atr
 from indicator_utils import compute_h1_atr_series_from_m5, passes_indicator
+from candlelab_core.indicator_utils import passes_indicator_detailed
 from candlelab_core.patterns import detect_all, PATTERNS
 from candlelab_core.signal_engine import (
     detect_signal,
@@ -887,6 +888,7 @@ def strategy_chart(strategy_id):
                 return_anchors=True,
             )
 
+            meta_lookup = {}
             # Build signals list — matches run_30d_backtest() signal loop exactly
             h1_atr = _get_h1_atr(pre_live_df)
             strict_cutoff = anchor_ts_chart - timedelta(days=30)
@@ -901,12 +903,14 @@ def strategy_chart(strategy_id):
                 if not _session_bar_ok(tsi, session_filter):
                     continue
                 dir_str = "long" if int(sig_array[i]) == 1 else "short"
-                if not passes_indicator(
+                passed, meta = passes_indicator_detailed(
                     ind_cfg, pre_live_df, i, dir_str,
                     anchor_idx=int(anchor_array[i]),
                     has_continuation=bool(continuation_col),
-                ):
+                )
+                if not passed:
                     continue
+                meta_lookup[tsi] = meta
                 sl_dist = _lookup_h1_atr(h1_atr, tsi, pip)
                 sig_close = float(pre_live_df["close"].iloc[i])
                 direction = "BUY" if int(sig_array[i]) == 1 else "SELL"
@@ -1036,6 +1040,11 @@ def strategy_chart(strategy_id):
 
             # Sort combined trades chronologically by ts
             trades.sort(key=lambda t: t.get("ts") or pd.Timestamp.min)
+
+            # Inject indicator metadata for annotation layer
+            # TODO: populate indicator_meta in run_since_live_detail
+            for t in trades:
+                t["indicator_meta"] = meta_lookup.get(t.get("ts"))
 
             fast_len = 5
             slow_len = 20

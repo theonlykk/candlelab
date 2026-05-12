@@ -1668,6 +1668,37 @@ def render_trade_panels(
                 ax.plot(xv, sma5, color="#4caf50", linewidth=0.8, alpha=0.7, zorder=3)
                 ax.plot(xv, sma20, color="#ff9800", linewidth=0.8, alpha=0.7, zorder=3)
 
+        INDICATOR_COLORS = {
+            "rsi_exhaustion_ts": "#e91e63",
+            "rsi_pivot_ts":      "#9c27b0",
+            "rsi_extreme_ts":    "#ff5722",
+            "ma_cross_ts":       "#2196f3",
+            "ma_alignment_ts":   "#00bcd4",
+        }
+        meta = trade.get("indicator_meta")
+        if meta:
+            for key, c in INDICATOR_COLORS.items():
+                ts = meta.get(key)
+                if ts is None:
+                    continue
+                try:
+                    abs_x = df.index.get_loc(ts)
+                    x = abs_x - start
+                except KeyError:
+                    continue
+                if not (0 <= x < len(panel_df)):
+                    continue
+                ax.axvline(x, color=c, linestyle="--", linewidth=0.8,
+                           alpha=0.6, zorder=1)
+                label = key.replace("_ts", "").replace("_", " ")
+                ax.text(
+                    x + 0.2, 0.05, label,
+                    rotation=90, fontsize=6, color=c,
+                    transform=ax.get_xaxis_transform(),
+                    verticalalignment="bottom",
+                    zorder=4,
+                )
+
         if _trade_is_live(trade.get("ts"), go_live_at):
             ax.text(
                 0.5,
