@@ -1579,11 +1579,6 @@ def _build_trades_detail_rows(
         if pid is not None:
             oanda_lookup[int(pid)] = t
         k = _mk(t.get("signal_time") or t.get("opened_at"))
-        if str(t.get("oanda_trade_id")) == "2392":
-            log.info(
-                "[DEBUG 2392] in oanda_trades signal_time=%s mk_key=%s",
-                t.get("signal_time"), k,
-            )
         if k:
             oanda_mk_lookup[k] = t
 
@@ -1596,25 +1591,11 @@ def _build_trades_detail_rows(
         seen_keys.add(k)
         pas = pas_lookup.get(k)
         pid = agg.get("poll_log_id")
-        oanda = (
-            oanda_lookup.get(int(pid))
-            if pid is not None
-            else oanda_mk_lookup.get(k)
-        )
-        if k == "2026-05-11 00:20":
-            log.info(
-                "[DEBUG MERGE] pid=%s pid_is_none=%s",
-                pid, pid is None,
-            )
-            log.info(
-                "[DEBUG MERGE] key=%s in_mk_lookup=%s oanda=%s",
-                k, k in oanda_mk_lookup, oanda is not None,
-            )
-            if k in oanda_mk_lookup:
-                log.info(
-                    "[DEBUG MERGE] matched oanda_trade_id=%s",
-                    oanda_mk_lookup[k].get("oanda_trade_id"),
-                )
+        oanda = None
+        if pid is not None:
+            oanda = oanda_lookup.get(int(pid))
+        if not oanda:
+            oanda = oanda_mk_lookup.get(k)
         nd = _notable_diff(agg, pas, oanda, pip, rejection_lookup=rejection_lookup)
         _theo_pl_usd = agg.get("pnl_dollars") if agg else None
         _attrs = _compute_oanda_attrs(oanda, _theo_pl_usd)
