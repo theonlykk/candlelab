@@ -33,6 +33,7 @@ from candlelab_core.signal_engine import (
     SPREAD_CLEAN_THRESHOLD,
     SLIPPAGE_CIRCUIT_BREAKER,
 )
+from candlelab_core.indicator_utils import _parse_indicator_filter_config as _core_parse_indicator_filter_config
 from cache import cache_set, cache_get
 from scheduler import start_scheduler
 from poll_log import init_candlelab_poll_log_table, read_poll_log_pg, read_poll_log_view_rows
@@ -134,39 +135,9 @@ def _norm_instrument(s: str) -> str:
     return _INSTRUMENT_MAP.get(s.upper(), s)
 
 
-def _parse_indicator_filter_config(raw) -> dict | None:
-    """Normalize indicator_filter JSON or plain 'rsi' / 'ma_cross' (executor parity)."""
-    if raw is None or raw == "":
-        return None
-    if isinstance(raw, dict):
-        d = dict(raw)
-    else:
-        s = str(raw).strip()
-        if s.startswith("{"):
-            try:
-                d = json.loads(s)
-            except json.JSONDecodeError:
-                return None
-        else:
-            typ = s.lower().replace(" ", "_")
-            if typ == "rsi":
-                return {"type": "rsi", "oversold": 30.0, "overbought": 70.0}
-            if typ == "ma_cross":
-                return {"type": "ma_cross", "direction": None}
-            if typ == "ma_stable":
-                return {"type": "ma_stable"}
-            return None
-    t = str(d.get("type", "")).strip().lower().replace(" ", "_")
-    if not t:
-        return None
-    out: dict = {"type": t}
-    if t == "rsi":
-        out["oversold"] = float(d.get("oversold", 30))
-        out["overbought"] = float(d.get("overbought", 70))
-    elif t == "ma_cross":
-        dr = d.get("direction")
-        out["direction"] = str(dr).strip().lower() if dr is not None else None
-    return out
+def _parse_indicator_filter_config(raw) -> dict | list | None:
+    """Delegate to candlelab_core — supports single dict, list, and plain string formats."""
+    return _core_parse_indicator_filter_config(raw)
 
 
 def _indicator_type_string_for_chart(raw) -> str | None:
