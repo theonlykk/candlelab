@@ -18,8 +18,6 @@ import matplotlib.gridspec as gridspec
 import matplotlib.transforms as mtransforms
 from matplotlib.ticker import FixedLocator, FuncFormatter, MaxNLocator, NullFormatter, NullLocator
 
-from candlelab_core.indicators import _rsi
-
 # Colour palette
 C_BULL        = "#26a69a"
 C_BEAR        = "#ef5350"
@@ -1580,7 +1578,6 @@ def render_trade_panels(
         comp = (complement or "").strip() or None
 
         hi_max = float(np.nanmax(highs))
-        lo_min = float(np.nanmin(lows))
 
         if sig_df is not None and anch and anch in sig_df.columns:
             for gi in range(start, end):
@@ -1634,22 +1631,6 @@ def render_trade_panels(
             ax.axvspan(x_min_c - 0.5, x_max_c + 0.5, alpha=0.08, color="#ff9800", zorder=0)
 
         ind = (indicator_type or "").lower()
-        if "rsi" in ind:
-            rsi_arr = _rsi(panel_df["close"].to_numpy(dtype=float), 14)
-            el = ei - start
-            if 0 <= el < len(rsi_arr):
-                rsi_val = rsi_arr[el]
-                if np.isfinite(rsi_val):
-                    ax.text(
-                        entry_x,
-                        lo_min * 0.9999,
-                        f"RSI {float(rsi_val):.0f}",
-                        fontsize=6,
-                        color="#888",
-                        ha="center",
-                        va="top",
-                        zorder=4,
-                    )
         if "ma" in ind:
             xv = np.arange(len(panel_df), dtype=float)
             if (
@@ -1690,7 +1671,10 @@ def render_trade_panels(
                     continue
                 ax.axvline(x, color=c, linestyle="--", linewidth=0.8,
                            alpha=0.6, zorder=1)
-                label = key.replace("_ts", "").replace("_", " ")
+                if key == "rsi_extreme_ts" and meta.get("rsi_extreme_val") is not None:
+                    label = f"rsi extreme\nRSI {meta['rsi_extreme_val']:.0f}"
+                else:
+                    label = key.replace("_ts", "").replace("_", " ")
                 ax.text(
                     x + 0.2, 0.05, label,
                     rotation=90, fontsize=6, color=c,
@@ -1698,6 +1682,18 @@ def render_trade_panels(
                     verticalalignment="bottom",
                     zorder=4,
                 )
+
+        if meta and meta.get("rsi_momentum_dir"):
+            arrow = "↑" if meta["rsi_momentum_dir"] == "UP" else "↓"
+            ax.text(
+                entry_x, 0.92, arrow,
+                transform=ax.get_xaxis_transform(),
+                fontsize=9,
+                color="#555",
+                ha="center",
+                va="top",
+                zorder=5,
+            )
 
         if _trade_is_live(trade.get("ts"), go_live_at):
             ax.text(
