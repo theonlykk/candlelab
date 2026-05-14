@@ -66,10 +66,23 @@ INTERVAL_MAP = {
     "5m":  "M5",
     "15m": "M15",
     "1h":  "H1",
+    "4h":  "H4",
+    "1d":  "D1",
 }
+
+OANDA_GRAN_MAP = {
+    "M5":  "M5",
+    "M15": "M15",
+    "H1":  "H1",
+    "H4":  "H4",
+    "D1":  "D",
+}
+
 DEFAULT_INTERVAL  = "5m"
-_INITIAL_BARS     = {"5m": 12000, "15m": 4000, "1h": 1000}
-_MINS_PER_BAR     = {"5m": 5,     "15m": 15,   "1h": 60}
+_INITIAL_BARS     = {"5m": 12000, "15m": 4000, "1h": 1000, "4h": 3000, "1d": 3000}
+_MINS_PER_BAR     = {"5m": 5, "15m": 15, "1h": 60, "4h": 240, "1d": 1440}
+
+GRANULARITY_MINS = {"M5": 5, "M15": 15, "H1": 60, "H4": 240, "D1": 1440}
 
 
 def _oanda_instrument_id(instrument: str) -> str:
@@ -424,7 +437,7 @@ def _fetch_oanda(symbol: str, granularity: str, n_bars: int) -> pd.DataFrame:
         batch = min(5000, remaining)
         params: dict[str, str] = {
             "price": "MBA",
-            "granularity": granularity,
+            "granularity": OANDA_GRAN_MAP.get(granularity, granularity),
             "count": str(batch),
         }
         if to_exclusive is not None:
@@ -550,7 +563,7 @@ def backfill_instrument(instrument: str, interval: str = "5m"):
 def _backfill_all_worker():
     """Background worker that performs initial backfills for all instruments and intervals."""
     for inst in INSTRUMENTS:
-        for ivl in ["5m", "15m", "1h"]:
+        for ivl in ["5m", "15m", "1h", "4h", "1d"]:
             try:
                 backfill_instrument(inst, ivl)
             except Exception as e:

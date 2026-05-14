@@ -803,7 +803,12 @@ def strategy_chart(strategy_id):
     gran_mins = GRANULARITY_MINS.get(granularity, 5)
     anchor_ts_chart = go_live_ts if go_live_ts is not None else pd.Timestamp.now(tz="UTC")
     to_ts_chart = pd.Timestamp.now(tz="UTC")
-    max_lookback = to_ts_chart - pd.Timedelta(days=60)
+    _chart_window_days = {
+        "M5": 60, "M15": 60, "H1": 120, "H4": 120, "D1": 400
+    }
+    max_lookback = to_ts_chart - pd.Timedelta(
+        days=_chart_window_days.get(granularity, 60)
+    )
     ideal_start = anchor_ts_chart - pd.Timedelta(days=30) - pd.Timedelta(minutes=WARMUP_BARS * gran_mins)
     from_ts_chart = max(ideal_start, max_lookback)
     pre_live_df = _fetch_oanda_candles(oanda_id, from_ts_chart, granularity, to_ts=to_ts_chart)
