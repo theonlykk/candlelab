@@ -157,6 +157,38 @@ def _indicator_type_string_for_chart(raw) -> str | None:
     return str(cfg["type"]).lower()
 
 
+def check_ma_alignment(df: pd.DataFrame, idx: int, dir_str: str) -> bool:
+    """
+    Full-stack spatial hierarchy trend filter.
+    Long:  bid_close > SMA50 AND SMA10 > SMA50 at signal bar.
+    Short: ask_close < SMA50 AND SMA10 < SMA50 at signal bar.
+    Uses bid_close/ask_close when available, falls back to close.
+    Returns False silently on NaN or out-of-bounds (warmup period).
+    Never raises — NaN during warmup is expected behaviour.
+    """
+    if idx < 0 or idx >= len(df):
+        return False
+    close_series = df["close"]
+    # Warmup guard: SMA50 requires 50 bars
+    if idx < 49:
+        return False
+    # Slice only the required window — avoids O(N²) full-series rolling per call
+    window = close_series.iloc[idx - 49 : idx + 1]
+    sma50 = float(window.mean())
+    sma10 = float(window.iloc[-10:].mean())
+    if "bid_close" in df.columns and "ask_close" in df.columns:
+        price = (
+            float(df["bid_close"].iloc[idx])
+            if dir_str == "long"
+            else float(df["ask_close"].iloc[idx])
+        )
+    else:
+        price = float(df["close"].iloc[idx])
+    if dir_str == "long":
+        return price > sma50 and sma10 > sma50
+    return price < sma50 and sma10 < sma50
+
+
 def _make_indicator_fn(indicator_filter):
     if isinstance(indicator_filter, list):
         parts = [_make_indicator_fn(item) for item in indicator_filter]
@@ -192,6 +224,8 @@ def _make_indicator_fn(indicator_filter):
             return check_ma_cross_direction(df, idx, cross_dir)
         if it == "ma_stable":
             return check_ma_stable(df, idx, dir_str)
+        if it == "ma_alignment":
+            return check_ma_alignment(df, idx, dir_str)
         return True
 
     return fn
@@ -208,6 +242,8 @@ _REVERSAL_PATTERNS = {
 
 _TREND_PATTERNS = {
     "Three Soldiers/Crows",
+    "Inside Bar Breakout",
+    "1-Candle Flag",
 }
 
 ALL_PATTERN_NAMES = list(PATTERNS.keys())
@@ -447,7 +483,7 @@ def _backtest_pattern(
     instrument: str = "EUR/USD",
     complement: str | None = None,
     connector: str | None = None,
-    continuation: str | None = None,
+    continuation: str | list | None = None,
 ) -> dict:
     """
     Backtest a single pattern using the local engine.
@@ -472,9 +508,25 @@ def _backtest_pattern(
         return {"signals": 0, "wins": 0, "win_pct": 0.0, "cum_net": 0.0, "trades": []}
 
     continuation_col = None
-    if continuation is not None and str(continuation).strip():
-        if continuation in signals_df.columns:
-            continuation_col = continuation
+    if continuation is not None:
+        # Normalise: single string → list (backward compat)
+        cont_list = continuation if isinstance(continuation, list) else [continuation]
+        # Deduplicate preserving order (silent server-side dedup)
+        cont_list = list(dict.fromkeys(c for c in cont_list if c and str(c).strip()))
+        # Filter to valid columns in signals_df only
+        cont_list = [c for c in cont_list if c in signals_df.columns]
+        if len(cont_list) == 1:
+            continuation_col = cont_list[0]
+        elif len(cont_list) > 1:
+            # OR logic: any continuation pattern firing = valid signal
+            # Standard OR — confluence bars (both fire) are INCLUDED, not excluded
+            combined = signals_df[cont_list[0]].copy()
+            for col in cont_list[1:]:
+                combined = combined | signals_df[col]
+            combined_col = "__continuation_combined__"
+            signals_df = signals_df.copy()
+            signals_df[combined_col] = combined
+            continuation_col = combined_col
 
     direction_str = "both"
 
@@ -2262,10 +2314,25 @@ def api_finalise():
     strategy_type = body.get("strategy_type", "reversal")
     pattern_1 = body.get("pattern_1", "")
     pattern_2 = body.get("pattern_2")
-    continuation = body.get("continuation")
+    continuation_raw = body.get("continuation")
+    if isinstance(continuation_raw, list):
+        # Deduplicate preserving order
+        continuation_list = list(
+            dict.fromkeys(c for c in continuation_raw if c and str(c).strip())
+        )
+        # Server-side enforcement: max 2 continuation patterns
+        if len(continuation_list) > 2:
+            return jsonify({"error": "Maximum 2 continuation patterns allowed"}), 400
+        continuation = continuation_list if continuation_list else None
+    elif continuation_raw and str(continuation_raw).strip():
+        # Single string — backward compatible with existing strategies
+        continuation = continuation_raw
+    else:
+        continuation = None
+    has_continuation = continuation is not None
+    strategy_mode = body.get("mode", "reversal")  # "reversal" or "continuation"
 
     has_pattern_2 = pattern_2 is not None and str(pattern_2).strip() != ""
-    has_continuation = continuation is not None and str(continuation).strip() != ""
 
     anchor = pattern_1
     complement = pattern_2 if has_pattern_2 else (continuation if has_continuation else None)
