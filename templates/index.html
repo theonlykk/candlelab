@@ -1126,7 +1126,7 @@
   <button id="back-btn" onclick="goBack()">← Back</button>
   <div id="header-logo">CandleLab</div>
   <div style="display:flex;align-items:center;gap:10px;">
-    <div id="step-indicator">1 / 7</div>
+    <div id="step-indicator">1 / 8</div>
     <button id="my-strats-btn" onclick="openStrategiesPanel()">My Strategies</button>
   </div>
 </div>
@@ -1158,16 +1158,30 @@
     </button>
   </div>
 
-  <!-- Step 3: Anchor pattern -->
+  <!-- Step 3: Mode selector -->
   <div class="step" id="step-3">
+    <div class="step-title">What kind of strategy?</div>
+    <div class="step-subtitle">Choose your trading approach. You can always come back and try the other.</div>
+    <button class="big-btn" onclick="selectMode('reversal')">
+      <span class="big-btn-title">Reversal</span>
+      <span class="big-btn-sub">Counter-trend entries — fade the move</span>
+    </button>
+    <button class="big-btn" onclick="selectMode('continuation')">
+      <span class="big-btn-title">Continuation</span>
+      <span class="big-btn-sub">Trend-following entries — ride the momentum</span>
+    </button>
+  </div>
+
+  <!-- Step 4: Anchor pattern -->
+  <div class="step" id="step-4">
     <div class="step-title">Pick your pattern</div>
     <div class="step-subtitle">This is the signal that starts everything. Choose one.</div>
     <div class="grid-2" id="pattern-list"></div>
     <div id="ai-tip-3" class="ai-tip-box" style="display:none"></div>
   </div>
 
-  <!-- Step 4: Second reversal (optional) -->
-  <div class="step" id="step-4">
+  <!-- Step 5: Second reversal (optional) -->
+  <div class="step" id="step-5">
     <div class="step-title">Strengthen the signal</div>
     <div class="step-subtitle">Add a second reversal within 10 candles. Optional.</div>
     <div class="grid-2" id="pattern-grid-step4"></div>
@@ -1175,8 +1189,8 @@
     <div id="ai-tip-4" class="ai-tip-box" style="display:none"></div>
   </div>
 
-  <!-- Step 5: Continuation + Indicators -->
-  <div class="step" id="step-5">
+  <!-- Step 6: Continuation + Indicators -->
+  <div class="step" id="step-6">
     <div class="step-title">Add confirmation</div>
     <div class="step-subtitle">Require Three Soldiers/Crows after your reversal.</div>
     <div id="continuation-card-wrap"></div>
@@ -1188,8 +1202,8 @@
     <div id="indicator-cards"></div>
   </div>
 
-  <!-- Step 6: Session + Trade management -->
-  <div class="step" id="step-6">
+  <!-- Step 7: Session + Trade management -->
+  <div class="step" id="step-7">
     <div class="step-title">Session</div>
     <div class="step-subtitle">Most traders choose All Sessions to start. NY Close (21:00–23:00 UTC) is flagged — spreads widen significantly at that hour.</div>
     <div class="session-grid">
@@ -1280,8 +1294,22 @@
     <div id="ai-tip-6" class="ai-tip-box" style="display:none"></div>
   </div>
 
-  <!-- Step 7: Preview / Summary (was step 9) -->
-  <div class="step" id="step-7">
+  <!-- Continuation: pattern selection (anchor=None) -->
+  <div class="step" id="step-cont-4">
+    <div class="step-title">Pick your continuation pattern</div>
+    <div class="step-subtitle">Choose up to 2. A signal fires when either pattern appears in a trending market.</div>
+    <div id="cont-pattern-list"></div>
+  </div>
+
+  <!-- Continuation: indicators (MA Alignment mandatory) -->
+  <div class="step" id="step-cont-5">
+    <div class="step-title">Confirm the trend</div>
+    <div class="step-subtitle">MA Alignment checks that price respects both moving averages. Required for continuation strategies.</div>
+    <div id="cont-indicator-cards"></div>
+  </div>
+
+  <!-- Step 8: Preview / Summary (was step 9) -->
+  <div class="step" id="step-8">
     <div class="step-title">Your strategy</div>
     <div class="step-subtitle">Here's your completed strategy. Review the results, then promote it to go live. If a PIN is required, My Strategies opens for you to unlock.</div>
 
@@ -1492,6 +1520,8 @@ const state = {
   pattern_1: "",
   pattern_2: null,
   continuation: null,
+  mode: null,
+  continuations: [],
   anchorTip: "",
   connector: "ordered",
   indicator: null,
@@ -1536,29 +1566,40 @@ function enginePatternPayload() {
 
 /** Maps wizard state to API field names (anchor/complement/connector/direction). */
 function buildWizardPayload() {
-  let payload_complement = state.pattern_2;
-  if (!state.pattern_2 && state.continuation) {
-    payload_complement = state.continuation;
+  const contValue = state.continuations.length === 0 ? null
+    : state.continuations.length === 1 ? state.continuations[0]
+    : [...state.continuations];
+
+  const isCont = state.mode === "continuation";
+
+  let payload_complement = isCont ? null : state.pattern_2;
+  if (!isCont && !state.pattern_2 && contValue) {
+    payload_complement = contValue;
   }
-  const payload_continuation = state.pattern_2 && state.continuation ? state.continuation : null;
+  const payload_continuation = isCont
+    ? contValue
+    : (state.pattern_2 && contValue ? contValue : null);
 
   let derived_connector = null;
-  if (state.pattern_2 && state.continuation) {
-    derived_connector = "type4";
-  } else if (state.pattern_2) {
-    derived_connector = "any-order";
-  } else if (state.continuation) {
-    derived_connector = "ordered";
+  if (!isCont) {
+    if (state.pattern_2 && contValue) {
+      derived_connector = "type4";
+    } else if (state.pattern_2) {
+      derived_connector = "any-order";
+    } else if (contValue) {
+      derived_connector = "ordered";
+    }
   }
 
   const indObj = buildIndicatorFilterObject();
 
   return {
     strategy_type: state.strategy_type,
-    pattern_1: state.pattern_1,
-    pattern_2: state.pattern_2,
+    mode: state.mode || "reversal",
+    pattern_1: isCont ? null : state.pattern_1,
+    pattern_2: isCont ? null : state.pattern_2,
     continuation: payload_continuation,
-    anchor: state.pattern_1,
+    anchor: isCont ? null : state.pattern_1,
     complement: payload_complement,
     connector: derived_connector,
     direction: "both",
@@ -1700,9 +1741,118 @@ function badgeEl(wr) {
 // ── Step navigation (final implementation in second script block) ─────────────
 
 function goBack() {
-  // Back navigation is purely UI-level: the `state` object retains selections so the
-  // user can review/adjust earlier choices without losing progress.
-  if (state.currentStep > 1) goStep(state.currentStep - 1);
+  if (state.currentStep === "cont-4") { goStep(3); return; }
+  if (state.currentStep === "cont-5") { goStep("cont-4"); return; }
+  if (state.currentStep === 7 && state.mode === "continuation") { goStep("cont-5"); return; }
+  if (typeof state.currentStep === "number" && state.currentStep > 1) {
+    goStep(state.currentStep - 1);
+  }
+}
+
+function selectMode(mode) {
+  state.mode = mode;
+  state.strategy_type = mode === "continuation" ? "continuation" : "reversal";
+  state.continuations = [];
+  state.continuation = null;
+  state.pattern_1 = null;
+  state.pattern_2 = null;
+  if (mode === "reversal") {
+    goStep(4);
+  } else {
+    goStep("cont-4");
+  }
+}
+
+function loadContinuationPatterns() {
+  const container = document.getElementById("cont-pattern-list");
+  if (!container) return;
+
+  const options = [
+    {
+      key: "Three Soldiers/Crows",
+      label: "Three Soldiers / Crows",
+      desc: "Three consecutive candles confirm the trend direction.",
+    },
+    {
+      key: "Inside Bar Breakout",
+      label: "Inside Bar Breakout",
+      desc: "Price compresses inside the prior bar then breaks out, confirming momentum.",
+    },
+    {
+      key: "1-Candle Flag",
+      label: "1-Candle Flag",
+      desc: "A single pullback candle followed by a breakout in the trend direction.",
+    },
+  ];
+
+  container.innerHTML = options.map(opt => {
+    const selected = state.continuations.includes(opt.key);
+    const maxed = !selected && state.continuations.length >= 2;
+    return `<div class="pattern-card ${selected ? "selected" : ""} ${maxed ? "disabled-card" : ""}"
+         data-cont-key="${opt.key}"
+         onclick="${maxed ? "" : "toggleContPattern('" + opt.key + "')"}"
+         style="${maxed ? "opacity:0.4;pointer-events:none;" : ""}">
+      <div class="pattern-name">${opt.label}</div>
+      <div class="card-desc" style="margin-top:4px;">${opt.desc}</div>
+      <span class="type-badge continuation">CONTINUATION</span>
+    </div>`;
+  }).join("");
+
+  const btn = document.getElementById("btn-cont4-continue");
+  if (btn) btn.disabled = state.continuations.length === 0;
+}
+
+function toggleContPattern(key) {
+  const idx = state.continuations.indexOf(key);
+  if (idx > -1) {
+    state.continuations.splice(idx, 1);
+  } else {
+    if (state.continuations.length < 2) {
+      state.continuations.push(key);
+    }
+  }
+  loadContinuationPatterns();
+}
+
+function loadContinuationIndicators() {
+  const container = document.getElementById("cont-indicator-cards");
+  if (!container) return;
+
+  if (!state.activeIndicators) state.activeIndicators = new Set();
+  state.activeIndicators.add("ma_alignment");
+
+  container.innerHTML = "";
+
+  const maAlignCard = document.createElement("div");
+  maAlignCard.className = "toggle-card on";
+  maAlignCard.style.cssText = "opacity:0.85;cursor:default;";
+  maAlignCard.innerHTML = `
+    <div class="card-main">
+      <div class="card-name">MA Alignment <span style="font-size:11px;color:var(--muted);margin-left:6px;">Required</span></div>
+      <div class="card-desc" style="margin-top:4px;">Price is above both moving averages, confirming an established trend. A state — is the trend healthy right now?</div>
+    </div>
+    <div class="toggle-dot"></div>`;
+  container.appendChild(maAlignCard);
+
+  const rsiCard = document.createElement("div");
+  const rsiOn = state.activeIndicators.has("rsi");
+  rsiCard.className = "toggle-card" + (rsiOn ? " on" : "");
+  rsiCard.innerHTML = `
+    <div class="card-main">
+      <div class="card-name">RSI Extreme</div>
+      <div class="card-desc" style="margin-top:4px;">RSI reached an extreme level before the signal — useful for buying a dip within an established trend.</div>
+      <div class="toggle-delta" id="delta-rsi-cont"></div>
+    </div>
+    <div class="toggle-dot"></div>`;
+  rsiCard.onclick = () => {
+    if (state.activeIndicators.has("rsi")) {
+      state.activeIndicators.delete("rsi");
+    } else {
+      state.activeIndicators.add("rsi");
+    }
+    loadContinuationIndicators();
+  };
+  container.appendChild(rsiCard);
 }
 
 // ── Step 2: Interval ──────────────────────────────────────────────────────────
@@ -1808,16 +1958,15 @@ function renderPatternGridStep3() {
       </div>`;
     list.appendChild(ph);
   });
-  const btn = document.getElementById("btn-step3-continue");
+  const btn = document.getElementById("btn-step4-continue");
   if (btn) btn.disabled = !state.pattern_1;
   setTimeout(checkScrollHint, 50);
 }
 
 function selectPatternStep3(name, tip, kind) {
   state.pattern_1 = name;
-  state.strategy_type = kind === "continuation" || name === "Three Soldiers/Crows" ? "continuation" : "reversal";
   state.anchorTip = tip || "";
-  document.querySelectorAll("#step-3 .pattern-card").forEach(c => {
+  document.querySelectorAll("#step-4 .pattern-card").forEach(c => {
     c.classList.toggle("selected", c.dataset.name === name);
   });
   const tipBox = document.getElementById("ai-tip-3");
@@ -1830,19 +1979,12 @@ function selectPatternStep3(name, tip, kind) {
       tipBox.textContent = "";
     }
   }
-  const btn = document.getElementById("btn-step3-continue");
+  const btn = document.getElementById("btn-step4-continue");
   if (btn) btn.disabled = false;
 }
 
 function continueFromStep3() {
-  const btn = document.getElementById("btn-step3-continue");
-  if (state.strategy_type === "continuation") {
-    state.pattern_2 = null;
-    state.complementData = [];
-    goStep(5);
-    initStep5ContinuationAndIndicators();
-    return;
-  }
+  const btn = document.getElementById("btn-step4-continue");
   if (btn) {
     btn.disabled = true;
     btn.dataset.loading = "1";
@@ -1866,7 +2008,7 @@ function continueFromStep3() {
         btn.dataset.loading = "";
         btn.textContent = "Continue \u2192";
       }
-      goStep(4);
+      goStep(5);
       renderPatternGridStep4();
     })
     .catch(() => {
@@ -1916,36 +2058,36 @@ function renderPatternGridStep4() {
 
   if (bottom) {
     bottom.innerHTML = `
-      <div class="pattern-card skip-pattern-card selected" id="step4-skip-card" role="button">
+      <div class="pattern-card skip-pattern-card selected" id="step5-skip-card" role="button">
         <div class="card-main" style="flex:1;">
           <div class="pattern-name">Use single pattern</div>
           <div style="font-size:13px;color:var(--muted);margin-top:4px;">Continue with just your anchor</div>
         </div>
       </div>`;
-    document.getElementById("step4-skip-card").onclick = () => selectSkipStep4();
+    document.getElementById("step5-skip-card").onclick = () => selectSkipStep4();
   }
 
-  document.querySelectorAll("#step-4 .pattern-card:not(.skip-pattern-card)").forEach(c => {
+  document.querySelectorAll("#step-5 .pattern-card:not(.skip-pattern-card)").forEach(c => {
     c.classList.toggle("selected", state.pattern_2 && c.dataset.name === state.pattern_2);
   });
   if (!state.pattern_2 && bottom) {
-    document.getElementById("step4-skip-card")?.classList.add("selected");
+    document.getElementById("step5-skip-card")?.classList.add("selected");
   }
 }
 
 function selectSkipStep4() {
   state.pattern_2 = null;
-  document.querySelectorAll("#step-4 .pattern-card").forEach(c => c.classList.remove("selected"));
-  document.getElementById("step4-skip-card")?.classList.add("selected");
+  document.querySelectorAll("#step-5 .pattern-card").forEach(c => c.classList.remove("selected"));
+  document.getElementById("step5-skip-card")?.classList.add("selected");
   const tip = document.getElementById("ai-tip-4");
   if (tip) { tip.style.display = "none"; tip.textContent = ""; }
 }
 
 function selectPatternStep4(name) {
   state.pattern_2 = name;
-  document.getElementById("step4-skip-card")?.classList.remove("selected");
-  document.querySelectorAll("#step-4 .pattern-card").forEach(c => c.classList.remove("selected"));
-  document.querySelectorAll("#step-4 .pattern-card[data-name]").forEach(c => {
+  document.getElementById("step5-skip-card")?.classList.remove("selected");
+  document.querySelectorAll("#step-5 .pattern-card").forEach(c => c.classList.remove("selected"));
+  document.querySelectorAll("#step-5 .pattern-card[data-name]").forEach(c => {
     if (c.dataset.name === name) c.classList.add("selected");
   });
   const row = state.patternsData.find(p => p.name === name);
@@ -1960,6 +2102,7 @@ function selectPatternStep4(name) {
 }
 
 function initStep5ContinuationAndIndicators() {
+  if (!state.continuations) state.continuations = [];
   buildContinuationCard();
   buildIndicatorStep();
 }
@@ -1967,39 +2110,60 @@ function initStep5ContinuationAndIndicators() {
 function buildContinuationCard() {
   const wrap = document.getElementById("continuation-card-wrap");
   if (!wrap) return;
-  if (state.strategy_type === "continuation") {
+  if (state.mode === "continuation") {
     wrap.innerHTML = "";
-    state.continuation = null;
     return;
   }
-  const on = state.continuation != null;
-  wrap.innerHTML = `
-    <div class="toggle-card continuation-pattern-card ${on ? "on" : ""}" id="continuation-toggle-card">
+  const options = [
+    { key: "Three Soldiers/Crows", label: "Three Soldiers / Crows",
+      desc: "Three consecutive candles confirm the trend direction after your reversal." },
+    { key: "Inside Bar Breakout", label: "Inside Bar Breakout",
+      desc: "Price compresses inside the prior bar then breaks out." },
+    { key: "1-Candle Flag", label: "1-Candle Flag",
+      desc: "A single pullback candle followed by a breakout in the trend direction." },
+  ];
+  wrap.innerHTML = options.map(opt => {
+    const selected = state.continuations.includes(opt.key);
+    const maxed = !selected && state.continuations.length >= 2;
+    return `<div class="toggle-card continuation-pattern-card ${selected ? "on" : ""}"
+         ${maxed ? 'style="opacity:0.4;pointer-events:none;"' : ''}
+         onclick="toggleContinuationPattern('${opt.key}')">
       <div style="display:flex;align-items:center;gap:14px;flex:1;min-width:0;">
-        <div class="pattern-illustration">${SVG_THREE_SOLDIERS}</div>
         <div class="card-main">
           <div class="pattern-card-title-row">
-            <span class="pattern-name">Three Soldiers / Crows</span>
-            <span class="type-badge continuation">Continuation</span>
+            <span class="pattern-name">${opt.label}</span>
+            <span class="type-badge continuation">CONTINUATION</span>
           </div>
-          <div class="card-desc" style="margin-top:4px;">Adds trend confirmation after your reversal sequence.</div>
+          <div class="card-desc" style="margin-top:4px;">${opt.desc}</div>
         </div>
       </div>
       <div class="toggle-dot"></div>
     </div>`;
-  document.getElementById("continuation-toggle-card").onclick = () => {
-    const was = state.continuation;
-    state.continuation = was ? null : "Three Soldiers/Crows";
-    buildContinuationCard();
-    const tip = document.getElementById("ai-tip-5");
-    if (state.continuation) {
+  }).join("");
+}
+
+function toggleContinuationPattern(key) {
+  const idx = state.continuations.indexOf(key);
+  if (idx > -1) {
+    state.continuations.splice(idx, 1);
+  } else {
+    if (state.continuations.length < 2) {
+      state.continuations.push(key);
+    }
+  }
+  state.continuation = state.continuations.length > 0 ? state.continuations[0] : null;
+  buildContinuationCard();
+  const tip = document.getElementById("ai-tip-5");
+  if (tip) {
+    if (state.continuations.length > 0) {
       tip.style.display = "block";
-      typewriter(tip, "\u{1F4A1} Confirmation with Three Soldiers/Crows filters for stronger follow-through.", 24);
-    } else if (was) {
+      typewriter(tip, "\u{1F4A1} Confirmation with " +
+        state.continuations.join(" or ") + " filters for stronger follow-through.", 24);
+    } else {
       tip.style.display = "none";
       tip.textContent = "";
     }
-  };
+  }
 }
 
 function toggleAdvancedSl(ev) {
@@ -2027,8 +2191,21 @@ function buildIndicatorStep() {
   state._indicatorFilteredSnapshot = {};
 
   const options = [
-    { key: "ma_cross", title: "MA Cross", desc: "5 and 20-period moving averages crossed in your favour in the last 10 candles." },
-    { key: "rsi", title: "RSI Extreme", desc: "RSI was at an extreme level (overbought/oversold) before the signal." },
+    {
+      key: "ma_cross",
+      title: "MA Cross",
+      desc: "10 and 50-period moving averages crossed in your favour recently. An event — did the trend just start?"
+    },
+    {
+      key: "ma_alignment",
+      title: "MA Alignment",
+      desc: "Price is above both moving averages, confirming an established trend. A state — is the trend healthy right now?"
+    },
+    {
+      key: "rsi",
+      title: "RSI Extreme",
+      desc: "RSI was at an extreme level (overbought/oversold) before the signal."
+    },
   ];
 
   options.forEach(opt => {
@@ -2088,6 +2265,8 @@ function buildIndicatorFilterObject() {
       filters.push({ type: "ma_cross", direction: null });
     } else if (t === "ma_stable") {
       filters.push({ type: "ma_stable" });
+    } else if (t === "ma_alignment") {
+      filters.push({ type: "ma_alignment" });
     } else {
       filters.push({ type: t });
     }
@@ -2205,14 +2384,14 @@ function buildSessionCheckBody() {
 }
 
 function setSessionStatLoading() {
-  document.querySelectorAll("#step-6 .session-card-stat").forEach(el => {
+  document.querySelectorAll("#step-7 .session-card-stat").forEach(el => {
     el.textContent = "...";
   });
 }
 
 function applySessionStatsPayload(d) {
   if (!d || d.error) return;
-  document.querySelectorAll("#step-6 .big-btn").forEach(btn => {
+  document.querySelectorAll("#step-7 .big-btn").forEach(btn => {
     const el = btn.querySelector(".session-card-stat");
     if (!el) return;
     const key = el.dataset.statKey;
@@ -2233,14 +2412,14 @@ function fetchSessionStats() {
     .then(r => r.json())
     .then(applySessionStatsPayload)
     .catch(() => {
-      document.querySelectorAll("#step-6 .session-card-stat").forEach(el => {
+      document.querySelectorAll("#step-7 .session-card-stat").forEach(el => {
         el.textContent = "—";
       });
     });
 }
 
 function selectSession(btn) {
-  document.querySelectorAll("#step-6 .big-btn").forEach(b => b.classList.remove("selected"));
+  document.querySelectorAll("#step-7 .big-btn").forEach(b => b.classList.remove("selected"));
   btn.classList.add("selected");
   state.session = btn.dataset.session;
   fetchSessionStats();
@@ -2401,7 +2580,7 @@ function buildConfig(preview) {
 }
 
 function fetchTimeoutStats() {
-  document.querySelectorAll("#step-6 .timeout-btn-l2").forEach(el => {
+  document.querySelectorAll("#step-7 .timeout-btn-l2").forEach(el => {
     el.textContent = "...";
   });
   apiFetch("/api/timeout-check", {
@@ -2412,12 +2591,12 @@ function fetchTimeoutStats() {
     .then(r => r.json())
     .then(d => {
       if (d.error) {
-        document.querySelectorAll("#step-6 .timeout-btn-l2").forEach(el => {
+        document.querySelectorAll("#step-7 .timeout-btn-l2").forEach(el => {
           el.textContent = "—";
         });
         return;
       }
-      document.querySelectorAll("#step-6 .timeout-btn").forEach(b => {
+      document.querySelectorAll("#step-7 .timeout-btn").forEach(b => {
         const val = parseInt(b.dataset.val, 10);
         const key = String(val);
         const row = d[key];
@@ -2432,7 +2611,7 @@ function fetchTimeoutStats() {
       });
     })
     .catch(() => {
-      document.querySelectorAll("#step-6 .timeout-btn-l2").forEach(el => {
+      document.querySelectorAll("#step-7 .timeout-btn-l2").forEach(el => {
         el.textContent = "—";
       });
     });
@@ -2440,7 +2619,7 @@ function fetchTimeoutStats() {
 
 /** Uses `state.finalResult` from the step-7 `loadSummary` request (no network). Shows charts, stats table, and trade log. */
 function revealStep9ResultsFromFinalise() {
-  if (state.currentStep !== 7) return;
+  if (state.currentStep !== 8) return;
   const d = state.finalResult;
   if (!d || !Array.isArray(d.chart_trades)) return;
   document.getElementById("wizard-step9-form").classList.add("hidden");
@@ -2936,7 +3115,9 @@ function quickTryTimeframe(ivl) {
   const savedInst = state.instrument;
   Object.assign(state, {
     instrument: savedInst, interval: ivl,
-    strategy_type: "reversal",
+    strategy_type: null,
+    mode: null,
+    continuations: [],
     pattern_1: "", pattern_2: null, continuation: null,
     anchorTip: "", connector: "ordered",
     indicator: null,
@@ -3100,7 +3281,9 @@ function restartWizard() {
   const savedIvl  = state.interval;
   Object.assign(state, {
     instrument: savedInst, interval: savedIvl,
-    strategy_type: "reversal",
+    strategy_type: null,
+    mode: null,
+    continuations: [],
     pattern_1: "", pattern_2: null, continuation: null,
     anchorTip: "", connector: "ordered",
     indicator: null,
@@ -3120,94 +3303,112 @@ function restartWizard() {
 
 <script>
 function goStep(n) {
-  if (n < state.currentStep) {
-    if (n <= 3) {
+  const stepId = (typeof n === "number") ? "step-" + n : "step-" + n;
+
+  const stepWeights = { 1:1, 2:2, 3:3, 4:4, 5:5, 6:6, 7:7, 8:8, "cont-4":4, "cont-5":5 };
+  const curW = stepWeights[state.currentStep];
+  const nextW = stepWeights[n];
+  if (curW === undefined || nextW === undefined) {
+    console.error("goStep: unknown step id", n, "from", state.currentStep);
+    return;
+  }
+  const goingBack = nextW < curW;
+
+  if (nextW < curW) {
+    if (nextW <= 3) {
       state.pattern_1 = "";
-      state.strategy_type = "reversal";
-      document.querySelectorAll("#step-3 .pattern-card")
-        .forEach(c => c.classList.remove("selected"));
-    }
-    if (n <= 4) {
-      state.pattern_2 = null;
+      state.strategy_type = null;
+      state.mode = null;
+      state.continuations = [];
+      state.continuation = null;
       document.querySelectorAll("#step-4 .pattern-card")
         .forEach(c => c.classList.remove("selected"));
     }
-    if (n <= 5) {
+    if (nextW <= 4) {
+      state.pattern_2 = null;
+      document.querySelectorAll("#step-5 .pattern-card")
+        .forEach(c => c.classList.remove("selected"));
+    }
+    if (nextW <= 5) {
       state.continuation = null;
+      state.continuations = [];
       state.indicator = null;
       state.activeIndicators = new Set();
     }
   }
-
-  const goingBack = n < state.currentStep;
   document.querySelectorAll(".step").forEach(s => s.classList.remove("active", "slide-back"));
-  const nextEl = document.getElementById("step-" + n);
+
+  const nextEl = document.getElementById(stepId);
+  if (!nextEl) { console.error("goStep: no element for", stepId); return; }
   nextEl.classList.add("active");
   if (goingBack) nextEl.classList.add("slide-back");
+
   state.currentStep = n;
-  document.getElementById("step-indicator").textContent = n + " / 7";
-  document.getElementById("progress-fill").style.width = (n / 7 * 100) + "%";
-  document.getElementById("back-btn").style.display = n > 1 ? "block" : "none";
+
+  const isCont = state.mode === "continuation";
+  const totalSteps = isCont ? 7 : 8;
+  let displayStep = n;
+  if (n === "cont-4") displayStep = 4;
+  else if (n === "cont-5") displayStep = 5;
+  else if (typeof n === "number" && isCont && n >= 7) displayStep = n - 1;
+  document.getElementById("step-indicator").textContent = displayStep + " / " + totalSteps;
+  document.getElementById("progress-fill").style.width = (displayStep / totalSteps * 100) + "%";
+  document.getElementById("back-btn").style.display = n === 1 ? "none" : "block";
+
   window.scrollTo(0, 0);
   updateStepActions(n);
 
-  if (n === 3) {
-    loadPatternsStep3();
-  }
-  if (n === 4 && Array.isArray(state.complementData)) {
-    renderPatternGridStep4();
-  }
-  if (n === 5) {
-    initStep5ContinuationAndIndicators();
-  }
-  if (n === 6) {
+  if (n === 4) loadPatternsStep3();
+  if (n === 5 && Array.isArray(state.complementData)) renderPatternGridStep4();
+  if (n === 6) initStep5ContinuationAndIndicators();
+  if (n === "cont-4") loadContinuationPatterns();
+  if (n === "cont-5") loadContinuationIndicators();
+  if (n === 7) {
     updateTimeoutLabels();
     const slS = document.getElementById("sl-slider");
     if (slS) slS.value = String(Math.round(state.slMult * 10));
     const tpRr = document.getElementById("tp-rr-slider");
     if (tpRr) tpRr.value = String(Math.round(state.tpMult * 10));
     const rr = document.getElementById("rr-display");
-    if (rr) rr.textContent = `1 : ${state.tpMult.toFixed(1)}`;
+    if (rr) rr.textContent = "1 : " + state.tpMult.toFixed(1);
     const slv = document.getElementById("sl-val");
     if (slv) slv.textContent = state.slMult.toFixed(1) + "\u00d7";
-    const tip6 = document.getElementById("ai-tip-6");
-    if (tip6) {
-      if (state.tpMult > 4.0) {
-        tip6.style.display = "block";
-        tip6.textContent =
-          "High reward targets fire less often — your signal count will drop.";
-      } else {
-        tip6.style.display = "none";
-        tip6.textContent = "";
-      }
-    }
     updateSlTpPipDisplay();
     clearTimeout(previewTimer);
     Promise.all([fetchSessionStats(), fetchPreview()]).then(() => fetchTimeoutStats());
   }
-  if (n === 7) {
-    loadSummary();
-  }
+  if (n === 8) loadSummary();
 }
 
 function updateStepActions(n) {
   const el   = document.getElementById("step-actions");
   const hint = document.getElementById("scroll-hint");
   hint.classList.add("hidden");
+
   if (n === 3) {
-    el.style.display = "block";
-    el.innerHTML = `<button class="cta-btn" id="btn-step3-continue" disabled onclick="continueFromStep3()">Continue \u2192</button>`;
-    const b = document.getElementById("btn-step3-continue");
-    if (b) b.disabled = !state.pattern_1;
+    el.style.display = "none";
   } else if (n === 4) {
     el.style.display = "block";
-    el.innerHTML = `<button class="cta-btn" onclick="goStep(5)">Continue \u2192</button>`;
+    el.innerHTML = `<button class="cta-btn" id="btn-step4-continue" disabled onclick="continueFromStep3()">Continue \u2192</button>`;
+    const b = document.getElementById("btn-step4-continue");
+    if (b) b.disabled = !state.pattern_1;
   } else if (n === 5) {
     el.style.display = "block";
     el.innerHTML = `<button class="cta-btn" onclick="goStep(6)">Continue \u2192</button>`;
   } else if (n === 6) {
     el.style.display = "block";
-    el.innerHTML = `<button class="cta-btn" onclick="goStep(7)">Preview strategy \u2192</button>`;
+    el.innerHTML = `<button class="cta-btn" onclick="goStep(7)">Continue \u2192</button>`;
+  } else if (n === "cont-4") {
+    el.style.display = "block";
+    el.innerHTML = `<button class="cta-btn" id="btn-cont4-continue" onclick="goStep('cont-5')">Continue \u2192</button>`;
+    const b = document.getElementById("btn-cont4-continue");
+    if (b) b.disabled = state.continuations.length === 0;
+  } else if (n === "cont-5") {
+    el.style.display = "block";
+    el.innerHTML = `<button class="cta-btn" onclick="goStep(7)">Continue \u2192</button>`;
+  } else if (n === 7) {
+    el.style.display = "block";
+    el.innerHTML = `<button class="cta-btn" onclick="goStep(8)">Preview strategy \u2192</button>`;
   } else {
     el.style.display = "none";
   }
@@ -3215,7 +3416,7 @@ function updateStepActions(n) {
 
 function checkScrollHint() {
   const hint = document.getElementById("scroll-hint");
-  if (state.currentStep !== 3) { hint.classList.add("hidden"); return; }
+  if (state.currentStep !== 4) { hint.classList.add("hidden"); return; }
   const list = document.getElementById("pattern-list");
   if (!list || !list.children.length) { hint.classList.add("hidden"); return; }
   const rect = list.getBoundingClientRect();
@@ -3247,6 +3448,15 @@ function applyRowToState(row) {
   state.pattern_1 = row.pattern_1 || row.anchor || "";
   state.pattern_2 = row.pattern_2 != null && String(row.pattern_2).trim() !== "" ? row.pattern_2 : null;
   state.continuation = row.continuation != null && String(row.continuation).trim() !== "" ? row.continuation : null;
+  if (Array.isArray(row.continuation)) {
+    state.continuations = row.continuation.filter(c => c && String(c).trim());
+  } else if (row.continuation != null && String(row.continuation).trim() !== "") {
+    state.continuations = [String(row.continuation).trim()];
+  } else {
+    state.continuations = [];
+  }
+  const anchorVal = row.pattern_1 || row.anchor || "";
+  state.mode = (!anchorVal || !String(anchorVal).trim()) ? "continuation" : "reversal";
   if (!state.pattern_2 && row.complement && row.complement !== state.continuation) {
     state.pattern_2 = row.complement;
   }
@@ -3301,7 +3511,7 @@ function openWizardFromDraft(row) {
   applyRowToState(row);
   document.getElementById("main").classList.add("wizard-field-glow");
   closeStrategiesPanel();
-  goStep(7);
+  goStep(8);
 }
 
 function openWizardFromLive(row) {
@@ -3319,7 +3529,7 @@ function openWizardFromLive(row) {
   applyRowToState(row);
   document.getElementById("main").classList.add("wizard-field-glow");
   closeStrategiesPanel();
-  goStep(7);
+  goStep(8);
 }
 
 function buildStrategyLifecycleBody(nameOverride) {
@@ -3338,7 +3548,7 @@ function buildStrategyLifecycleBody(nameOverride) {
     strategy_type: wp.strategy_type,
     pattern_1: wp.pattern_1,
     pattern_2: state.pattern_2,
-    continuation: state.continuation,
+    continuation: wp.continuation,
     anchor: wp.anchor,
     complement: wp.complement,
     connector: normalizeConnector(wp.connector || "ordered"),
