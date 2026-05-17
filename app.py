@@ -2464,6 +2464,13 @@ def api_timeout_check():
     sl_mult = float(body.get("sl_multiplier", 1.0))
     tp_mult = float(body.get("tp_multiplier", 3.0))
     indicator_fn = _make_indicator_fn(indicator_filter) if indicator_filter else None
+    continuation = body.get("continuation")
+    if isinstance(continuation, str) and continuation.strip():
+        continuation = continuation.strip() or None
+    elif isinstance(continuation, list):
+        continuation = [c for c in continuation if c and str(c).strip()] or None
+    else:
+        continuation = None
 
     if tp_mult <= sl_mult:
         return jsonify({"error": "tp_multiplier must be greater than sl_multiplier"}), 400
@@ -2496,6 +2503,7 @@ def api_timeout_check():
             instrument=instrument,
             complement=complement if has_complement else None,
             connector=connector if has_complement else None,
+            continuation=continuation,
         )
         out[str(t)] = {"signals": int(r["signals"]), "win_pct": float(r["win_pct"])}
     return jsonify(out)
