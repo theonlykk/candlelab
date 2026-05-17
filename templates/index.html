@@ -1858,7 +1858,7 @@ function toggleContPattern(key) {
       selectedKeys.forEach(k => {
         const card = document.querySelector(`[data-cont-key="${k}"]`);
         const delta = card && card.querySelector('.cont-signal-count');
-        if (delta) delta.textContent = (d.base_signals ?? 0) + ' signals';
+        if (delta) delta.textContent = `${d.base_signals ?? 0} sig · ${d.base_win_pct ?? 0}%`;
       });
     })
     .catch(() => {
@@ -2174,6 +2174,7 @@ function buildContinuationCard() {
     const selected = state.continuations.includes(opt.key);
     const maxed = !selected && state.continuations.length >= 2;
     return `<div class="toggle-card continuation-pattern-card ${selected ? "on" : ""}"
+         data-cont-key="${opt.key}"
          ${maxed ? 'style="opacity:0.4;pointer-events:none;"' : ''}
          onclick="toggleContinuationPattern('${opt.key}')">
       <div style="display:flex;align-items:center;gap:14px;flex:1;min-width:0;">
@@ -2183,6 +2184,7 @@ function buildContinuationCard() {
             <span class="type-badge continuation">CONTINUATION</span>
           </div>
           <div class="card-desc" style="margin-top:4px;">${opt.desc}</div>
+          ${selected ? `<div class="cont-signal-count" style="font-size:12px;color:var(--muted);margin-top:6px;"></div>` : ""}
         </div>
       </div>
       <div class="toggle-dot"></div>
@@ -2201,6 +2203,44 @@ function toggleContinuationPattern(key) {
   }
   state.continuation = state.continuations.length > 0 ? state.continuations[0] : null;
   buildContinuationCard();
+  const eng = enginePatternPayload();
+  const contKeys = [...state.continuations];
+  if (contKeys.length > 0 && eng.anchor) {
+    contKeys.forEach(k => {
+      const card = document.querySelector(`#continuation-card-wrap [data-cont-key="${k}"]`);
+      const delta = card && card.querySelector('.cont-signal-count');
+      if (delta) delta.textContent = 'Counting…';
+    });
+    apiFetch('/api/indicator-check', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        anchor: eng.anchor,
+        complement: eng.complement,
+        connector: eng.connector,
+        instrument: state.instrument,
+        interval: state.interval,
+        continuation: contKeys,
+        indicator_filter: null,
+      }),
+    })
+    .then(r => r.json())
+    .then(d => {
+      if (JSON.stringify([...state.continuations]) !== JSON.stringify(contKeys)) return;
+      contKeys.forEach(k => {
+        const card = document.querySelector(`#continuation-card-wrap [data-cont-key="${k}"]`);
+        const delta = card && card.querySelector('.cont-signal-count');
+        if (delta) delta.textContent = `${d.base_signals ?? 0} sig · ${d.base_win_pct ?? 0}%`;
+      });
+    })
+    .catch(() => {
+      contKeys.forEach(k => {
+        const card = document.querySelector(`#continuation-card-wrap [data-cont-key="${k}"]`);
+        const delta = card && card.querySelector('.cont-signal-count');
+        if (delta) delta.textContent = '';
+      });
+    });
+  }
   const tip = document.getElementById("ai-tip-5");
   if (tip) {
     if (state.continuations.length > 0) {
