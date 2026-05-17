@@ -1674,6 +1674,8 @@ const WIZARD_ANCHOR_PATTERNS = [
   { name: "Morning/Evening Star", kind: "reversal", svg: SVG_STAR },
   { name: "Shooting Star/Inv. Hammer", kind: "reversal", svg: SVG_SHOOTING },
   { name: "Three Soldiers/Crows", kind: "continuation", svg: SVG_THREE_SOLDIERS },
+  { name: "Inside Bar Breakout", kind: "continuation", svg: SVG_THREE_SOLDIERS },
+  { name: "1-Candle Flag", kind: "continuation", svg: SVG_THREE_SOLDIERS },
 ];
 
 function instrumentCardLabel(inst) {
@@ -1871,6 +1873,8 @@ const PATTERN_TYPES = {
   "Morning/Evening Star": "Reversal",
   "Shooting Star/Inv. Hammer": "Reversal",
   "Three Soldiers/Crows": "Continuation",
+  "Inside Bar Breakout": "Continuation",
+  "1-Candle Flag": "Continuation",
 };
 
 function patternMetaByName(name) {
@@ -1911,7 +1915,10 @@ function renderPatternGridStep3() {
   const list = document.getElementById("pattern-list");
   list.innerHTML = "";
   let lastSectionType = null;
-  WIZARD_ANCHOR_PATTERNS.forEach(def => {
+  const visiblePatterns = state.mode === "continuation"
+    ? WIZARD_ANCHOR_PATTERNS
+    : WIZARD_ANCHOR_PATTERNS.filter(def => def.kind !== "continuation");
+  visiblePatterns.forEach(def => {
     const row = state.patternsData.find(p => p.name === def.name);
     const rawType =
       row && row.type != null && String(row.type).trim() !== ""
@@ -1943,20 +1950,6 @@ function renderPatternGridStep3() {
       </div>`;
     card.onclick = () => selectPatternStep3(def.name, tip, def.kind);
     list.appendChild(card);
-  });
-  [{name: "Inside Bars"}, {name: "Flags"}].forEach(p => {
-    const ph = document.createElement("div");
-    ph.className = "pattern-card";
-    ph.style.cssText = "opacity:0.5;cursor:not-allowed;pointer-events:none;";
-    ph.innerHTML = `
-      <div class="card-main" style="flex:1;min-width:0;">
-        <div class="pattern-card-title-row">
-          <span class="pattern-name">${p.name}</span>
-          <span class="type-badge" style="background:rgba(150,150,150,0.15);color:#888;margin-left:6px;">Coming soon</span>
-        </div>
-        <div class="pattern-stats-line">—% · — signals</div>
-      </div>`;
-    list.appendChild(ph);
   });
   const btn = document.getElementById("btn-step4-continue");
   if (btn) btn.disabled = !state.pattern_1;
