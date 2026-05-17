@@ -504,7 +504,9 @@ def _backtest_pattern(
             "trades": [],
         }
     signals_df = detect_all(df)
-    if pattern_name not in signals_df.columns:
+    is_pure_continuation = not pattern_name or str(pattern_name).strip() == ""
+
+    if not is_pure_continuation and pattern_name not in signals_df.columns:
         return {"signals": 0, "wins": 0, "win_pct": 0.0, "cum_net": 0.0, "trades": []}
 
     continuation_col = None
@@ -530,15 +532,28 @@ def _backtest_pattern(
 
     direction_str = "both"
 
-    sig_array = detect_signal(
-        signals_df,
-        pattern_name,
-        complement,
-        connector,
-        direction_str,
-        window=10,
-        continuation=continuation_col,
-    )
+    if is_pure_continuation:
+        if continuation_col is None:
+            return {"signals": 0, "wins": 0, "win_pct": 0.0, "cum_net": 0.0, "trades": []}
+        sig_array = detect_signal(
+            signals_df,
+            continuation_col,
+            None,
+            None,
+            direction_str,
+            window=10,
+            continuation=None,
+        )
+    else:
+        sig_array = detect_signal(
+            signals_df,
+            pattern_name,
+            complement,
+            connector,
+            direction_str,
+            window=10,
+            continuation=continuation_col,
+        )
     signals_series = pd.Series(sig_array, index=signals_df.index)
 
     trades = _simulate_trades(
