@@ -769,7 +769,23 @@ def _hydrate_strategy_config(strategy_name: str) -> dict | None:
         conn.close()
 
     complement = _str_none(row.get("pattern_2"))
-    continuation = _str_none(row.get("continuation"))
+    def _parse_continuation(v):
+        """Parse continuation field — handles Postgres array literal, Python list, or plain string."""
+        if v is None:
+            return None
+        if isinstance(v, list):
+            result = [str(c).strip() for c in v if c and str(c).strip()]
+            return result if result else None
+        s = str(v).strip()
+        if not s:
+            return None
+        if s.startswith('{'):
+            import re
+            items = re.findall(r'"([^"]+)"', s)
+            return items if items else None
+        return s
+
+    continuation = _parse_continuation(row.get("continuation"))
     connector = _str_none(row.get("connector"))
     if complement is None:
         connector = None
