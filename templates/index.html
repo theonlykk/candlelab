@@ -1787,19 +1787,36 @@ function loadContinuationPatterns() {
     },
   ];
 
-  container.innerHTML = options.map(opt => {
-    const selected = state.continuations.includes(opt.key);
-    const maxed = !selected && state.continuations.length >= 2;
-    return `<div class="pattern-card ${selected ? "selected" : ""} ${maxed ? "disabled-card" : ""}"
-         data-cont-key="${opt.key}"
-         onclick="${maxed ? "" : "toggleContPattern('" + opt.key + "')"}"
-         style="${maxed ? "opacity:0.4;pointer-events:none;" : ""}">
+  const selected = state.continuations
+    .map(key => options.find(opt => opt.key === key))
+    .filter(Boolean);
+  const selectedSet = new Set(state.continuations);
+  const unselected = options.filter(opt => !selectedSet.has(opt.key));
+
+  function cardHtml(opt, isSelected) {
+    const maxed = !isSelected && state.continuations.length >= 2;
+    const cls = isSelected ? "pattern-card selected" : "pattern-card";
+    const onclickAttr = maxed ? "" : ` onclick="toggleContPattern('${opt.key}')"`;
+    const styleAttr = maxed ? ' style="opacity:0.4;pointer-events:none;"' : "";
+    const signalDiv = isSelected
+      ? `<div class="cont-signal-count" style="font-size:12px;color:var(--muted);margin-top:6px;"></div>`
+      : "";
+    return `<div class="${cls}" data-cont-key="${opt.key}"${onclickAttr}${styleAttr}>
       <div class="pattern-name">${opt.label}</div>
       <div class="card-desc" style="margin-top:4px;">${opt.desc}</div>
-      ${selected ? `<div class="cont-signal-count" style="font-size:12px;color:var(--muted);margin-top:6px;"></div>` : ""}
+      ${signalDiv}
       <span class="type-badge continuation">CONTINUATION</span>
     </div>`;
-  }).join("");
+  }
+
+  const parts = selected.map(opt => cardHtml(opt, true));
+  if (state.continuations.length >= 1) {
+    parts.push(`<div class="cont-second-header" style="font-size:13px;color:var(--muted);margin:12px 0 8px 0;padding-left:2px;">
+  Add an optional second pattern? <span style="font-size:11px;">(OR logic — either fires = entry)</span>
+</div>`);
+  }
+  parts.push(...unselected.map(opt => cardHtml(opt, false)));
+  container.innerHTML = parts.join("");
 
   const btn = document.getElementById("btn-cont4-continue");
   if (btn) btn.disabled = state.continuations.length === 0;
