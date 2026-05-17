@@ -2275,6 +2275,97 @@ def api_indicator_check():
     })
 
 
+@app.route("/api/step6-stats", methods=["POST"])
+def api_step6_stats():
+    """
+    Batch stats endpoint for wizard step 6 and cont-4.
+    Loads OHLC once, runs all combination projections in memory.
+    Returns stats for every option card given the current selection context.
+    """
+    body = request.get_json(force=True)
+    anchor = body.get("anchor") or ""
+    complement = body.get("complement")
+    connector = body.get("connector")
+    instrument_raw = body.get("instrument", "EUR/USD")
+    interval = body.get("interval", "5m")
+    current_continuations = body.get("current_continuations") or []
+    current_indicators = body.get("current_indicators") or []
+    options = body.get("options") or {}
+    cont_options = options.get("continuations") or []
+    ind_options = options.get("indicators") or []
+
+    instrument = _norm_instrument(instrument_raw)
+    if instrument not in INSTRUMENTS:
+        return jsonify({"error": "Unknown instrument"}), 400
+
+    meta = INSTRUMENTS[instrument]
+    pip = meta["pip"]
+
+    try:
+        df = get_ohlc(instrument, days=30, interval=interval)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    if df.empty:
+        return jsonify({"error": "No data"}), 500
+
+    has_complement = complement is not None and str(complement).strip() != ""
+
+    def _run(continuation_list, indicator_filter):
+        indicator_fn = _make_indicator_fn(indicator_filter) if indicator_filter else None
+        r = _backtest_pattern(
+            df, pip, anchor,
+            timeout=TIMEOUT,
+            indicator_fn=indicator_fn,
+            instrument=instrument,
+            complement=complement if has_complement else None,
+            connector=connector if has_complement else None,
+            continuation=continuation_list if continuation_list else None,
+        )
+        return {"signals": r["signals"], "win_pct": r["win_pct"]}
+
+    baseline_cont = current_continuations if current_continuations else None
+    baseline_ind = [{"type": t} for t in current_indicators] if current_indicators else None
+    baseline = _run(baseline_cont, baseline_ind)
+
+    combinations = []
+
+    for key in cont_options:
+        selected = key in current_continuations
+        if selected:
+            stat = baseline
+        else:
+            projected_cont = list(current_continuations) + [key]
+            stat = _run(projected_cont, baseline_ind)
+        combinations.append({
+            "key": key,
+            "kind": "continuation",
+            "signals": stat["signals"],
+            "win_pct": stat["win_pct"],
+            "selected": selected,
+        })
+
+    for key in ind_options:
+        selected = key in current_indicators
+        if selected:
+            stat = baseline
+        else:
+            projected_ind = [{"type": t} for t in current_indicators] + [{"type": key}]
+            stat = _run(baseline_cont, projected_ind)
+        combinations.append({
+            "key": key,
+            "kind": "indicator",
+            "signals": stat["signals"],
+            "win_pct": stat["win_pct"],
+            "selected": selected,
+        })
+
+    return jsonify({
+        "baseline": baseline,
+        "combinations": combinations,
+    })
+
+
 @app.route("/api/session-check", methods=["POST"])
 def api_session_check():
     """
