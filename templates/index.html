@@ -299,7 +299,7 @@
     box-shadow: none !important;
   }
   /* Promote to Live — prominent green */
-  #wizard-step9-promote-btn, #step9-results-promote-btn {
+  #btn-promote-live-form, #btn-promote-live-results {
     background: var(--accent) !important;
     color: #fff !important;
     font-weight: 700 !important;
@@ -307,7 +307,7 @@
   }
   /* Disabled state while backtest is calculating */
   #wizard-step9-save-btn:disabled, #step9-results-save-btn:disabled,
-  #wizard-step9-promote-btn:disabled, #step9-results-promote-btn:disabled {
+  #btn-promote-live-form:disabled, #btn-promote-live-results:disabled {
     opacity: 0.45;
     cursor: not-allowed;
   }
@@ -1333,7 +1333,7 @@
         <div id="wizard-step9-lifecycle-err" style="display:none;color:var(--red);font-size:12px;"></div>
         <div id="wizard-step9-promote-msg" style="display:none;color:var(--accent);font-size:13px;font-weight:600;"></div>
         <div id="wizard-step9-lifecycle-row">
-          <button type="button" class="cta-btn" style="margin:0;width:100%;" id="wizard-step9-promote-btn" onclick="step9LifecyclePromoteLive('form')">Promote to Live</button>
+          <button type="button" class="cta-btn" style="margin:0;width:100%;" id="btn-promote-live-form" onclick="step9LifecyclePromoteLive('form')">Promote to Live</button>
           <button type="button" id="wizard-step9-save-btn" onclick="step9LifecycleSaveDraft('form')" style="display:block;margin:8px auto 0;background:none;border:none;color:#888;font-size:12px;cursor:pointer;text-decoration:underline;padding:0;text-align:center;width:100%;">Save to Draft instead</button>
         </div>
       </div>
@@ -1357,7 +1357,7 @@
         <div id="step9-results-lifecycle-err" style="display:none;color:var(--red);font-size:13px;margin-bottom:10px;"></div>
         <div id="step9-results-promote-confirm" style="display:none;color:var(--accent);font-size:14px;font-weight:600;margin-bottom:12px;line-height:1.5;"></div>
         <div id="step9-results-lifecycle-row" style="display:flex;flex-direction:column;gap:10px;margin-bottom:8px;">
-          <button type="button" class="cta-btn" id="step9-results-promote-btn" onclick="step9LifecyclePromoteLive('results')">Promote to Live</button>
+          <button type="button" class="cta-btn" id="btn-promote-live-results" onclick="step9LifecyclePromoteLive('results')">Promote to Live</button>
           <button type="button" id="step9-results-save-btn" onclick="step9LifecycleSaveDraft('results')" style="display:block;margin:0 auto;background:none;border:none;color:#888;font-size:12px;cursor:pointer;text-decoration:underline;padding:0;text-align:center;width:100%;">Save to Draft instead</button>
         </div>
         <button onclick="restartWizard()" style="margin-top:16px;">Build another strategy</button>
@@ -2628,7 +2628,7 @@ function loadSummary() {
   const xfEl = document.getElementById("xf-tbody");
   statsEl.innerHTML = `<div class="spinner-wrap" style="padding:30px;"><div class="spinner"></div></div>`;
   xfEl.innerHTML = "";
-  const _btns9 = ["wizard-step9-save-btn","step9-results-save-btn","wizard-step9-promote-btn","step9-results-promote-btn"];
+  const _btns9 = ["wizard-step9-save-btn","step9-results-save-btn","btn-promote-live-form","btn-promote-live-results"];
   _btns9.forEach(id => { const el = document.getElementById(id); if (el) { el.disabled = true; el.textContent = "Calculating…"; } });
 
   const ni = document.getElementById("name-input");
@@ -3582,7 +3582,7 @@ function syncStep9LifecycleLabels() {
     const el = document.getElementById(id);
     if (el) el.textContent = L.saveLabel;
   });
-  ["wizard-step9-promote-btn", "step9-results-promote-btn"].forEach(id => {
+  ["btn-promote-live-form", "btn-promote-live-results"].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.textContent = L.promoteLabel;
   });
@@ -3745,6 +3745,10 @@ function step9LifecyclePromoteLive(source) {
     step9ShowLifecycleErr(source, "PIN required.");
     return;
   }
+  const promoteBtn = source === "form"
+    ? document.getElementById("btn-promote-live-form")
+    : document.getElementById("btn-promote-live-results");
+  if (promoteBtn) promoteBtn.disabled = true;
   const promoteWithDraftId = draftId => apiFetch("/api/strategy/promote-live", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -3773,10 +3777,14 @@ function step9LifecyclePromoteLive(source) {
       .then(res2 => {
         if (res2.error) throw new Error(res2.error);
         step9ShowPromoteConfirmation(source);
+        if (promoteBtn) promoteBtn.disabled = false;
         loadStrategiesPanel();
         clearWizardEdit();
       })
-      .catch(e => step9ShowLifecycleErr(source, e.message || "Promote failed."));
+      .catch(e => {
+        if (promoteBtn) promoteBtn.disabled = false;
+        step9ShowLifecycleErr(source, e.message || "Promote failed.");
+      });
     return;
   }
 
@@ -3800,10 +3808,14 @@ function step9LifecyclePromoteLive(source) {
     .then(res2 => {
       if (res2.error) throw new Error(res2.error);
       step9ShowPromoteConfirmation(source);
+      if (promoteBtn) promoteBtn.disabled = false;
       loadStrategiesPanel();
       if (ed && ed.kind) clearWizardEdit();
     })
-    .catch(e => step9ShowLifecycleErr(source, e.message || "Promote failed."));
+    .catch(e => {
+      if (promoteBtn) promoteBtn.disabled = false;
+      step9ShowLifecycleErr(source, e.message || "Promote failed.");
+    });
 }
 
 function updateWizardActionRow() {
