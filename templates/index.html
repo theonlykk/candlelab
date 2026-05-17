@@ -4011,6 +4011,15 @@ function buildDraftCard(d) {
   card.dataset.draftId = d.id;
   const when = d.saved_at ? new Date(d.saved_at).toLocaleString() : "—";
   const showCb = !!window.__msDraftDeleteMode;
+  let draftPatternDisp = d.pattern_1 || d.anchor || '—';
+  if (d.strategy_type === 'continuation' && d.continuation) {
+    const contArr = Array.isArray(d.continuation)
+      ? d.continuation
+      : (typeof d.continuation === 'string'
+          ? d.continuation.replace(/^\{"|"\}$|^\{|\}$/g, '').split('","')
+          : []);
+    if (contArr.length > 0) draftPatternDisp = contArr.join(' + ');
+  }
   card.innerHTML = `
     <div class="strat-draft-row">
       ${showCb ? `<input type="checkbox" class="draft-sel-cb" data-draft-id="${d.id}" aria-label="Select draft">` : ""}
@@ -4019,7 +4028,7 @@ function buildDraftCard(d) {
           <div class="strat-dot strat-dot-amber" style="margin-top:5px;"></div>
           <div class="strat-card-name">${(d.strategy_name || "Draft").replace(/</g, "")}</div>
         </div>
-        <div class="strat-card-meta">${(d.instrument || "").replace(/</g, "")} · ${d.interval || ""} · ${(d.pattern_1 || d.anchor || "").replace(/</g, "")} · Saved ${when}</div>
+        <div class="strat-card-meta">${(d.instrument || "").replace(/</g, "")} · ${d.interval || ""} · ${draftPatternDisp.replace(/</g, "")} · Saved ${when}</div>
       </div>
     </div>`;
   const main = card.querySelector(".draft-card-main");
@@ -4032,6 +4041,7 @@ function buildDraftCard(d) {
 function _indLabel(type) {
     if (type === 'ma_cross') return 'MA Cross';
     if (type === 'rsi') return 'RSI Envelope';
+    if (type === 'ma_alignment') return 'MA Alignment';
     return type || '—';
 }
 
@@ -4051,6 +4061,14 @@ function buildLiveStratCard(l) {
   }
   let patternDisp = l.pattern_1 || '—';
   if (l.pattern_2) patternDisp += ' / ' + l.pattern_2;
+  if (l.strategy_type === 'continuation' && l.continuation) {
+    const contArr = Array.isArray(l.continuation)
+      ? l.continuation
+      : (typeof l.continuation === 'string'
+          ? l.continuation.replace(/^\{"|"\}$|^\{|\}$/g, '').split('","')
+          : []);
+    if (contArr.length > 0) patternDisp = contArr.join(' + ');
+  }
   card.innerHTML = `
     <div style="cursor:pointer;" class="live-card-main">
       <div class="strat-card-top">
