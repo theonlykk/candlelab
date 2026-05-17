@@ -1793,7 +1793,9 @@ def strategy_trades(strategy_id):
         abort(404)
 
     anchor = (row.get("pattern_1") or row.get("anchor") or "").strip()
-    if not anchor or anchor not in PATTERNS:
+    strategy_type = (row.get("strategy_type") or "reversal").strip()
+    is_pure_continuation = strategy_type == "continuation" and not anchor
+    if not is_pure_continuation and (not anchor or anchor not in PATTERNS):
         abort(404)
 
     raw_p2 = row.get("pattern_2") if row.get("pattern_2") is not None else row.get("complement")
@@ -1959,6 +1961,7 @@ def strategy_trades(strategy_id):
         interval=strat_interval,
         connector=connector or "any-order",
         continuation=str(raw_cont).strip() if has_cont else "—",
+        continuation_patterns=str(row.get("continuation")).replace('{','').replace('}','').replace('"','').strip() if row.get("continuation") else "—",
         indicator=str(row.get("indicator_filter") or "—").strip(),
         session=str(row.get("session") or "All").strip(),
         sl_mult=float(row.get("sl_mult") if row.get("sl_mult") is not None else 1.0),
