@@ -237,9 +237,12 @@ def run_30d_backtest(
             if len(cols) == 1:
                 continuation_col = cols[0]
             elif len(cols) > 1:
-                combined = signals_df[cols[0]].copy()
-                for col in cols[1:]:
-                    combined = combined | signals_df[col]
+                c1, c2 = cols[0], cols[1]
+                # AND (any-order): both patterns must fire within a 10-bar window
+                c1_recent = signals_df[c1].rolling(10, min_periods=1).max().astype(bool)
+                c2_recent = signals_df[c2].rolling(10, min_periods=1).max().astype(bool)
+                # Fire on the bar where the SECOND pattern completes the sequence
+                combined = (c1_recent & signals_df[c2]) | (c2_recent & signals_df[c1])
                 signals_df = signals_df.copy()
                 signals_df["__continuation_combined__"] = combined
                 continuation_col = "__continuation_combined__"
