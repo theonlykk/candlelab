@@ -2204,6 +2204,7 @@ def api_indicator_check():
     interval = body.get("interval", "5m")
     indicator = body.get("indicator")
     indicator_filter = body.get("indicator_filter")
+    continuation = body.get("continuation") or None
 
     instrument = _norm_instrument(instrument_raw)
     if instrument not in INSTRUMENTS:
@@ -2235,6 +2236,7 @@ def api_indicator_check():
         instrument=instrument,
         complement=complement if has_complement else None,
         connector=connector if has_complement else None,
+        continuation=continuation,
     )
     filtered_r = _backtest_pattern(
         df,
@@ -2245,6 +2247,7 @@ def api_indicator_check():
         instrument=instrument,
         complement=complement if has_complement else None,
         connector=connector if has_complement else None,
+        continuation=continuation,
     )
 
     return jsonify({
