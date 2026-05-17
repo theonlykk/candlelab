@@ -1895,7 +1895,7 @@ function loadPatternsStep3() {
   const list = document.getElementById("pattern-list");
   if (!list) return;
   list.innerHTML = `<div class="spinner-wrap"><div class="spinner"></div><span>Loading patterns…</span></div>`;
-  const url = `/api/patterns?instrument=${encodeURIComponent(state.instrument)}&interval=${encodeURIComponent(state.interval)}&strategy_type=all`;
+  const url = `/api/patterns?instrument=${encodeURIComponent(state.instrument)}&interval=${encodeURIComponent(state.interval)}&strategy_type=${encodeURIComponent(state.mode === "continuation" ? "continuation" : "reversal")}`;
   apiFetch(url)
     .then(r => r.json())
     .then(data => {
