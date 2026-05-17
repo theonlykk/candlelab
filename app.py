@@ -154,7 +154,14 @@ def _indicator_type_string_for_chart(raw) -> str | None:
     cfg = _parse_indicator_filter_config(raw)
     if not cfg or not cfg.get("type"):
         return None
-    return str(cfg["type"]).lower()
+    t = str(cfg["type"]).lower()
+    if t == "ma_cross":
+        return "MA Cross"
+    if t == "rsi":
+        return "RSI Envelope"
+    if t == "ma_alignment":
+        return "MA Alignment"
+    return t
 
 
 def check_ma_alignment(df: pd.DataFrame, idx: int, dir_str: str) -> bool:
@@ -1214,11 +1221,15 @@ def strategy_chart(strategy_id):
     except Exception:
         gl_str = str(raw_gl or "—")
 
+    anchor_display = anchor
+    if is_pure_continuation and has_cont:
+        anchor_display = str(raw_cont).replace('{','').replace('}','').replace('"','').strip()
+
     return render_template(
         "chart.html",
         strategy_name=strategy_name,
         instrument=instrument_label,
-        anchor=anchor,
+        anchor=anchor_display,
         complement=comp_disp,
         connector=conn_disp,
         indicator_type=indicator_type,
