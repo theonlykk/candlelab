@@ -2288,45 +2288,7 @@ function toggleContinuationPattern(key) {
     }
   }
   state.continuation = state.continuations.length > 0 ? state.continuations[0] : null;
-  buildContinuationCard();
-  const eng = enginePatternPayload();
-  const contKeys = [...state.continuations];
-  if (contKeys.length > 0 && eng.anchor) {
-    contKeys.forEach(k => {
-      const card = document.querySelector(`#continuation-card-wrap [data-cont-key="${k}"]`);
-      const delta = card && card.querySelector('.cont-signal-count');
-      if (delta) delta.textContent = 'Counting…';
-    });
-    apiFetch('/api/indicator-check', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        anchor: eng.anchor,
-        complement: eng.complement,
-        connector: eng.connector,
-        instrument: state.instrument,
-        interval: state.interval,
-        continuation: contKeys,
-        indicator_filter: null,
-      }),
-    })
-    .then(r => r.json())
-    .then(d => {
-      if (JSON.stringify([...state.continuations]) !== JSON.stringify(contKeys)) return;
-      contKeys.forEach(k => {
-        const card = document.querySelector(`#continuation-card-wrap [data-cont-key="${k}"]`);
-        const delta = card && card.querySelector('.cont-signal-count');
-        if (delta) delta.textContent = `${d.base_signals ?? 0} sig · ${d.base_win_pct ?? 0}%`;
-      });
-    })
-    .catch(() => {
-      contKeys.forEach(k => {
-        const card = document.querySelector(`#continuation-card-wrap [data-cont-key="${k}"]`);
-        const delta = card && card.querySelector('.cont-signal-count');
-        if (delta) delta.textContent = '';
-      });
-    });
-  }
+  initStep5ContinuationAndIndicators();
   const tip = document.getElementById("ai-tip-5");
   if (tip) {
     if (state.continuations.length > 0) {
