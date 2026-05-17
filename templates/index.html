@@ -2502,6 +2502,7 @@ function buildSessionCheckBody() {
     timeout: p.timeout,
   };
   if (p.indicator_filter) body.indicator_filter = p.indicator_filter;
+  if (p.continuation != null) body.continuation = p.continuation;
   return body;
 }
 

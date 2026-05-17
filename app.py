@@ -2386,6 +2386,13 @@ def api_session_check():
     timeout = int(body.get("timeout", TIMEOUT))
     timeout = max(5, min(timeout, 1000))
     indicator_filter = body.get("indicator_filter")
+    continuation = body.get("continuation")
+    if isinstance(continuation, str) and continuation.strip():
+        continuation = continuation.strip() or None
+    elif isinstance(continuation, list):
+        continuation = [c for c in continuation if c and str(c).strip()] or None
+    else:
+        continuation = None
 
     if tp_mult <= sl_mult:
         return jsonify({"error": "tp_multiplier must be greater than sl_multiplier"}), 400
@@ -2419,6 +2426,7 @@ def api_session_check():
             instrument=instrument,
             complement=complement if has_complement else None,
             connector=connector if has_complement else None,
+            continuation=continuation,
         )
         return {"signals": int(r["signals"]), "win_pct": float(r["win_pct"])}
 
