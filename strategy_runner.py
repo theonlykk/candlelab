@@ -215,7 +215,9 @@ def run_30d_backtest(
     ohlc = candles[["open", "high", "low", "close"]]
     signals_df = detect_all(ohlc)
     anchor_col = _resolve_col(signals_df, anchor)
-    if anchor_col is None:
+    is_pure_continuation = anchor_col is None and continuation is not None
+
+    if anchor_col is None and not is_pure_continuation:
         st = _empty_agg("aggressive")
         return (st, []) if return_raw else st
 
@@ -224,19 +226,51 @@ def run_30d_backtest(
         comp_col = _resolve_col(signals_df, str(complement).strip())
 
     continuation_col = None
-    if continuation is not None and str(continuation).strip():
-        continuation_col = _resolve_col(signals_df, str(continuation).strip())
+    if continuation is not None:
+        import re
+        cont_val = continuation
+        if isinstance(cont_val, str) and cont_val.strip().startswith('{'):
+            cont_val = re.findall(r'"([^"]+)"', cont_val)
+        if isinstance(cont_val, list):
+            cols = [_resolve_col(signals_df, c) for c in cont_val if c]
+            cols = [c for c in cols if c is not None]
+            if len(cols) == 1:
+                continuation_col = cols[0]
+            elif len(cols) > 1:
+                combined = signals_df[cols[0]].copy()
+                for col in cols[1:]:
+                    combined = combined | signals_df[col]
+                signals_df = signals_df.copy()
+                signals_df["__continuation_combined__"] = combined
+                continuation_col = "__continuation_combined__"
+        elif isinstance(cont_val, str) and cont_val.strip():
+            continuation_col = _resolve_col(signals_df, cont_val.strip())
 
-    sig_array, anchor_array = detect_signal(
-        signals_df,
-        anchor_col,
-        comp_col,
-        connector,
-        "both",
-        window=COMPLEMENT_WINDOW,
-        continuation=continuation_col,
-        return_anchors=True,
-    )
+    if is_pure_continuation:
+        if continuation_col is None:
+            st = _empty_agg("aggressive")
+            return (st, []) if return_raw else st
+        sig_array, anchor_array = detect_signal(
+            signals_df,
+            continuation_col,
+            None,
+            None,
+            "both",
+            window=COMPLEMENT_WINDOW,
+            continuation=None,
+            return_anchors=True,
+        )
+    else:
+        sig_array, anchor_array = detect_signal(
+            signals_df,
+            anchor_col,
+            comp_col,
+            connector,
+            "both",
+            window=COMPLEMENT_WINDOW,
+            continuation=continuation_col,
+            return_anchors=True,
+        )
     ind_cfg = _parse_indicator_filter_config(indicator_filter)
 
     signals: list[dict] = []
