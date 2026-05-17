@@ -1189,6 +1189,9 @@ def strategy_chart(strategy_id):
                 _sma(close, slow_len), index=df.index, name="ma_slow"
             )
 
+            if is_pure_continuation and continuation_col is not None:
+                anchor = continuation_col
+
             chart_b64 = render_trade_panels(
                 df,
                 trades,
