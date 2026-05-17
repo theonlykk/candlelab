@@ -1215,6 +1215,16 @@ def strategy_chart(strategy_id):
             if is_pure_continuation and continuation_col is not None:
                 anchor = continuation_col
 
+            cfg_continuations = None
+            if is_pure_continuation and continuation is not None:
+                if isinstance(continuation, list):
+                    cfg_continuations = continuation
+                elif isinstance(continuation, str) and continuation.strip().startswith('{'):
+                    import re as _re
+                    cfg_continuations = _re.findall(r'"([^"]+)"', continuation)
+                elif isinstance(continuation, str) and continuation.strip():
+                    cfg_continuations = [continuation.strip()]
+
             chart_b64 = render_trade_panels(
                 df,
                 trades,
@@ -1227,6 +1237,7 @@ def strategy_chart(strategy_id):
                 go_live_at=go_live_ts,
                 ma_fast_series=ma_fast_series,
                 ma_slow_series=ma_slow_series,
+                continuation_patterns=cfg_continuations,
             )
 
     strategy_name = (row.get("strategy_name") or "Strategy").strip() or "Strategy"

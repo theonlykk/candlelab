@@ -1446,6 +1446,7 @@ def render_trade_panels(
     go_live_at: pd.Timestamp | None = None,
     ma_fast_series: pd.Series | None = None,
     ma_slow_series: pd.Series | None = None,
+    continuation_patterns: list | None = None,
 ) -> str:
     """
     Horizontal strip of OHLC panels, one column per trade, with L-shaped entry/exit overlay.
@@ -1473,6 +1474,27 @@ def render_trade_panels(
         if len(words) >= 2:
             return (words[0][0] + words[1][0]).upper()
         return name[:2].upper()
+
+    def _cont_label(col: str, patterns: list | None) -> str:
+        import re
+        if col != "__continuation_combined__" or not patterns:
+            if col == "Inside Bar Breakout": return "IB"
+            if col == "1-Candle Flag": return "1C"
+            if col == "Three Soldiers/Crows": return "TS"
+            words = re.findall(r"[A-Za-z0-9]+", col)
+            return (words[0][:2]).upper() if words else "CT"
+        labels = []
+        for p in patterns:
+            if "Inside Bar" in p: labels.append("IB")
+            elif "1-Candle" in p or "Flag" in p: labels.append("1C")
+            elif "Three Soldiers" in p or "Crows" in p: labels.append("TS")
+            elif "Engulfing" in p: labels.append("EN")
+            elif "Hammer" in p: labels.append("HM")
+            elif "Shooting" in p: labels.append("SS")
+            else:
+                words = re.findall(r"[A-Za-z0-9]+", p)
+                labels.append(words[0][:2].upper() if words else "??")
+        return "+".join(labels) if labels else "CT"
 
     def _trade_is_live(ts_trade, gl: pd.Timestamp | None) -> bool:
         if gl is None or ts_trade is None:
@@ -1588,7 +1610,7 @@ def render_trade_panels(
                 ax.text(
                     lx,
                     hi_max,
-                    "CT" if anch == "__continuation_combined__" else anch[:2].upper(),
+                    _cont_label(anch, continuation_patterns),
                     fontsize=6,
                     color="#4caf50",
                     ha="center",
