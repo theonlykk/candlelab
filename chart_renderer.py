@@ -1588,7 +1588,7 @@ def render_trade_panels(
                 ax.text(
                     lx,
                     hi_max,
-                    anch[:2].upper(),
+                    "CT" if anch == "__continuation_combined__" else anch[:2].upper(),
                     fontsize=6,
                     color="#4caf50",
                     ha="center",
