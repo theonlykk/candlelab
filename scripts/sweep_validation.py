@@ -1,0 +1,1107 @@
+"""
+Sweep validation — foundation: DB fetch and signal detection (Prompt 1).
+"""
+
+import os
+import json
+import numpy as np
+import pandas as pd
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from datetime import datetime, timedelta
+from dotenv import load_dotenv
+
+from candlelab_core.patterns import (
+    engulfing as detect_engulfing,
+    hammer_hanging_man as detect_hammer_hanging_man,
+    shooting_star_inverted_hammer as detect_shooting_star_inv_hammer,
+    detect_inside_bar_breakout,
+    detect_1_candle_flag,
+)
+
+INSTRUMENTS = ["AUD_USD", "NZD_USD", "USD_CHF", "USD_JPY", "GBP_USD", "USD_CAD"]
+PIP = {
+    "AUD_USD": 0.0001,
+    "NZD_USD": 0.0001,
+    "USD_CHF": 0.0001,
+    "USD_JPY": 0.01,
+    "GBP_USD": 0.0001,
+    "USD_CAD": 0.0001,
+}
+GRANULARITY = "M5"
+IS_WEEKS = 4
+OOS_WEEKS = 1
+N_WINDOWS = 52
+SQN_MIN_TRADES_IS = 10  # IS promotion floor — new, replaces SQN_MIN_TRADES in IS gate
+SQN_MIN_TRADES = 30  # final leaderboard floor — unchanged
+SQN_PROMOTE_THRESHOLD = 0.5  # was 1.6
+TP_MULT = 3.0
+SL_MULT = 1.0
+TIMEOUT_BARS = 20
+ATR_PERIOD = 14
+MA_FAST = 10  # was 5
+MA_SLOW = 50  # was 20
+RSI_PERIOD = 14
+RSI_OVERSOLD = 30.0
+RSI_OVERBOUGHT = 70.0
+DEAD_ZONE_HOURS = frozenset({21, 22, 23})  # new — UTC hours excluded from all signals
+OUTPUT_DIR = r"d:\candlelab\scripts\output"
+ROSTER_FILE = r"d:\candlelab\scripts\output\deployment_roster.json"
+
+ANCHORS = ["engulfing", "hammer", "shooting_star"]
+CONTINUATIONS = [None, "inside_bar", "one_candle_flag"]
+CONTINUATION_GAPS = [5, 10, 15]  # new axis — only applies when continuation is not None
+INDICATORS = [None, "rsi_envelope", "ma_cross"]
+DIRECTIONS = ["long", "short"]
+
+PATTERN_FN = {
+    "engulfing": detect_engulfing,
+    "hammer": detect_hammer_hanging_man,
+    "shooting_star": detect_shooting_star_inv_hammer,
+    "inside_bar": detect_inside_bar_breakout,
+    "one_candle_flag": detect_1_candle_flag,
+}
+
+def build_combo_list() -> list[dict]:
+    """
+    Unique strategy combos: 126 reversal-anchored (after dedup) plus 8 pure
+    continuation rows (anchor=None) = 134 total. Gap is stored per row; when
+    continuation is None, gap is always None so gap axis does not multiply
+    identical sweeps.
+    """
+    combos = []
+    for anchor in ANCHORS:
+        for continuation in CONTINUATIONS:
+            for gap in CONTINUATION_GAPS:
+                for indicator in INDICATORS:
+                    for direction in DIRECTIONS:
+                        combos.append(
+                            {
+                                "anchor": anchor,
+                                "continuation": continuation,
+                                "gap": gap if continuation is not None else None,
+                                "indicator": indicator,
+                                "direction": direction,
+                            }
+                        )
+    seen = set()
+    deduped = []
+    for c in combos:
+        key = (
+            c.get("anchor"),
+            c.get("anchor2"),
+            c.get("continuation"),
+            c.get("continuation2"),
+            c["gap"],
+            c["indicator"],
+            c["direction"],
+        )
+        if key not in seen:
+            seen.add(key)
+            deduped.append(c)
+
+    # Pure continuation combos (anchor=None) — 8 additional rows
+    # 2 continuations × 1 gap (None) × 2 directions × 2 indicator states = 8
+    # Gap is irrelevant without an anchor — there is nothing to measure digestion from
+    pure_continuations = ["inside_bar", "one_candle_flag"]
+    pure_cont_indicators = [None, "rsi_envelope"]  # ma_cross replaced by trend alignment
+
+    for continuation in pure_continuations:
+        for direction in DIRECTIONS:
+            for indicator in pure_cont_indicators:
+                deduped.append(
+                    {
+                        "anchor": None,
+                        "continuation": continuation,
+                        "gap": None,
+                        "indicator": indicator,
+                        "direction": direction,
+                        "pure_cont": True,
+                    }
+                )
+
+    # ── 2R combos (dual reversal cluster, any-order 10-bar window) ──
+    anchor_pairs = [
+        ("engulfing", "hammer"),
+        ("engulfing", "shooting_star"),
+        ("hammer", "shooting_star"),
+    ]
+    for a1, a2 in anchor_pairs:
+        for indicator in INDICATORS:
+            for direction in DIRECTIONS:
+                deduped.append(
+                    {
+                        "anchor": a1,
+                        "anchor2": a2,
+                        "continuation": None,
+                        "continuation2": None,
+                        "gap": None,
+                        "indicator": indicator,
+                        "direction": direction,
+                        "combo_type": "2R",
+                    }
+                )
+
+    # ── 2R+1C combos ──
+    for a1, a2 in anchor_pairs:
+        for continuation in ["inside_bar", "one_candle_flag"]:
+            for gap in CONTINUATION_GAPS:
+                for indicator in INDICATORS:
+                    for direction in DIRECTIONS:
+                        deduped.append(
+                            {
+                                "anchor": a1,
+                                "anchor2": a2,
+                                "continuation": continuation,
+                                "continuation2": None,
+                                "gap": gap,
+                                "indicator": indicator,
+                                "direction": direction,
+                                "combo_type": "2R+1C",
+                            }
+                        )
+
+    # ── 2C combos (dual continuation cluster, any-order 10-bar window) ──
+    for indicator in [None, "rsi_envelope"]:
+        for direction in DIRECTIONS:
+            deduped.append(
+                {
+                    "anchor": None,
+                    "anchor2": None,
+                    "continuation": "inside_bar",
+                    "continuation2": "one_candle_flag",
+                    "gap": None,
+                    "indicator": indicator,
+                    "direction": direction,
+                    "pure_cont": True,
+                    "combo_type": "2C",
+                }
+            )
+
+    print(f"[build_combo_list] Total combos: {len(deduped)}")
+    return deduped
+
+
+def fetch_instrument_data(instrument: str, conn) -> pd.DataFrame:
+    """Load M5 candles from oanda_candles; mid OHLC from bid/ask for signal logic."""
+    sql = """
+SELECT time, open, high, low, close,
+       bid_open, bid_close, ask_open, ask_close, volume
+FROM oanda_candles
+WHERE instrument = %s
+  AND granularity = 'M5'
+  AND time >= NOW() - INTERVAL '14 months'
+ORDER BY time ASC
+"""
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(sql, (instrument,))
+        rows = cur.fetchall()
+
+    df = pd.DataFrame(rows)
+
+    if len(df) == 0:
+        raise ValueError(
+            "fetch_instrument_data: no rows returned for instrument "
+            + repr(instrument)
+        )
+
+    df["time"] = pd.to_datetime(df["time"], utc=True)
+    df = df.set_index("time").sort_index()
+
+    df["open"] = (df["bid_open"] + df["ask_open"]) / 2
+    df["close"] = (df["bid_close"] + df["ask_close"]) / 2
+
+    return df
+
+
+def _cluster_detect(
+    a: np.ndarray,
+    b: np.ndarray,
+    dead_mask: np.ndarray,
+    dir_val: int,
+    window: int = 10,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Fully vectorized either-order cluster detection.
+    O(N) complexity. No Python for-loops.
+    A signal fires on bar j when pattern B fires and pattern A fired
+    within the preceding `window` bars (or vice versa).
+    Dead zone bars are zeroed out after detection.
+    """
+    n = len(a)
+    indices = np.arange(n)
+
+    a_hit = a == dir_val
+    b_hit = b == dir_val
+
+    # Track the exact index of the last A fire (forward-filled)
+    a_last = np.full(n, -1, dtype=np.int64)
+    a_last[a_hit] = indices[a_hit]
+    a_last = np.maximum.accumulate(a_last)
+
+    # Track the exact index of the last B fire (forward-filled)
+    b_last = np.full(n, -1, dtype=np.int64)
+    b_last[b_hit] = indices[b_hit]
+    b_last = np.maximum.accumulate(b_last)
+
+    # B fires now, A fired strictly before but within window
+    b_fires_after_a = (
+        b_hit
+        & (a_last != -1)
+        & ((indices - a_last) < window)
+        & (a_last != indices)
+    )
+
+    # A fires now, B fired strictly before but within window
+    a_fires_after_b = (
+        a_hit
+        & (b_last != -1)
+        & ((indices - b_last) < window)
+        & (b_last != indices)
+    )
+
+    # Construct output arrays
+    sig_mask = (b_fires_after_a | a_fires_after_b) & (~dead_mask)
+
+    sig_array = np.zeros(n, dtype=np.int64)
+    sig_array[sig_mask] = dir_val
+
+    anchor_array = np.zeros(n, dtype=np.int64)
+    anchor_array[b_fires_after_a] = a_last[b_fires_after_a]
+    anchor_array[a_fires_after_b] = b_last[a_fires_after_b]
+
+    return sig_array, anchor_array
+
+
+def detect_signals(
+    df,
+    anchor: str | None,
+    continuation,
+    direction,
+    gap: int = 5,
+    anchor2: str | None = None,
+    continuation2: str | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Per-bar signals (+1 long, -1 short, 0 none) and anchor bar index.
+    gap: max bars to search forward for continuation pattern (ignored if continuation=None).
+    Dead zone guard: bars in DEAD_ZONE_HOURS (21, 22, 23 UTC) are zeroed out.
+    """
+    if direction == "long":
+        dir_val = 1
+    elif direction == "short":
+        dir_val = -1
+    else:
+        raise ValueError("direction must be 'long' or 'short', got " + repr(direction))
+
+    n = len(df)
+    sig_array = np.zeros(n, dtype=np.int64)
+    anchor_array = np.zeros(n, dtype=np.int64)
+
+    # Dead zone mask — applied to ALL signals regardless of continuation
+    if isinstance(df.index, pd.DatetimeIndex):
+        dead_mask = df.index.hour.isin(DEAD_ZONE_HOURS)
+    else:
+        dead_mask = np.zeros(n, dtype=bool)
+
+    # 2C — dual continuation cluster (any-order, 10-bar window)
+    if anchor is None and continuation is not None and continuation2 is not None:
+        c1 = PATTERN_FN[continuation](df).fillna(0).astype(np.int64).to_numpy()
+        c2 = PATTERN_FN[continuation2](df).fillna(0).astype(np.int64).to_numpy()
+        return _cluster_detect(c1, c2, dead_mask, dir_val)
+
+    # 2R — dual reversal cluster (any-order, 10-bar window)
+    if anchor is not None and anchor2 is not None and continuation is None:
+        a1 = PATTERN_FN[anchor](df).fillna(0).astype(np.int64).to_numpy()
+        a2 = PATTERN_FN[anchor2](df).fillna(0).astype(np.int64).to_numpy()
+        return _cluster_detect(a1, a2, dead_mask, dir_val)
+
+    # 2R+1C — dual reversal cluster + single continuation
+    if anchor is not None and anchor2 is not None and continuation is not None:
+        a1 = PATTERN_FN[anchor](df).fillna(0).astype(np.int64).to_numpy()
+        a2 = PATTERN_FN[anchor2](df).fillna(0).astype(np.int64).to_numpy()
+        cluster_sig, cluster_anc = _cluster_detect(a1, a2, dead_mask, dir_val)
+        c = PATTERN_FN[continuation](df).fillna(0).astype(np.int64).to_numpy()
+        sig_array = np.zeros(n, dtype=np.int64)
+        anchor_array = np.zeros(n, dtype=np.int64)
+        cluster_indices = np.where(cluster_sig == dir_val)[0]
+        for i in cluster_indices:
+            j_end = min(int(i) + gap, n - 1)
+            for j in range(int(i) + 1, j_end + 1):
+                if c[j] == dir_val and not dead_mask[j]:
+                    sig_array[j] = dir_val
+                    anchor_array[j] = cluster_anc[i]
+                    break
+        return sig_array, anchor_array
+
+    # Handle pure continuation combos (anchor=None)
+    if anchor is None:
+        if continuation is None:
+            raise ValueError("anchor=None requires a continuation pattern")
+        cont_series = PATTERN_FN[continuation](df).fillna(0).astype(np.int64)
+        c = cont_series.to_numpy()
+        for i in range(n):
+            if c[i] == dir_val and not dead_mask[i]:
+                sig_array[i] = dir_val
+                anchor_array[i] = i  # anchor_idx == signal_idx for pure cont
+        return sig_array, anchor_array
+
+    anchor_series = PATTERN_FN[anchor](df).fillna(0).astype(np.int64)
+    a = anchor_series.to_numpy()
+
+    if continuation is None:
+        for i in range(n):
+            if a[i] == dir_val and not dead_mask[i]:
+                sig_array[i] = dir_val
+                anchor_array[i] = i
+        return sig_array, anchor_array
+
+    cont_series = PATTERN_FN[continuation](df).fillna(0).astype(np.int64)
+    c = cont_series.to_numpy()
+
+    for i in range(n):
+        if a[i] != dir_val:
+            continue
+        j_end = min(i + gap, n - 1)
+        if i + 1 > j_end:
+            continue
+        for j in range(i + 1, j_end + 1):
+            if c[j] == dir_val and not dead_mask[j]:
+                sig_array[j] = dir_val
+                anchor_array[j] = i
+                break
+
+    return sig_array, anchor_array
+
+
+def wilder_rma(series: np.ndarray, period: int) -> np.ndarray:
+    result = np.full(len(series), np.nan)
+    if len(series) < period:
+        return result
+    result[period - 1] = np.mean(series[:period])
+    alpha = 1.0 / period
+    for i in range(period, len(series)):
+        result[i] = alpha * series[i] + (1 - alpha) * result[i - 1]
+    return result
+
+
+def compute_atr(df: pd.DataFrame, period: int = ATR_PERIOD) -> np.ndarray:
+    high = df["high"].values
+    low = df["low"].values
+    close = df["close"].values
+    tr = np.maximum(
+        high[1:] - low[1:],
+        np.maximum(
+            np.abs(high[1:] - close[:-1]),
+            np.abs(low[1:] - close[:-1]),
+        ),
+    )
+    tr = np.concatenate([[high[0] - low[0]], tr])
+    return wilder_rma(tr, period)
+
+
+def compute_indicators(df: pd.DataFrame) -> dict:
+    close = df["close"].to_numpy()
+
+    delta = np.diff(close, prepend=close[0])
+    gain = np.where(delta > 0, delta, 0.0)
+    loss = np.where(delta < 0, -delta, 0.0)
+    avg_gain = wilder_rma(gain, RSI_PERIOD)
+    avg_loss = wilder_rma(loss, RSI_PERIOD)
+    rs = np.where(avg_loss == 0, np.inf, avg_gain / avg_loss)
+    rsi = 100.0 - (100.0 / (1.0 + rs))
+
+    sma_fast = df["close"].rolling(MA_FAST).mean().to_numpy()
+    sma_slow = df["close"].rolling(MA_SLOW).mean().to_numpy()
+
+    atr = compute_atr(df)
+
+    return {"rsi": rsi, "sma_fast": sma_fast, "sma_slow": sma_slow, "atr": atr}
+
+
+def passes_rsi_envelope(
+    rsi: np.ndarray,
+    signal_idx: int,
+    anchor_idx: int,
+    direction: str,
+) -> bool:
+    look_start = max(0, anchor_idx - 5)
+    look_end = min(len(rsi) - 1, anchor_idx + 10)
+    window_rsi = rsi[look_start : look_end + 1]
+    if np.any(np.isnan(window_rsi)):
+        return False
+    if signal_idx < 1 or signal_idx >= len(rsi):
+        return False
+    if direction == "long":
+        phase1 = bool(np.any(window_rsi <= RSI_OVERSOLD))
+        phase3 = bool(rsi[signal_idx] > rsi[signal_idx - 1])
+    else:
+        phase1 = bool(np.any(window_rsi >= RSI_OVERBOUGHT))
+        phase3 = bool(rsi[signal_idx] < rsi[signal_idx - 1])
+    return phase1 and phase3
+
+
+def passes_ma_cross(
+    sma_fast: np.ndarray,
+    sma_slow: np.ndarray,
+    signal_idx: int,
+    anchor_idx: int,
+    direction: str,
+    has_continuation: bool,
+) -> bool:
+    start = anchor_idx if has_continuation else max(0, signal_idx - 5)
+    end = signal_idx
+    if end < start or end >= len(sma_fast):
+        return False
+    fast_w = sma_fast[start : end + 1]
+    slow_w = sma_slow[start : end + 1]
+    if np.any(np.isnan(fast_w)) or np.any(np.isnan(slow_w)):
+        return False
+    if direction == "long":
+        phase1 = bool(np.any(fast_w < slow_w))
+        crosses = (fast_w[:-1] < slow_w[:-1]) & (fast_w[1:] >= slow_w[1:])
+        phase2 = bool(np.any(crosses))
+        phase3 = bool(sma_fast[signal_idx] > sma_slow[signal_idx])
+    else:
+        phase1 = bool(np.any(fast_w > slow_w))
+        crosses = (fast_w[:-1] > slow_w[:-1]) & (fast_w[1:] <= slow_w[1:])
+        phase2 = bool(np.any(crosses))
+        phase3 = bool(sma_fast[signal_idx] < sma_slow[signal_idx])
+    return phase1 and phase2 and phase3
+
+
+def passes_trend_alignment(
+    sma_fast: np.ndarray,
+    sma_slow: np.ndarray,
+    df: pd.DataFrame,
+    signal_idx: int,
+    direction: str,
+) -> bool:
+    """
+    Full-stack trend alignment for pure continuation combos (anchor=None).
+    Requires BOTH conditions at the signal bar:
+      Long:  bid_close > sma_slow  AND  sma_fast > sma_slow
+      Short: ask_close < sma_slow  AND  sma_fast < sma_slow
+
+    Uses bid_close/ask_close (not mid-price) for OANDA BAM retail parity.
+    Returns False if any value is NaN or signal_idx is out of bounds.
+    """
+    if signal_idx < 0 or signal_idx >= len(sma_fast):
+        return False
+    if np.isnan(sma_fast[signal_idx]) or np.isnan(sma_slow[signal_idx]):
+        return False
+
+    fast_val = sma_fast[signal_idx]
+    slow_val = sma_slow[signal_idx]
+
+    if direction == "long":
+        price = float(df["bid_close"].iloc[signal_idx])
+        return bool(price > slow_val and fast_val > slow_val)
+    else:
+        price = float(df["ask_close"].iloc[signal_idx])
+        return bool(price < slow_val and fast_val < slow_val)
+
+
+def sweep_simulation(
+    df: pd.DataFrame,
+    sig_array: np.ndarray,
+    anchor_array: np.ndarray,
+    direction: str,
+    pip_size: float,
+    atr: np.ndarray,
+    avg_spread: float,
+    timeout_bars: int = TIMEOUT_BARS,
+    tp_mult: float = TP_MULT,
+    sl_mult: float = SL_MULT,
+) -> list[dict]:
+    n = len(df)
+    high = df["high"].to_numpy()
+    low = df["low"].to_numpy()
+    bid_open = df["bid_open"].to_numpy()
+    ask_open = df["ask_open"].to_numpy()
+    bid_close = df["bid_close"].to_numpy()
+    ask_close = df["ask_close"].to_numpy()
+
+    if direction == "long":
+        sig_val = 1
+    elif direction == "short":
+        sig_val = -1
+    else:
+        raise ValueError("direction must be 'long' or 'short', got " + repr(direction))
+
+    trades: list[dict] = []
+    block_fill = -1
+    block_exit = -1
+
+    for sig_idx in range(n):
+        if int(sig_array[sig_idx]) != sig_val:
+            continue
+        if block_exit >= 0 and block_fill <= sig_idx <= block_exit:
+            continue
+
+        fill_idx = sig_idx + 1
+        if fill_idx >= n:
+            continue
+
+        if direction == "long":
+            entry = float(ask_open[fill_idx])
+        else:
+            entry = float(bid_open[fill_idx])
+
+        atr_i = atr[sig_idx]
+        if not np.isfinite(atr_i):
+            continue
+
+        sl_dist = max(5.0 * pip_size, float(atr_i))
+        spread_cost = avg_spread / sl_dist
+
+        if direction == "long":
+            sl_price = entry - sl_dist * sl_mult
+            tp_price = entry + sl_dist * tp_mult
+        else:
+            sl_price = entry + sl_dist * sl_mult
+            tp_price = entry - sl_dist * tp_mult
+
+        bars_remaining = max(0, (sig_idx + timeout_bars - fill_idx) - 1)
+
+        r_multiple = float("nan")
+        result = ""
+        exit_bar = fill_idx
+
+        if bars_remaining <= 0:
+            exit_bar = fill_idx
+            if exit_bar >= n:
+                continue
+            if direction == "long":
+                exit_price = float(bid_close[exit_bar])
+                r_multiple = (exit_price - entry) / sl_dist
+            else:
+                exit_price = float(ask_close[exit_bar])
+                r_multiple = (entry - exit_price) / sl_dist
+            result = "TIMEOUT"
+        else:
+            broke = False
+            for j in range(1, bars_remaining + 1):
+                bar = fill_idx + j
+                if bar >= n:
+                    exit_bar = min(fill_idx + bars_remaining, n - 1)
+                    exit_bar = max(exit_bar, fill_idx)
+                    if direction == "long":
+                        exit_price = float(bid_close[exit_bar])
+                        r_multiple = (exit_price - entry) / sl_dist
+                    else:
+                        exit_price = float(ask_close[exit_bar])
+                        r_multiple = (entry - exit_price) / sl_dist
+                    result = "TIMEOUT"
+                    broke = True
+                    break
+                if direction == "long":
+                    if low[bar] <= sl_price:
+                        r_multiple = -sl_mult - spread_cost
+                        result = "LOSS"
+                        exit_bar = bar
+                        broke = True
+                        break
+                    if high[bar] >= tp_price:
+                        r_multiple = tp_mult - spread_cost
+                        result = "WIN"
+                        exit_bar = bar
+                        broke = True
+                        break
+                else:
+                    if high[bar] >= sl_price:
+                        r_multiple = -sl_mult - spread_cost
+                        result = "LOSS"
+                        exit_bar = bar
+                        broke = True
+                        break
+                    if low[bar] <= tp_price:
+                        r_multiple = tp_mult - spread_cost
+                        result = "WIN"
+                        exit_bar = bar
+                        broke = True
+                        break
+            if not broke:
+                exit_bar = fill_idx + bars_remaining
+                if exit_bar >= n:
+                    exit_bar = n - 1
+                exit_bar = max(exit_bar, fill_idx)
+                if direction == "long":
+                    exit_price = float(bid_close[exit_bar])
+                    r_multiple = (exit_price - entry) / sl_dist
+                else:
+                    exit_price = float(ask_close[exit_bar])
+                    r_multiple = (entry - exit_price) / sl_dist
+                result = "TIMEOUT"
+
+        if not np.isfinite(r_multiple):
+            continue
+
+        trades.append(
+            {
+                "sig_idx": sig_idx,
+                "fill_idx": fill_idx,
+                "result": result,
+                "r_multiple": float(r_multiple),
+                "sl_dist": sl_dist,
+            }
+        )
+        block_fill = fill_idx
+        block_exit = exit_bar
+
+    return trades
+
+
+def sqn100(r_multiples: list[float], n_min: int = SQN_MIN_TRADES) -> float:
+    n = len(r_multiples)
+    if n < n_min:
+        return 0.0
+    r = np.array(r_multiples, dtype=float)
+    mean_r = np.mean(r)
+    std_r = np.std(r, ddof=1)
+    if std_r == 0.0:
+        return 0.0
+    return round((mean_r / std_r) * np.sqrt(min(n, 100)), 4)
+
+
+def _apply_indicator_filter(
+    sig: np.ndarray,
+    anc: np.ndarray,
+    combo: dict,
+    inds: dict,
+    df: pd.DataFrame,
+) -> tuple[np.ndarray, np.ndarray]:
+    is_pure_cont = combo.get("pure_cont", False)
+    filtered_sig = sig.copy()
+    filtered_anc = anc.copy()
+    signal_indices = np.where(sig != 0)[0]
+    for si in signal_indices:
+        si = int(si)
+        ai = int(anc[si])
+
+        if is_pure_cont:
+            if not passes_trend_alignment(
+                inds["sma_fast"],
+                inds["sma_slow"],
+                df,
+                si,
+                combo["direction"],
+            ):
+                filtered_sig[si] = 0
+                filtered_anc[si] = 0
+                continue
+            if combo["indicator"] == "rsi_envelope":
+                if not passes_rsi_envelope(
+                    inds["rsi"], si, ai, combo["direction"]
+                ):
+                    filtered_sig[si] = 0
+                    filtered_anc[si] = 0
+        else:
+            if combo["indicator"] == "rsi_envelope":
+                if not passes_rsi_envelope(
+                    inds["rsi"], si, ai, combo["direction"]
+                ):
+                    filtered_sig[si] = 0
+                    filtered_anc[si] = 0
+            elif combo["indicator"] == "ma_cross":
+                if not passes_ma_cross(
+                    inds["sma_fast"],
+                    inds["sma_slow"],
+                    si,
+                    ai,
+                    combo["direction"],
+                    combo["continuation"] is not None,
+                ):
+                    filtered_sig[si] = 0
+                    filtered_anc[si] = 0
+    return filtered_sig, filtered_anc
+
+
+_WFV_COLUMNS = [
+    "window_idx",
+    "is_start",
+    "is_end",
+    "oos_start",
+    "oos_end",
+    "anchor",
+    "continuation",
+    "gap",
+    "indicator",
+    "direction",
+    "is_sqn100",
+    "is_n_trades",
+    "is_mean_r",
+    "oos_sqn100",
+    "oos_n_trades",
+    "oos_mean_r",
+]
+
+
+def run_wfv(df: pd.DataFrame, instrument: str, pip_size: float) -> pd.DataFrame:
+    _ = instrument
+    avg_spread = float((df["ask_open"] - df["bid_open"]).mean())
+    df = df.sort_index()
+    data_end = df.index.max()
+    combos = build_combo_list()
+    all_rows: list[dict] = []
+
+    # Pre-compute MA arrays on full df to avoid NaN warmup on sliced windows
+    full_sma_fast = df["close"].rolling(MA_FAST).mean().to_numpy()
+    full_sma_slow = df["close"].rolling(MA_SLOW).mean().to_numpy()
+
+    for window_idx in range(N_WINDOWS):
+        weeks_shift = N_WINDOWS - 1 - window_idx
+        oos_end = data_end - pd.Timedelta(weeks=weeks_shift)
+        oos_start = oos_end - pd.Timedelta(weeks=OOS_WEEKS)
+        is_start = oos_start - pd.Timedelta(weeks=IS_WEEKS)
+
+        is_df = df.loc[(df.index >= is_start) & (df.index < oos_start)]
+        oos_df = df.loc[(df.index >= oos_start) & (df.index <= oos_end)]
+
+        if len(is_df) < 500 or len(oos_df) < 50:
+            continue
+
+        is_inds = compute_indicators(is_df)
+        oos_inds = compute_indicators(oos_df)
+
+        is_start_pos = df.index.get_loc(is_df.index[0]) if len(is_df) > 0 else 0
+        is_end_pos = df.index.get_loc(is_df.index[-1]) + 1 if len(is_df) > 0 else 0
+        oos_start_pos = df.index.get_loc(oos_df.index[0]) if len(oos_df) > 0 else 0
+        oos_end_pos = df.index.get_loc(oos_df.index[-1]) + 1 if len(oos_df) > 0 else 0
+
+        is_inds["sma_fast"] = full_sma_fast[is_start_pos:is_end_pos]
+        oos_inds["sma_fast"] = full_sma_fast[oos_start_pos:oos_end_pos]
+        is_inds["sma_slow"] = full_sma_slow[is_start_pos:is_end_pos]
+        oos_inds["sma_slow"] = full_sma_slow[oos_start_pos:oos_end_pos]
+
+        is_rows: list[dict] = []
+        for combo in combos:
+            sig, anc = detect_signals(
+                is_df,
+                combo["anchor"],
+                combo["continuation"],
+                combo["direction"],
+                gap=combo["gap"] if combo["gap"] is not None else 5,
+                anchor2=combo.get("anchor2"),
+                continuation2=combo.get("continuation2"),
+            )
+            sig, anc = _apply_indicator_filter(sig, anc, combo, is_inds, is_df)
+            trades = sweep_simulation(
+                is_df,
+                sig,
+                anc,
+                combo["direction"],
+                pip_size,
+                is_inds["atr"],
+                avg_spread,
+            )
+            r_mults = [float(t["r_multiple"]) for t in trades]
+            is_score = sqn100(r_mults, n_min=SQN_MIN_TRADES_IS)
+            is_n = len(trades)
+            is_mean_r = float(np.mean(r_mults)) if r_mults else 0.0
+            is_rows.append(
+                {
+                    "combo": combo,
+                    "is_sqn100": is_score,
+                    "is_n_trades": is_n,
+                    "is_mean_r": is_mean_r,
+                }
+            )
+
+        is_rows.sort(key=lambda r: r["is_sqn100"], reverse=True)
+
+        # DEBUG window 0 — remove after diagnose
+        if window_idx == 0:
+            print("\n  --- DEBUG window 0: top 10 IS by is_sqn100 (desc) ---")
+            for rank, row in enumerate(is_rows[:10], start=1):
+                c = row["combo"]
+                print(
+                    f"  #{rank}  anchor={c['anchor']!r} continuation={c['continuation']!r} "
+                    f"gap={c['gap']!r} indicator={c['indicator']!r} direction={c['direction']!r} | "
+                    f"is_sqn100={row['is_sqn100']} | is_n_trades={row['is_n_trades']}"
+                )
+            n_ge_10 = sum(1 for r in is_rows if r["is_n_trades"] >= 10)
+            print(f"  DEBUG: combos with is_n_trades >= 10: {n_ge_10}\n")
+
+        promoted = [
+            r for r in is_rows if r["is_sqn100"] >= SQN_PROMOTE_THRESHOLD
+        ][:5]
+
+        is_start_ts = is_df.index[0]
+        is_end_ts = is_df.index[-1]
+        oos_start_ts = oos_df.index[0]
+        oos_end_ts = oos_df.index[-1]
+
+        print(
+            f"  Window {window_idx + 1:02d}/{N_WINDOWS} | "
+            f"IS {is_start_ts.date()}→{is_end_ts.date()} | "
+            f"OOS {oos_start_ts.date()}→{oos_end_ts.date()} | "
+            f"promoted={len(promoted)}"
+        )
+
+        for pr in promoted:
+            combo = pr["combo"]
+            sig_o, anc_o = detect_signals(
+                oos_df,
+                combo["anchor"],
+                combo["continuation"],
+                combo["direction"],
+                gap=combo["gap"] if combo["gap"] is not None else 5,
+                anchor2=combo.get("anchor2"),
+                continuation2=combo.get("continuation2"),
+            )
+            sig_o, anc_o = _apply_indicator_filter(
+                sig_o, anc_o, combo, oos_inds, oos_df
+            )
+            oos_trades = sweep_simulation(
+                oos_df,
+                sig_o,
+                anc_o,
+                combo["direction"],
+                pip_size,
+                oos_inds["atr"],
+                avg_spread,
+            )
+            oos_r = [float(t["r_multiple"]) for t in oos_trades]
+            oos_n_trades = len(oos_trades)
+            oos_mean_r = float(np.mean(oos_r)) if oos_r else 0.0
+            oos_sqn100 = 0.0
+
+            all_rows.append(
+                {
+                    "window_idx": window_idx,
+                    "is_start": is_start_ts,
+                    "is_end": is_end_ts,
+                    "oos_start": oos_start_ts,
+                    "oos_end": oos_end_ts,
+                    "anchor": combo["anchor"],
+                    "continuation": combo["continuation"],
+                    "gap": combo["gap"],
+                    "indicator": combo["indicator"],
+                    "direction": combo["direction"],
+                    "is_sqn100": pr["is_sqn100"],
+                    "is_n_trades": pr["is_n_trades"],
+                    "is_mean_r": pr["is_mean_r"],
+                    "oos_sqn100": oos_sqn100,
+                    "oos_n_trades": oos_n_trades,
+                    "oos_mean_r": oos_mean_r,
+                }
+            )
+
+    if not all_rows:
+        return pd.DataFrame(columns=_WFV_COLUMNS)
+    return pd.DataFrame(all_rows)
+
+
+def compute_shadow_status(wfv_df: pd.DataFrame, instrument: str) -> dict:
+    total_trades = int(wfv_df["oos_n_trades"].sum())
+    if total_trades == 0:
+        agg_mean_r = 0.0
+    else:
+        agg_mean_r = float(
+            (wfv_df["oos_mean_r"] * wfv_df["oos_n_trades"]).sum() / total_trades
+        )
+
+    eligible = wfv_df[wfv_df["oos_n_trades"] >= 1]
+    if len(eligible) == 0:
+        base_rate = 0.0
+    else:
+        base_rate = float((eligible["oos_mean_r"] > 0).sum() / len(eligible))
+
+    combo_cols = ["anchor", "continuation", "indicator", "direction"]
+
+    def _combo_agg(g: pd.DataFrame) -> pd.Series:
+        nt = int(g["oos_n_trades"].sum())
+        if nt > 0:
+            wm = float((g["oos_mean_r"] * g["oos_n_trades"]).sum() / nt)
+        else:
+            wm = 0.0
+        return pd.Series(
+            {
+                "oos_n_trades": nt,
+                "oos_mean_r": wm,
+                "n_windows": len(g),
+            }
+        )
+
+    grouped = wfv_df.groupby(
+        combo_cols, sort=False, dropna=False
+    ).apply(_combo_agg).reset_index()
+    eligible_combos = grouped[grouped["oos_n_trades"] >= SQN_MIN_TRADES]
+    if len(eligible_combos) == 0:
+        top_combo_str = ""
+        top_sqn100 = 0.0
+        top_configs: list[dict] = []
+    else:
+        eligible_combos = eligible_combos.sort_values(
+            "oos_mean_r", ascending=False
+        )
+        top = eligible_combos.iloc[0]
+        top_combo_str = (
+            f"{top['anchor']}|{top['continuation']}|"
+            f"{top['indicator']}|{top['direction']}"
+        )
+        top_sqn100 = float(top["oos_mean_r"])
+
+        top5 = eligible_combos.head(5)
+        top_configs = [
+            {
+                "anchor": row["anchor"],
+                "continuation": row["continuation"],
+                "indicator": row["indicator"],
+                "direction": row["direction"],
+                "oos_mean_r": round(float(row["oos_mean_r"]), 4),
+                "oos_n_trades": int(row["oos_n_trades"]),
+            }
+            for _, row in top5.iterrows()
+        ]
+
+    if agg_mean_r > 0 and base_rate >= 0.5:
+        status = "DEPLOY"
+    else:
+        status = "PAUSE"
+
+    return {
+        "instrument": instrument,
+        "status": status,
+        "agg_mean_r": round(agg_mean_r, 6),
+        "base_rate": round(base_rate, 4),
+        "top_combo": top_combo_str,
+        "sqn100": round(top_sqn100, 4),
+        "top_configs": top_configs,
+    }
+
+
+def write_leaderboard_csv(wfv_df: pd.DataFrame, instrument: str) -> None:
+    combo_cols = ["anchor", "continuation", "gap", "indicator", "direction"]
+
+    def _lb_agg(g: pd.DataFrame) -> pd.Series:
+        nt = int(g["oos_n_trades"].sum())
+        if nt > 0:
+            oos_mean = float((g["oos_mean_r"] * g["oos_n_trades"]).sum() / nt)
+        else:
+            oos_mean = 0.0
+        return pd.Series(
+            {
+                "oos_sqn100": 0.0,
+                "oos_mean_r": oos_mean,
+                "oos_n_trades": nt,
+                "is_sqn100": float(g["is_sqn100"].mean()),
+                "n_windows_promoted": len(g),
+            }
+        )
+
+    grouped = (
+        wfv_df.groupby(combo_cols, sort=False, dropna=False)
+        .apply(_lb_agg)
+        .reset_index()
+        .sort_values("oos_mean_r", ascending=False)
+    )
+    path = os.path.join(OUTPUT_DIR, f"leaderboard_{instrument}.csv")
+    grouped.to_csv(path, index=False)
+
+
+def write_shadow_book_state(shadow_rows: list[dict], conn) -> None:
+    sql = """
+        INSERT INTO shadow_book_state
+            (instrument, status, agg_mean_r, base_rate, top_combo, sqn100, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, NOW())
+        ON CONFLICT (instrument) DO UPDATE SET
+            status     = EXCLUDED.status,
+            agg_mean_r = EXCLUDED.agg_mean_r,
+            base_rate  = EXCLUDED.base_rate,
+            top_combo  = EXCLUDED.top_combo,
+            sqn100     = EXCLUDED.sqn100,
+            updated_at = NOW()
+    """
+    cur = conn.cursor()
+    for row in shadow_rows:
+        cur.execute(
+            sql,
+            (
+                row["instrument"],
+                row["status"],
+                row["agg_mean_r"],
+                row["base_rate"],
+                row["top_combo"],
+                row["sqn100"],
+            ),
+        )
+    conn.commit()
+    cur.close()
+
+
+def main():
+    load_dotenv()
+    db_url = os.environ.get("DATABASE_URL")
+    if not db_url:
+        raise RuntimeError("DATABASE_URL not set. Add it to d:\\candlelab\\.env")
+
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    combos = build_combo_list()
+    print(f"Combo space: {len(combos)} combinations")
+    test_combo = next(c for c in combos if c["continuation"] is not None)
+    print(f"Smoke test combo: {test_combo}")
+    test_combo_pure = next(c for c in combos if c.get("pure_cont"))
+    print(f"Pure cont smoke test combo: {test_combo_pure}")
+
+    all_shadow_rows = []
+    roster = {
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "instruments": {},
+    }
+
+    with psycopg2.connect(db_url) as conn:
+        for instrument in INSTRUMENTS:
+            print(f"\n{'='*60}")
+            print(f"Sweeping {instrument}")
+            print(f"{'='*60}")
+
+            df = fetch_instrument_data(instrument, conn)
+            print(f"  Fetched {len(df):,} M5 bars")
+
+            wfv_df = run_wfv(df, instrument, PIP[instrument])
+
+            if wfv_df.empty:
+                print(
+                    f"  WARNING: No promoted combos for {instrument} — "
+                    f"check data coverage and SQN threshold"
+                )
+                shadow = {
+                    "instrument": instrument,
+                    "status": "PAUSE",
+                    "agg_mean_r": 0.0,
+                    "base_rate": 0.0,
+                    "top_combo": "",
+                    "sqn100": 0.0,
+                    "top_configs": [],
+                }
+            else:
+                write_leaderboard_csv(wfv_df, instrument)
+                print(f"  Leaderboard written: output/leaderboard_{instrument}.csv")
+                shadow = compute_shadow_status(wfv_df, instrument)
+
+            all_shadow_rows.append(shadow)
+            roster["instruments"][instrument] = {
+                "shadow_status": shadow["status"],
+                "agg_mean_r": shadow["agg_mean_r"],
+                "base_rate": shadow["base_rate"],
+                "top_configs": shadow["top_configs"],
+            }
+            print(
+                f"  {instrument}: {shadow['status']} | "
+                f"agg_mean_r={shadow['agg_mean_r']:.4f} | "
+                f"base_rate={shadow['base_rate']:.2%}"
+            )
+
+        write_shadow_book_state(all_shadow_rows, conn)
+        print("\nShadow book state written to Postgres.")
+
+    with open(ROSTER_FILE, "w") as f:
+        json.dump(roster, f, indent=2)
+    print(f"Deployment roster written to {ROSTER_FILE}")
+    print("\nSweep complete.")
+
+
+if __name__ == "__main__":
+    main()
