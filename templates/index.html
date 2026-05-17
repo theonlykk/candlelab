@@ -2153,6 +2153,92 @@ function initStep5ContinuationAndIndicators() {
   if (!state.continuations) state.continuations = [];
   buildContinuationCard();
   buildIndicatorStep();
+
+  // Warm & Batch prefetch for step 6 stats
+  // Phase 1: fire anchor-only baseline first to warm Redis cache
+  const eng = enginePatternPayload();
+  if (!eng.anchor) return;
+
+  const basePayload = {
+    anchor: eng.anchor,
+    complement: eng.complement,
+    connector: eng.connector,
+    instrument: state.instrument,
+    interval: state.interval,
+    indicator_filter: null,
+    continuation: null,
+  };
+
+  const contOptions = ["Three Soldiers/Crows", "Inside Bar Breakout", "1-Candle Flag"];
+  const indOptions = ["ma_cross", "ma_alignment", "rsi"];
+
+  contOptions.forEach(k => {
+    const card = document.querySelector(`#continuation-card-wrap [data-cont-key="${k}"]`);
+    const delta = card && card.querySelector('.cont-signal-count');
+    if (delta) delta.textContent = '…';
+  });
+  indOptions.forEach(k => {
+    const el = document.getElementById(`delta-${k}`);
+    if (el) el.textContent = 'Calculating…';
+  });
+
+  apiFetch('/api/indicator-check', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(basePayload),
+  })
+  .then(r => r.json())
+  .then(baseline => {
+    const baseSig = baseline.base_signals ?? 0;
+    const baseWin = baseline.base_win_pct ?? 0;
+
+    const contRequests = contOptions.map(k =>
+      apiFetch('/api/indicator-check', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({...basePayload, continuation: [k]}),
+      }).then(r => r.json()).then(d => ({type: 'cont', key: k, d}))
+    );
+
+    const indRequests = indOptions.map(k =>
+      apiFetch('/api/indicator-check', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({...basePayload, indicator_filter: [{type: k}]}),
+      }).then(r => r.json()).then(d => ({type: 'ind', key: k, d}))
+    );
+
+    return Promise.all([...contRequests, ...indRequests])
+      .then(results => {
+        results.forEach(({type, key, d}) => {
+          if (type === 'cont') {
+            const card = document.querySelector(`#continuation-card-wrap [data-cont-key="${key}"]`);
+            const delta = card && card.querySelector('.cont-signal-count');
+            if (delta) delta.textContent =
+              `Before: ${baseSig} sig · ${baseWin}% → After: ${d.base_signals ?? 0} sig · ${d.base_win_pct ?? 0}%`;
+          } else {
+            const el = document.getElementById(`delta-${key}`);
+            if (el) {
+              const pos = (d.filtered_win_pct ?? 0) >= (baseWin ?? 0);
+              el.className = 'toggle-delta ' + (pos ? 'delta-pos' : 'delta-neg');
+              el.textContent =
+                `Before: ${baseSig} sig · ${baseWin}% → After: ${d.filtered_signals ?? 0} sig · ${d.filtered_win_pct ?? 0}%`;
+            }
+          }
+        });
+      });
+  })
+  .catch(() => {
+    contOptions.forEach(k => {
+      const card = document.querySelector(`#continuation-card-wrap [data-cont-key="${k}"]`);
+      const delta = card && card.querySelector('.cont-signal-count');
+      if (delta) delta.textContent = '';
+    });
+    indOptions.forEach(k => {
+      const el = document.getElementById(`delta-${k}`);
+      if (el) el.textContent = '';
+    });
+  });
 }
 
 function buildContinuationCard() {
