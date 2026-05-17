@@ -2149,96 +2149,80 @@ function selectPatternStep4(name) {
   }
 }
 
-function initStep5ContinuationAndIndicators() {
-  if (!state.continuations) state.continuations = [];
-  buildContinuationCard();
-  buildIndicatorStep();
-
-  // Warm & Batch prefetch for step 6 stats
-  // Phase 1: fire anchor-only baseline first to warm Redis cache
+function _fetchStep6Stats() {
   const eng = enginePatternPayload();
-  if (!eng.anchor) return;
-
-  const basePayload = {
-    anchor: eng.anchor,
-    complement: eng.complement,
-    connector: eng.connector,
+  if (!eng.anchor && state.mode !== 'continuation') return;
+  const currentConts = [...state.continuations];
+  const currentInds = [...(state.activeIndicators || new Set())];
+  const payload = {
+    anchor: eng.anchor || '',
+    complement: eng.complement || null,
+    connector: eng.connector || null,
     instrument: state.instrument,
     interval: state.interval,
-    indicator_filter: null,
-    continuation: null,
+    current_continuations: currentConts,
+    current_indicators: currentInds,
+    options: {
+      continuations: ["Three Soldiers/Crows", "Inside Bar Breakout", "1-Candle Flag"],
+      indicators: ["ma_cross", "ma_alignment", "rsi"],
+    },
   };
-
-  const contOptions = ["Three Soldiers/Crows", "Inside Bar Breakout", "1-Candle Flag"];
-  const indOptions = ["ma_cross", "ma_alignment", "rsi"];
-
-  contOptions.forEach(k => {
+  ["Three Soldiers/Crows", "Inside Bar Breakout", "1-Candle Flag"].forEach(k => {
     const card = document.querySelector(`#continuation-card-wrap [data-cont-key="${k}"]`);
     const delta = card && card.querySelector('.cont-signal-count');
     if (delta) delta.textContent = '…';
   });
-  indOptions.forEach(k => {
+  ["ma_cross", "ma_alignment", "rsi"].forEach(k => {
     const el = document.getElementById(`delta-${k}`);
-    if (el) el.textContent = 'Calculating…';
+    if (el) el.textContent = '…';
   });
-
-  apiFetch('/api/indicator-check', {
+  apiFetch('/api/step6-stats', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(basePayload),
+    body: JSON.stringify(payload),
   })
   .then(r => r.json())
-  .then(baseline => {
-    const baseSig = baseline.base_signals ?? 0;
-    const baseWin = baseline.base_win_pct ?? 0;
-
-    const contRequests = contOptions.map(k =>
-      apiFetch('/api/indicator-check', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({...basePayload, continuation: [k]}),
-      }).then(r => r.json()).then(d => ({type: 'cont', key: k, d}))
-    );
-
-    const indRequests = indOptions.map(k =>
-      apiFetch('/api/indicator-check', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({...basePayload, indicator_filter: [{type: k}]}),
-      }).then(r => r.json()).then(d => ({type: 'ind', key: k, d}))
-    );
-
-    return Promise.all([...contRequests, ...indRequests])
-      .then(results => {
-        results.forEach(({type, key, d}) => {
-          if (type === 'cont') {
-            const card = document.querySelector(`#continuation-card-wrap [data-cont-key="${key}"]`);
-            const delta = card && card.querySelector('.cont-signal-count');
-            if (delta) delta.textContent =
-              `Before: ${baseSig} sig · ${baseWin}% → After: ${d.base_signals ?? 0} sig · ${d.base_win_pct ?? 0}%`;
-          } else {
-            const el = document.getElementById(`delta-${key}`);
-            if (el) {
-              const pos = (d.filtered_win_pct ?? 0) >= (baseWin ?? 0);
-              el.className = 'toggle-delta ' + (pos ? 'delta-pos' : 'delta-neg');
-              el.textContent =
-                `Before: ${baseSig} sig · ${baseWin}% → After: ${d.filtered_signals ?? 0} sig · ${d.filtered_win_pct ?? 0}%`;
-            }
-          }
-        });
-      });
+  .then(data => {
+    if (JSON.stringify([...state.continuations]) !== JSON.stringify(currentConts)) return;
+    if (JSON.stringify([...(state.activeIndicators || new Set())]) !== JSON.stringify(currentInds)) return;
+    if (!data.combinations) return;
+    data.combinations.forEach(({key, kind, signals, win_pct, selected}) => {
+      if (kind === 'continuation') {
+        const card = document.querySelector(`#continuation-card-wrap [data-cont-key="${key}"]`);
+        const delta = card && card.querySelector('.cont-signal-count');
+        if (!delta) return;
+        delta.textContent = selected
+          ? `${signals} sig · ${win_pct}%`
+          : `With this: ${signals} sig · ${win_pct}%`;
+      } else {
+        const el = document.getElementById(`delta-${key}`);
+        if (!el) return;
+        const baseWin = data.baseline.win_pct ?? 0;
+        el.className = 'toggle-delta ' + (win_pct >= baseWin ? 'delta-pos' : 'delta-neg');
+        el.textContent = selected
+          ? `${signals} sig · ${win_pct}%`
+          : `With this: ${signals} sig · ${win_pct}%`;
+      }
+    });
   })
   .catch(() => {
-    contOptions.forEach(k => {
+    ["Three Soldiers/Crows", "Inside Bar Breakout", "1-Candle Flag"].forEach(k => {
       const card = document.querySelector(`#continuation-card-wrap [data-cont-key="${k}"]`);
       const delta = card && card.querySelector('.cont-signal-count');
       if (delta) delta.textContent = '';
     });
-    indOptions.forEach(k => {
+    ["ma_cross", "ma_alignment", "rsi"].forEach(k => {
       const el = document.getElementById(`delta-${k}`);
       if (el) el.textContent = '';
     });
   });
+}
+
+function initStep5ContinuationAndIndicators() {
+  if (!state.continuations) state.continuations = [];
+  buildContinuationCard();
+  buildIndicatorStep();
+  _fetchStep6Stats();
 }
 
 function buildContinuationCard() {
@@ -2288,7 +2272,8 @@ function toggleContinuationPattern(key) {
     }
   }
   state.continuation = state.continuations.length > 0 ? state.continuations[0] : null;
-  initStep5ContinuationAndIndicators();
+  buildContinuationCard();
+  _fetchStep6Stats();
   const tip = document.getElementById("ai-tip-5");
   if (tip) {
     if (state.continuations.length > 0) {
@@ -2498,6 +2483,7 @@ function toggleIndicator(card, key) {
     }
     deltaEl.textContent = "";
   }
+  _fetchStep6Stats();
 }
 
 // ── Step 7: Session ───────────────────────────────────────────────────────────
