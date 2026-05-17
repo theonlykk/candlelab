@@ -1851,6 +1851,7 @@ function loadContinuationIndicators() {
     <div class="card-main">
       <div class="card-name">MA Alignment <span style="font-size:11px;color:var(--muted);margin-left:6px;">Required</span></div>
       <div class="card-desc" style="margin-top:4px;">Price is above both moving averages, confirming an established trend. A state — is the trend healthy right now?</div>
+      <div id="stat-ma-align-cont" style="font-size:12px;color:var(--muted);margin-top:6px;"></div>
     </div>
     <div class="toggle-dot"></div>`;
   container.appendChild(maAlignCard);
@@ -1874,6 +1875,7 @@ function loadContinuationIndicators() {
     loadContinuationIndicators();
   };
   container.appendChild(rsiCard);
+  _fetchStep5Stats();
 }
 
 // ── Step 2: Interval ──────────────────────────────────────────────────────────
@@ -2167,6 +2169,67 @@ function _fetchStep4Stats() {
       const div = card && card.querySelector('.cont-signal-count');
       if (div) div.textContent = '';
     });
+  });
+}
+
+function _fetchStep5Stats() {
+  const continuations = [...state.continuations];
+
+  // Set loading state
+  const maDiv = document.getElementById("stat-ma-align-cont");
+  const rsiDiv = document.getElementById("delta-rsi-cont");
+  if (maDiv) maDiv.textContent = "Counting…";
+  if (rsiDiv) rsiDiv.textContent = "Counting…";
+
+  const payload = {
+    anchor: "",
+    instrument: state.instrument,
+    interval: state.interval,
+    current_continuations: continuations,
+    current_indicators: ["ma_alignment"],   // hardcoded: MA-only baseline
+    options: {
+      continuations: [],
+      indicators: ["rsi"]                   // hardcoded: forces MA+RSI projection
+    }
+  };
+
+  apiFetch("/api/step6-stats", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  })
+  .then(r => r.json())
+  .then(data => {
+    // Stale-state guard
+    if (JSON.stringify([...state.continuations]) !== JSON.stringify(continuations)) return;
+
+    const baseline = data.baseline || {};
+    const combos = data.combinations || [];
+    const rsiCombo = combos.find(c => c.key === "rsi") || {};
+
+    // MA Alignment card — always show baseline
+    if (maDiv) {
+      maDiv.textContent = baseline.signals != null
+        ? `${baseline.signals} sig · ${baseline.win_pct}%`
+        : "";
+    }
+
+    // RSI card — delta if on, projection if off
+    if (rsiDiv) {
+      if (rsiCombo.signals == null) {
+        rsiDiv.textContent = "";
+      } else if (state.activeIndicators?.has("rsi")) {
+        rsiDiv.textContent = `MA only: ${baseline.signals} sig · ${baseline.win_pct}% → With RSI: ${rsiCombo.signals} sig · ${rsiCombo.win_pct}%`;
+      } else {
+        rsiDiv.textContent = `With this: ${rsiCombo.signals} sig · ${rsiCombo.win_pct}%`;
+      }
+    }
+  })
+  .catch(() => {
+    const maDiv2 = document.getElementById("stat-ma-align-cont");
+    const rsiDiv2 = document.getElementById("delta-rsi-cont");
+    if (maDiv2) maDiv2.textContent = "";
+    if (rsiDiv2) rsiDiv2.textContent = "";
   });
 }
 
