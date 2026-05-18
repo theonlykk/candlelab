@@ -939,10 +939,11 @@ def run_wfv(df: pd.DataFrame, instrument: str, pip_size: float) -> pd.DataFrame:
                 avg_spread,
             )
             oos_r = [float(t["r_multiple"]) for t in oos_trades]
+            _gap = combo.get("gap")
             combo_key = (
                 combo.get("anchor"),
                 combo.get("continuation"),
-                combo.get("gap"),
+                _gap,
                 combo.get("indicator"),
                 combo.get("direction"),
             )
@@ -984,26 +985,31 @@ def run_wfv(df: pd.DataFrame, instrument: str, pip_size: float) -> pd.DataFrame:
         mdd_map = {k: compute_mdd(v) for k, v in combo_equity_curves.items()}
         sharpe_map = {k: compute_sharpe(v) for k, v in combo_equity_curves.items()}
 
-        def _combo_key_row(row):
+        mdd_map_norm = {}
+        sharpe_map_norm = {}
+        for k, v in mdd_map.items():
+            anchor, cont, gap, ind, dirn = k
+            gap_norm = None if (isinstance(gap, float) and np.isnan(gap)) else gap
+            mdd_map_norm[(anchor, cont, gap_norm, ind, dirn)] = v
+        for k, v in sharpe_map.items():
+            anchor, cont, gap, ind, dirn = k
+            gap_norm = None if (isinstance(gap, float) and np.isnan(gap)) else gap
+            sharpe_map_norm[(anchor, cont, gap_norm, ind, dirn)] = v
+
+        def _make_combo_key(row):
+            gap = row["gap"]
+            gap_norm = None if pd.isna(gap) else gap
             return (
-                row.get("anchor") if isinstance(row, dict) else row["anchor"],
-                row.get("continuation") if isinstance(row, dict) else row["continuation"],
-                row.get("gap") if isinstance(row, dict) else row["gap"],
-                row.get("indicator") if isinstance(row, dict) else row["indicator"],
-                row.get("direction") if isinstance(row, dict) else row["direction"],
+                row["anchor"] if pd.notna(row["anchor"]) else None,
+                row["continuation"] if pd.notna(row["continuation"]) else None,
+                gap_norm,
+                row["indicator"] if pd.notna(row["indicator"]) else None,
+                row["direction"],
             )
 
-        wfv_df["_combo_key"] = list(
-            zip(
-                wfv_df["anchor"],
-                wfv_df["continuation"],
-                wfv_df["gap"],
-                wfv_df["indicator"],
-                wfv_df["direction"],
-            )
-        )
-        wfv_df["mdd"] = wfv_df["_combo_key"].map(mdd_map).fillna(0.0)
-        wfv_df["sharpe"] = wfv_df["_combo_key"].map(sharpe_map).fillna(0.0)
+        wfv_df["_combo_key"] = wfv_df.apply(_make_combo_key, axis=1)
+        wfv_df["mdd"] = wfv_df["_combo_key"].map(mdd_map_norm).fillna(0.0)
+        wfv_df["sharpe"] = wfv_df["_combo_key"].map(sharpe_map_norm).fillna(0.0)
         wfv_df.drop(columns=["_combo_key"], inplace=True)
     else:
         wfv_df["mdd"] = 0.0
