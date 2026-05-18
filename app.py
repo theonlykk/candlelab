@@ -2454,7 +2454,9 @@ def api_timeout_check():
     instrument_raw = body.get("instrument", "EUR/USD")
     interval = body.get("interval", "5m")
     anchor = body.get("anchor", "")
-    complement = body.get("complement")
+    pattern_2 = body.get("pattern_2")
+    has_pattern_2 = pattern_2 is not None and str(pattern_2).strip() != ""
+    complement = pattern_2 if has_pattern_2 else None
     has_complement = complement is not None and str(complement).strip() != ""
     connector = (body.get("connector") or "ordered") if has_complement else None
     if connector == "optional":
@@ -2542,7 +2544,7 @@ def api_finalise():
     has_pattern_2 = pattern_2 is not None and str(pattern_2).strip() != ""
 
     anchor = pattern_1
-    complement = pattern_2 if has_pattern_2 else (continuation if has_continuation else None)
+    complement = pattern_2 if has_pattern_2 else None
     if has_pattern_2 and has_continuation:
         connector = "type4"
     elif has_pattern_2:
