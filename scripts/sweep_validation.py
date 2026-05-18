@@ -21,6 +21,14 @@ from candlelab_core.patterns import (
 )
 
 INSTRUMENTS = ["AUD_USD", "NZD_USD", "USD_CHF", "USD_JPY", "GBP_USD", "USD_CAD"]
+ENABLED_INSTRUMENTS = {
+    "AUD_USD": True,
+    "NZD_USD": True,
+    "USD_CHF": True,
+    "USD_JPY": True,
+    "GBP_USD": False,  # benched — retail data destroys institutional edge
+    "USD_CAD": True,
+}
 PIP = {
     "AUD_USD": 0.0001,
     "NZD_USD": 0.0001,
@@ -50,7 +58,7 @@ OUTPUT_DIR = r"d:\candlelab\scripts\output"
 ROSTER_FILE = r"d:\candlelab\scripts\output\deployment_roster.json"
 
 ANCHORS = ["engulfing", "hammer", "shooting_star", "morning_star"]
-CONTINUATIONS = [None, "inside_bar", "one_candle_flag"]
+CONTINUATIONS = [None, "inside_bar"]  # one_candle_flag benched — no edge found in 3 runs
 CONTINUATION_GAPS = [5, 10, 15]  # new axis — only applies when continuation is not None
 INDICATORS = [None, "rsi_envelope", "ma_cross"]
 DIRECTIONS = ["long", "short"]
@@ -121,7 +129,7 @@ def build_combo_list() -> list[dict]:
     # Pure continuation combos (anchor=None) — 8 additional rows
     # 2 continuations × 1 gap (None) × 2 directions × 2 indicator states = 8
     # Gap is irrelevant without an anchor — there is nothing to measure digestion from
-    pure_continuations = ["inside_bar", "one_candle_flag"]
+    pure_continuations = ["inside_bar"]  # one_candle_flag benched
     pure_cont_indicators = [None, "rsi_envelope"]  # ma_cross replaced by trend alignment
 
     if ENABLED_TOPOLOGIES["1C"]:
@@ -1032,6 +1040,33 @@ def write_leaderboard_csv(wfv_df: pd.DataFrame, instrument: str) -> None:
     grouped.to_csv(path, index=False)
 
 
+def write_paper_roster(promoted_combos: list[dict]) -> None:
+    """
+    Write paper_roster.json — manually promoted combos for shadow monitoring.
+    Schema mirrors deployment_roster.json for downstream parser compatibility.
+    """
+    roster = {}
+    for entry in promoted_combos:
+        instrument = entry["instrument"]
+        if instrument not in roster:
+            roster[instrument] = {
+                "status": "PAUSE",
+                "strategies": [],
+            }
+        roster[instrument]["strategies"].append(
+            {
+                "combo": entry["combo"],
+                "direction": entry["direction"],
+                "oos_mean_r": entry["oos_mean_r"],
+                "n_trades": entry["n_trades"],
+            }
+        )
+    path = os.path.join(OUTPUT_DIR, "paper_roster.json")
+    with open(path, "w") as f:
+        json.dump(roster, f, indent=2)
+    print(f"  Paper roster written: output/paper_roster.json")
+
+
 def write_shadow_book_state(shadow_rows: list[dict], conn) -> None:
     sql = """
         INSERT INTO shadow_book_state
@@ -1084,6 +1119,9 @@ def main():
 
     with psycopg2.connect(db_url) as conn:
         for instrument in INSTRUMENTS:
+            if not ENABLED_INSTRUMENTS.get(instrument, True):
+                print(f"  Skipping {instrument} (disabled in ENABLED_INSTRUMENTS)")
+                continue
             print(f"\n{'='*60}")
             print(f"Sweeping {instrument}")
             print(f"{'='*60}")

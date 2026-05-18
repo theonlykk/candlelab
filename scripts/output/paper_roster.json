@@ -1,0 +1,19 @@
+{
+  "AUD_USD": {
+    "status": "PAUSE",
+    "strategies": [
+      {
+        "combo": "shooting_star+inside_bar",
+        "direction": "long",
+        "oos_mean_r": 1.0499,
+        "n_trades": 8
+      },
+      {
+        "combo": "morning_star+inside_bar",
+        "direction": "short",
+        "oos_mean_r": 0.5772,
+        "n_trades": 11
+      }
+    ]
+  }
+}
