@@ -2,6 +2,7 @@
 Sweep validation — foundation: DB fetch and signal detection (Prompt 1).
 """
 
+import collections
 import os
 import json
 import numpy as np
@@ -703,6 +704,38 @@ def sqn100(r_multiples: list[float], n_min: int = SQN_MIN_TRADES) -> float:
     return round((mean_r / std_r) * np.sqrt(min(n, 100)), 4)
 
 
+def compute_mdd(equity_curve: list[float]) -> float:
+    """
+    Maximum drawdown as a fraction (e.g. 0.15 = 15% drawdown).
+    Returns 0.0 if fewer than 2 data points.
+    """
+    if len(equity_curve) < 2:
+        return 0.0
+    eq = np.array(equity_curve, dtype=float)
+    peak = np.maximum.accumulate(eq)
+    drawdowns = (eq - peak) / peak
+    return float(abs(drawdowns.min()))
+
+
+def compute_sharpe(equity_curve: list[float], trades_per_year: float = 252.0) -> float:
+    """
+    Annualized Sharpe ratio from trade-by-trade equity changes.
+    Assumes risk-free rate = 0%.
+    Returns 0.0 if fewer than 2 data points or zero volatility.
+    """
+    if len(equity_curve) < 2:
+        return 0.0
+    eq = np.array(equity_curve, dtype=float)
+    returns = np.diff(eq) / eq[:-1]
+    if len(returns) == 0:
+        return 0.0
+    std = np.std(returns, ddof=1)
+    if std == 0.0:
+        return 0.0
+    mean_return = np.mean(returns)
+    return float((mean_return / std) * np.sqrt(trades_per_year))
+
+
 def _apply_indicator_filter(
     sig: np.ndarray,
     anc: np.ndarray,
@@ -773,6 +806,8 @@ _WFV_COLUMNS = [
     "oos_sqn100",
     "oos_n_trades",
     "oos_mean_r",
+    "mdd",
+    "sharpe",
 ]
 
 
@@ -787,6 +822,8 @@ def run_wfv(df: pd.DataFrame, instrument: str, pip_size: float) -> pd.DataFrame:
     # Pre-compute MA arrays on full df to avoid NaN warmup on sliced windows
     full_sma_fast = df["close"].rolling(MA_FAST).mean().to_numpy()
     full_sma_slow = df["close"].rolling(MA_SLOW).mean().to_numpy()
+
+    combo_equity_curves = collections.defaultdict(list)
 
     for window_idx in range(N_WINDOWS):
         weeks_shift = N_WINDOWS - 1 - window_idx
@@ -902,6 +939,16 @@ def run_wfv(df: pd.DataFrame, instrument: str, pip_size: float) -> pd.DataFrame:
                 avg_spread,
             )
             oos_r = [float(t["r_multiple"]) for t in oos_trades]
+            combo_key = (
+                combo.get("anchor"),
+                combo.get("continuation"),
+                combo.get("gap"),
+                combo.get("indicator"),
+                combo.get("direction"),
+            )
+            for t in oos_trades:
+                if "equity_after" in t:
+                    combo_equity_curves[combo_key].append(float(t["equity_after"]))
             oos_n_trades = len(oos_trades)
             oos_mean_r = float(np.mean(oos_r)) if oos_r else 0.0
             oos_sqn100 = 0.0
@@ -924,12 +971,45 @@ def run_wfv(df: pd.DataFrame, instrument: str, pip_size: float) -> pd.DataFrame:
                     "oos_sqn100": oos_sqn100,
                     "oos_n_trades": oos_n_trades,
                     "oos_mean_r": oos_mean_r,
+                    "mdd": 0.0,
+                    "sharpe": 0.0,
                 }
             )
 
     if not all_rows:
         return pd.DataFrame(columns=_WFV_COLUMNS)
-    return pd.DataFrame(all_rows)
+    wfv_df = pd.DataFrame(all_rows)
+
+    if not wfv_df.empty and combo_equity_curves:
+        mdd_map = {k: compute_mdd(v) for k, v in combo_equity_curves.items()}
+        sharpe_map = {k: compute_sharpe(v) for k, v in combo_equity_curves.items()}
+
+        def _combo_key_row(row):
+            return (
+                row.get("anchor") if isinstance(row, dict) else row["anchor"],
+                row.get("continuation") if isinstance(row, dict) else row["continuation"],
+                row.get("gap") if isinstance(row, dict) else row["gap"],
+                row.get("indicator") if isinstance(row, dict) else row["indicator"],
+                row.get("direction") if isinstance(row, dict) else row["direction"],
+            )
+
+        wfv_df["_combo_key"] = list(
+            zip(
+                wfv_df["anchor"],
+                wfv_df["continuation"],
+                wfv_df["gap"],
+                wfv_df["indicator"],
+                wfv_df["direction"],
+            )
+        )
+        wfv_df["mdd"] = wfv_df["_combo_key"].map(mdd_map).fillna(0.0)
+        wfv_df["sharpe"] = wfv_df["_combo_key"].map(sharpe_map).fillna(0.0)
+        wfv_df.drop(columns=["_combo_key"], inplace=True)
+    else:
+        wfv_df["mdd"] = 0.0
+        wfv_df["sharpe"] = 0.0
+
+    return wfv_df
 
 
 def compute_shadow_status(wfv_df: pd.DataFrame, instrument: str) -> dict:
@@ -1027,6 +1107,8 @@ def write_leaderboard_csv(wfv_df: pd.DataFrame, instrument: str) -> None:
                 "oos_n_trades": nt,
                 "is_sqn100": float(g["is_sqn100"].mean()),
                 "n_windows_promoted": len(g),
+                "mdd": float(g["mdd"].mean()) if "mdd" in g.columns else 0.0,
+                "sharpe": float(g["sharpe"].mean()) if "sharpe" in g.columns else 0.0,
             }
         )
 
