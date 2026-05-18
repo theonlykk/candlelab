@@ -888,19 +888,6 @@ def run_wfv(df: pd.DataFrame, instrument: str, pip_size: float) -> pd.DataFrame:
 
         is_rows.sort(key=lambda r: r["is_sqn100"], reverse=True)
 
-        # DEBUG window 0 — remove after diagnose
-        if window_idx == 0:
-            print("\n  --- DEBUG window 0: top 10 IS by is_sqn100 (desc) ---")
-            for rank, row in enumerate(is_rows[:10], start=1):
-                c = row["combo"]
-                print(
-                    f"  #{rank}  anchor={c['anchor']!r} continuation={c['continuation']!r} "
-                    f"gap={c['gap']!r} indicator={c['indicator']!r} direction={c['direction']!r} | "
-                    f"is_sqn100={row['is_sqn100']} | is_n_trades={row['is_n_trades']}"
-                )
-            n_ge_10 = sum(1 for r in is_rows if r["is_n_trades"] >= 10)
-            print(f"  DEBUG: combos with is_n_trades >= 10: {n_ge_10}\n")
-
         promoted = [
             r for r in is_rows if r["is_sqn100"] >= SQN_PROMOTE_THRESHOLD
         ][:5]
