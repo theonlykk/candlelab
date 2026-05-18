@@ -1578,7 +1578,7 @@ function buildWizardPayload() {
   }
   const payload_continuation = isCont
     ? contValue
-    : (state.pattern_2 && contValue ? contValue : null);
+    : (contValue || null);
 
   let derived_connector = null;
   if (!isCont) {
