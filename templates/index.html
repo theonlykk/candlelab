@@ -2046,7 +2046,7 @@ function renderPatternGridStep4() {
   if (!grid) return;
   grid.innerHTML = "";
 
-  WIZARD_ANCHOR_PATTERNS.filter(d => d.name !== state.pattern_1 && d.kind === "reversal").forEach(def => {
+  WIZARD_ANCHOR_PATTERNS.filter(d => d.name !== state.pattern_1).forEach(def => {
     const row = complementRowForPattern(def.name);
     const nSig = row ? Number(row.signals) || 0 : 0;
     const wpStr = row && row.win_pct != null ? Number(row.win_pct).toFixed(0) : "\u2014";
@@ -2059,7 +2059,7 @@ function renderPatternGridStep4() {
       <div class="card-main" style="flex:1; min-width:0;">
         <div class="pattern-card-title-row">
           <span class="pattern-name">${def.name}</span>
-          <span class="type-badge reversal">Reversal</span>
+          <span class="type-badge ${def.kind === "reversal" ? "reversal" : "continuation"}">${def.kind === "reversal" ? "REVERSAL" : "CONTINUATION"}</span>
         </div>
         <div class="pattern-stats-line">With this: ${wpStr}% · ${nSig} signals</div>
         ${tooFew ? `<div style="font-size:11px;color:var(--red);margin-top:4px;">Too few signals</div>` : ""}
