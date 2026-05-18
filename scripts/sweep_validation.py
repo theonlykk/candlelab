@@ -1116,7 +1116,8 @@ def write_leaderboard_csv(wfv_df: pd.DataFrame, instrument: str) -> None:
                 _passes_gate=(
                     (df["oos_mean_r"] > 0)
                     & (df["mdd"] < 0.05)
-                    & (df["sharpe"] > 1.5)
+                    & (df["sharpe"] > 1.0)
+                    & (df["oos_n_trades"] >= 10)
                 )
             )
         )
