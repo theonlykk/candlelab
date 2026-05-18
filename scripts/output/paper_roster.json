@@ -3,16 +3,27 @@
     "status": "PAUSE",
     "strategies": [
       {
-        "combo": "shooting_star+inside_bar",
-        "direction": "long",
-        "oos_mean_r": 1.0499,
-        "n_trades": 8
-      },
-      {
         "combo": "morning_star+inside_bar",
         "direction": "short",
-        "oos_mean_r": 0.5772,
-        "n_trades": 11
+        "oos_mean_r": 0.7383,
+        "mdd": 0.013,
+        "sharpe": 8.20,
+        "n_trades": 6,
+        "note": "Bearish reversal cluster — morning star anchor + inside bar compression"
+      }
+    ]
+  },
+  "USD_CHF": {
+    "status": "PAUSE",
+    "strategies": [
+      {
+        "combo": "shooting_star+inside_bar",
+        "direction": "short",
+        "oos_mean_r": 0.8432,
+        "mdd": 0.014,
+        "sharpe": 6.39,
+        "n_trades": 6,
+        "note": "Bearish reversal cluster — shooting star anchor + inside bar compression"
       }
     ]
   }

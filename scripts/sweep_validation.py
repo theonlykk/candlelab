@@ -717,13 +717,15 @@ def compute_mdd(equity_curve: list[float]) -> float:
     return float(abs(drawdowns.min()))
 
 
-def compute_sharpe(equity_curve: list[float], trades_per_year: float = 252.0) -> float:
+def compute_sharpe(equity_curve: list[float], n_trades: int = 0) -> float:
     """
     Annualized Sharpe ratio from trade-by-trade equity changes.
     Assumes risk-free rate = 0%.
+    Annualisation factor = sqrt(n_trades) where n_trades is the total
+    number of OOS trades for this combo across the full backtest window.
     Returns 0.0 if fewer than 2 data points or zero volatility.
     """
-    if len(equity_curve) < 2:
+    if len(equity_curve) < 2 or n_trades < 2:
         return 0.0
     eq = np.array(equity_curve, dtype=float)
     returns = np.diff(eq) / eq[:-1]
@@ -733,7 +735,7 @@ def compute_sharpe(equity_curve: list[float], trades_per_year: float = 252.0) ->
     if std == 0.0:
         return 0.0
     mean_return = np.mean(returns)
-    return float((mean_return / std) * np.sqrt(trades_per_year))
+    return float((mean_return / std) * np.sqrt(n_trades))
 
 
 def _apply_indicator_filter(
@@ -983,7 +985,23 @@ def run_wfv(df: pd.DataFrame, instrument: str, pip_size: float) -> pd.DataFrame:
 
     if not wfv_df.empty and combo_equity_curves:
         mdd_map = {k: compute_mdd(v) for k, v in combo_equity_curves.items()}
-        sharpe_map = {k: compute_sharpe(v) for k, v in combo_equity_curves.items()}
+
+        combo_n_trades = (
+            wfv_df.groupby(["anchor", "continuation", "gap", "indicator", "direction"])[
+                "oos_n_trades"
+            ]
+            .sum()
+            .to_dict()
+        )
+
+        def _sharpe_n(combo_key):
+            anchor, cont, gap, ind, dirn = combo_key
+            return int(combo_n_trades.get((anchor, cont, gap, ind, dirn), 0))
+
+        sharpe_map = {
+            k: compute_sharpe(v, n_trades=_sharpe_n(k))
+            for k, v in combo_equity_curves.items()
+        }
 
         mdd_map_norm = {}
         sharpe_map_norm = {}
@@ -1122,7 +1140,17 @@ def write_leaderboard_csv(wfv_df: pd.DataFrame, instrument: str) -> None:
         wfv_df.groupby(combo_cols, sort=False, dropna=False)
         .apply(_lb_agg)
         .reset_index()
-        .sort_values("oos_mean_r", ascending=False)
+        .pipe(
+            lambda df: df.assign(
+                _passes_gate=(
+                    (df["oos_mean_r"] > 0)
+                    & (df["mdd"] < 0.05)
+                    & (df["sharpe"] > 1.5)
+                )
+            )
+        )
+        .sort_values(["_passes_gate", "sharpe"], ascending=[False, False])
+        .drop(columns=["_passes_gate"])
     )
     path = os.path.join(OUTPUT_DIR, f"leaderboard_{instrument}.csv")
     grouped.to_csv(path, index=False)
