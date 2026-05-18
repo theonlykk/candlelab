@@ -17,6 +17,7 @@ from candlelab_core.patterns import (
     shooting_star_inverted_hammer as detect_shooting_star_inv_hammer,
     detect_inside_bar_breakout,
     detect_1_candle_flag,
+    morning_evening_star as detect_morning_evening_star,
 )
 
 INSTRUMENTS = ["AUD_USD", "NZD_USD", "USD_CHF", "USD_JPY", "GBP_USD", "USD_CAD"]
@@ -48,7 +49,7 @@ DEAD_ZONE_HOURS = frozenset({21, 22, 23})  # new — UTC hours excluded from all
 OUTPUT_DIR = r"d:\candlelab\scripts\output"
 ROSTER_FILE = r"d:\candlelab\scripts\output\deployment_roster.json"
 
-ANCHORS = ["engulfing", "hammer", "shooting_star"]
+ANCHORS = ["engulfing", "hammer", "shooting_star", "morning_star"]
 CONTINUATIONS = [None, "inside_bar", "one_candle_flag"]
 CONTINUATION_GAPS = [5, 10, 15]  # new axis — only applies when continuation is not None
 INDICATORS = [None, "rsi_envelope", "ma_cross"]
@@ -60,6 +61,7 @@ PATTERN_FN = {
     "shooting_star": detect_shooting_star_inv_hammer,
     "inside_bar": detect_inside_bar_breakout,
     "one_candle_flag": detect_1_candle_flag,
+    "morning_star": detect_morning_evening_star,
 }
 
 def build_combo_list() -> list[dict]:
@@ -69,6 +71,14 @@ def build_combo_list() -> list[dict]:
     continuation is None, gap is always None so gap axis does not multiply
     identical sweeps.
     """
+    ENABLED_TOPOLOGIES = {
+        "1R": True,
+        "1R+1C": True,
+        "1C": True,
+        "2R": False,  # cluster topology — no edge found; set True to re-research
+        "2R+1C": False,  # cluster topology — no edge found; set True to re-research
+        "2C": False,  # cluster topology — no edge found; set True to re-research
+    }
     combos = []
     for anchor in ANCHORS:
         for continuation in CONTINUATIONS:
@@ -100,25 +110,34 @@ def build_combo_list() -> list[dict]:
             seen.add(key)
             deduped.append(c)
 
+    if not ENABLED_TOPOLOGIES["1R"] or not ENABLED_TOPOLOGIES["1R+1C"]:
+        deduped = [
+            c
+            for c in deduped
+            if (ENABLED_TOPOLOGIES["1R"] or c["continuation"] is not None)
+            and (ENABLED_TOPOLOGIES["1R+1C"] or c["continuation"] is None)
+        ]
+
     # Pure continuation combos (anchor=None) — 8 additional rows
     # 2 continuations × 1 gap (None) × 2 directions × 2 indicator states = 8
     # Gap is irrelevant without an anchor — there is nothing to measure digestion from
     pure_continuations = ["inside_bar", "one_candle_flag"]
     pure_cont_indicators = [None, "rsi_envelope"]  # ma_cross replaced by trend alignment
 
-    for continuation in pure_continuations:
-        for direction in DIRECTIONS:
-            for indicator in pure_cont_indicators:
-                deduped.append(
-                    {
-                        "anchor": None,
-                        "continuation": continuation,
-                        "gap": None,
-                        "indicator": indicator,
-                        "direction": direction,
-                        "pure_cont": True,
-                    }
-                )
+    if ENABLED_TOPOLOGIES["1C"]:
+        for continuation in pure_continuations:
+            for direction in DIRECTIONS:
+                for indicator in pure_cont_indicators:
+                    deduped.append(
+                        {
+                            "anchor": None,
+                            "continuation": continuation,
+                            "gap": None,
+                            "indicator": indicator,
+                            "direction": direction,
+                            "pure_cont": True,
+                        }
+                    )
 
     # ── 2R combos (dual reversal cluster, any-order 10-bar window) ──
     anchor_pairs = [
@@ -126,57 +145,60 @@ def build_combo_list() -> list[dict]:
         ("engulfing", "shooting_star"),
         ("hammer", "shooting_star"),
     ]
-    for a1, a2 in anchor_pairs:
-        for indicator in INDICATORS:
+    if ENABLED_TOPOLOGIES["2R"]:
+        for a1, a2 in anchor_pairs:
+            for indicator in INDICATORS:
+                for direction in DIRECTIONS:
+                    deduped.append(
+                        {
+                            "anchor": a1,
+                            "anchor2": a2,
+                            "continuation": None,
+                            "continuation2": None,
+                            "gap": None,
+                            "indicator": indicator,
+                            "direction": direction,
+                            "combo_type": "2R",
+                        }
+                    )
+
+    # ── 2R+1C combos ──
+    if ENABLED_TOPOLOGIES["2R+1C"]:
+        for a1, a2 in anchor_pairs:
+            for continuation in ["inside_bar", "one_candle_flag"]:
+                for gap in CONTINUATION_GAPS:
+                    for indicator in INDICATORS:
+                        for direction in DIRECTIONS:
+                            deduped.append(
+                                {
+                                    "anchor": a1,
+                                    "anchor2": a2,
+                                    "continuation": continuation,
+                                    "continuation2": None,
+                                    "gap": gap,
+                                    "indicator": indicator,
+                                    "direction": direction,
+                                    "combo_type": "2R+1C",
+                                }
+                            )
+
+    # ── 2C combos (dual continuation cluster, any-order 10-bar window) ──
+    if ENABLED_TOPOLOGIES["2C"]:
+        for indicator in [None, "rsi_envelope"]:
             for direction in DIRECTIONS:
                 deduped.append(
                     {
-                        "anchor": a1,
-                        "anchor2": a2,
-                        "continuation": None,
-                        "continuation2": None,
+                        "anchor": None,
+                        "anchor2": None,
+                        "continuation": "inside_bar",
+                        "continuation2": "one_candle_flag",
                         "gap": None,
                         "indicator": indicator,
                         "direction": direction,
-                        "combo_type": "2R",
+                        "pure_cont": True,
+                        "combo_type": "2C",
                     }
                 )
-
-    # ── 2R+1C combos ──
-    for a1, a2 in anchor_pairs:
-        for continuation in ["inside_bar", "one_candle_flag"]:
-            for gap in CONTINUATION_GAPS:
-                for indicator in INDICATORS:
-                    for direction in DIRECTIONS:
-                        deduped.append(
-                            {
-                                "anchor": a1,
-                                "anchor2": a2,
-                                "continuation": continuation,
-                                "continuation2": None,
-                                "gap": gap,
-                                "indicator": indicator,
-                                "direction": direction,
-                                "combo_type": "2R+1C",
-                            }
-                        )
-
-    # ── 2C combos (dual continuation cluster, any-order 10-bar window) ──
-    for indicator in [None, "rsi_envelope"]:
-        for direction in DIRECTIONS:
-            deduped.append(
-                {
-                    "anchor": None,
-                    "anchor2": None,
-                    "continuation": "inside_bar",
-                    "continuation2": "one_candle_flag",
-                    "gap": None,
-                    "indicator": indicator,
-                    "direction": direction,
-                    "pure_cont": True,
-                    "combo_type": "2C",
-                }
-            )
 
     print(f"[build_combo_list] Total combos: {len(deduped)}")
     return deduped
@@ -513,6 +535,8 @@ def sweep_simulation(
     timeout_bars: int = TIMEOUT_BARS,
     tp_mult: float = TP_MULT,
     sl_mult: float = SL_MULT,
+    initial_capital: float = 10_000.0,
+    risk_pct: float = 0.01,
 ) -> list[dict]:
     n = len(df)
     high = df["high"].to_numpy()
@@ -532,6 +556,7 @@ def sweep_simulation(
     trades: list[dict] = []
     block_fill = -1
     block_exit = -1
+    current_equity = initial_capital
 
     for sig_idx in range(n):
         if int(sig_array[sig_idx]) != sig_val:
@@ -637,6 +662,10 @@ def sweep_simulation(
         if not np.isfinite(r_multiple):
             continue
 
+        risk_dollars = current_equity * risk_pct
+        trade_pnl = risk_dollars * r_multiple
+        current_equity += trade_pnl
+
         trades.append(
             {
                 "sig_idx": sig_idx,
@@ -644,6 +673,8 @@ def sweep_simulation(
                 "result": result,
                 "r_multiple": float(r_multiple),
                 "sl_dist": sl_dist,
+                "pnl_dollars": float(trade_pnl),
+                "equity_after": float(current_equity),
             }
         )
         block_fill = fill_idx
