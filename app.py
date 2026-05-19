@@ -769,7 +769,23 @@ def _hydrate_strategy_config(strategy_name: str) -> dict | None:
     finally:
         conn.close()
 
-    complement = _str_none(row.get("pattern_2"))
+    _CONTINUATION_PATTERNS = {
+        "Inside Bar Breakout",
+        "1-Candle Flag",
+        "Three Soldiers/Crows",
+    }
+    _p2 = _str_none(row.get("pattern_2"))
+    if _p2 and _p2 in _CONTINUATION_PATTERNS:
+        # pattern_2 is a continuation pattern — route to continuation slot
+        complement = None
+        # Merge into continuation if continuation slot is empty
+        _existing_cont = row.get("continuation")
+        if not _existing_cont:
+            row = dict(row)
+            row["continuation"] = _p2
+    else:
+        complement = _p2
+
     def _parse_continuation(v):
         """Parse continuation field — handles Postgres array literal, Python list, or plain string."""
         if v is None:
