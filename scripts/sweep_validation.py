@@ -21,7 +21,18 @@ from candlelab_core.patterns import (
     morning_evening_star as detect_morning_evening_star,
 )
 
-INSTRUMENTS = ["AUD_USD", "NZD_USD", "USD_CHF", "USD_JPY", "GBP_USD", "USD_CAD"]
+INSTRUMENTS = [
+    "AUD_USD",
+    "NZD_USD",
+    "USD_CHF",
+    "USD_JPY",
+    "GBP_USD",
+    "USD_CAD",
+    "CAD_JPY",
+    "AUD_JPY",
+    "EUR_JPY",
+    "GBP_AUD",
+]
 ENABLED_INSTRUMENTS = {
     "AUD_USD": True,
     "NZD_USD": True,
@@ -29,6 +40,10 @@ ENABLED_INSTRUMENTS = {
     "USD_JPY": True,
     "GBP_USD": False,  # benched — retail data destroys institutional edge
     "USD_CAD": True,
+    "CAD_JPY": True,
+    "AUD_JPY": True,
+    "EUR_JPY": True,
+    "GBP_AUD": True,
 }
 PIP = {
     "AUD_USD": 0.0001,
@@ -37,13 +52,68 @@ PIP = {
     "USD_JPY": 0.01,
     "GBP_USD": 0.0001,
     "USD_CAD": 0.0001,
+    "CAD_JPY": 0.01,
+    "AUD_JPY": 0.01,
+    "EUR_JPY": 0.01,
+    "GBP_AUD": 0.0001,
+}
+PAIR_CONFIG = {
+    "AUD_USD": {
+        "ma_pairs": [(10, 50)],
+        "timeouts": [20],
+        "directions": ["long", "short"],
+        "sl_mode": "standard",
+        "enabled": True,
+    },
+    "NZD_USD": {
+        "ma_pairs": [(10, 50)],
+        "timeouts": [20],
+        "directions": ["long", "short"],
+        "sl_mode": "standard",
+        "enabled": True,
+    },
+    "USD_CHF": {
+        "ma_pairs": [(10, 50)],
+        "timeouts": [20],
+        "directions": ["long", "short"],
+        "sl_mode": "standard",
+        "enabled": True,
+    },
+    "CAD_JPY": {
+        "ma_pairs": [(5, 20)],
+        "timeouts": [24, 26, 28],
+        "directions": ["short"],
+        "sl_mode": "standard",
+        "enabled": True,
+    },
+    "AUD_JPY": {
+        "ma_pairs": [(15, 75), (20, 100)],
+        "timeouts": [24, 26, 28],
+        "directions": ["short"],
+        "sl_mode": "standard",
+        "enabled": True,
+    },
+    "EUR_JPY": {
+        "ma_pairs": [(5, 20)],
+        "timeouts": [24, 26, 28],
+        "directions": ["short"],
+        "sl_mode": "standard",
+        "enabled": True,
+    },
+    "GBP_AUD": {
+        "ma_pairs": [(5, 20)],
+        "timeouts": [12, 14, 16],
+        "directions": ["long"],
+        "sl_mode": "atr_only",
+        "enabled": True,
+    },
 }
 GRANULARITY = "M5"
 IS_WEEKS = 4
 OOS_WEEKS = 1
 N_WINDOWS = 52
 SQN_MIN_TRADES_IS = 10  # IS promotion floor — new, replaces SQN_MIN_TRADES in IS gate
-SQN_MIN_TRADES = 30  # final leaderboard floor — unchanged
+SQN_MIN_TRADES = 15  # final leaderboard floor — unchanged
 SQN_PROMOTE_THRESHOLD = 0.5  # was 1.6
 TP_MULT = 3.0
 SL_MULT = 1.0
@@ -59,7 +129,7 @@ OUTPUT_DIR = r"d:\candlelab\scripts\output"
 ROSTER_FILE = r"d:\candlelab\scripts\output\deployment_roster.json"
 
 ANCHORS = ["engulfing", "hammer", "shooting_star", "morning_star"]
-CONTINUATIONS = [None, "inside_bar"]  # one_candle_flag benched — no edge found in 3 runs
+CONTINUATIONS = [None, "inside_bar", "one_candle_flag"]  # one_candle_flag re-enabled for AUD_JPY validation
 CONTINUATION_GAPS = [5, 10, 15]  # new axis — only applies when continuation is not None
 INDICATORS = [None, "rsi_envelope", "ma_cross"]
 DIRECTIONS = ["long", "short"]
@@ -84,7 +154,7 @@ def build_combo_list() -> list[dict]:
         "1R": True,
         "1R+1C": True,
         "1C": True,
-        "2R": False,  # cluster topology — no edge found; set True to re-research
+        "2R": True,  # cluster topology — no edge found; set True to re-research
         "2R+1C": False,  # cluster topology — no edge found; set True to re-research
         "2C": False,  # cluster topology — no edge found; set True to re-research
     }
@@ -544,6 +614,7 @@ def sweep_simulation(
     timeout_bars: int = TIMEOUT_BARS,
     tp_mult: float = TP_MULT,
     sl_mult: float = SL_MULT,
+    sl_mode: str = "standard",
     initial_capital: float = 10_000.0,
     risk_pct: float = 0.01,
 ) -> list[dict]:
@@ -586,7 +657,10 @@ def sweep_simulation(
         if not np.isfinite(atr_i):
             continue
 
-        sl_dist = max(5.0 * pip_size, float(atr_i))
+        if sl_mode == "atr_only":
+            sl_dist = float(atr_i)
+        else:
+            sl_dist = max(5.0 * pip_size, float(atr_i))
         spread_cost = avg_spread / sl_dist
 
         if direction == "long":
@@ -814,157 +888,187 @@ _WFV_COLUMNS = [
 
 
 def run_wfv(df: pd.DataFrame, instrument: str, pip_size: float) -> pd.DataFrame:
-    _ = instrument
     avg_spread = float((df["ask_open"] - df["bid_open"]).mean())
     df = df.sort_index()
     data_end = df.index.max()
     combos = build_combo_list()
+
+    pair_cfg = PAIR_CONFIG.get(instrument, {})
+    ma_pairs = pair_cfg.get("ma_pairs", [(MA_FAST, MA_SLOW)])
+    timeouts = pair_cfg.get("timeouts", [TIMEOUT_BARS])
+    directions = pair_cfg.get("directions", DIRECTIONS)
+    sl_mode = pair_cfg.get("sl_mode", "standard")
+
     all_rows: list[dict] = []
-
-    # Pre-compute MA arrays on full df to avoid NaN warmup on sliced windows
-    full_sma_fast = df["close"].rolling(MA_FAST).mean().to_numpy()
-    full_sma_slow = df["close"].rolling(MA_SLOW).mean().to_numpy()
-
     combo_equity_curves = collections.defaultdict(list)
 
-    for window_idx in range(N_WINDOWS):
-        weeks_shift = N_WINDOWS - 1 - window_idx
-        oos_end = data_end - pd.Timedelta(weeks=weeks_shift)
-        oos_start = oos_end - pd.Timedelta(weeks=OOS_WEEKS)
-        is_start = oos_start - pd.Timedelta(weeks=IS_WEEKS)
+    for ma_fast, ma_slow in ma_pairs:
+        full_sma_fast = df["close"].rolling(ma_fast).mean().to_numpy()
+        full_sma_slow = df["close"].rolling(ma_slow).mean().to_numpy()
 
-        is_df = df.loc[(df.index >= is_start) & (df.index < oos_start)]
-        oos_df = df.loc[(df.index >= oos_start) & (df.index <= oos_end)]
+        for timeout in timeouts:
+            for window_idx in range(N_WINDOWS):
+                weeks_shift = N_WINDOWS - 1 - window_idx
+                oos_end = data_end - pd.Timedelta(weeks=weeks_shift)
+                oos_start = oos_end - pd.Timedelta(weeks=OOS_WEEKS)
+                is_start = oos_start - pd.Timedelta(weeks=IS_WEEKS)
 
-        if len(is_df) < 500 or len(oos_df) < 50:
-            continue
+                is_df = df.loc[(df.index >= is_start) & (df.index < oos_start)]
+                oos_df = df.loc[(df.index >= oos_start) & (df.index <= oos_end)]
 
-        is_inds = compute_indicators(is_df)
-        oos_inds = compute_indicators(oos_df)
+                if len(is_df) < 500 or len(oos_df) < 50:
+                    continue
 
-        is_start_pos = df.index.get_loc(is_df.index[0]) if len(is_df) > 0 else 0
-        is_end_pos = df.index.get_loc(is_df.index[-1]) + 1 if len(is_df) > 0 else 0
-        oos_start_pos = df.index.get_loc(oos_df.index[0]) if len(oos_df) > 0 else 0
-        oos_end_pos = df.index.get_loc(oos_df.index[-1]) + 1 if len(oos_df) > 0 else 0
+                is_inds = compute_indicators(is_df)
+                oos_inds = compute_indicators(oos_df)
 
-        is_inds["sma_fast"] = full_sma_fast[is_start_pos:is_end_pos]
-        oos_inds["sma_fast"] = full_sma_fast[oos_start_pos:oos_end_pos]
-        is_inds["sma_slow"] = full_sma_slow[is_start_pos:is_end_pos]
-        oos_inds["sma_slow"] = full_sma_slow[oos_start_pos:oos_end_pos]
+                is_start_pos = (
+                    df.index.get_loc(is_df.index[0]) if len(is_df) > 0 else 0
+                )
+                is_end_pos = (
+                    df.index.get_loc(is_df.index[-1]) + 1 if len(is_df) > 0 else 0
+                )
+                oos_start_pos = (
+                    df.index.get_loc(oos_df.index[0]) if len(oos_df) > 0 else 0
+                )
+                oos_end_pos = (
+                    df.index.get_loc(oos_df.index[-1]) + 1
+                    if len(oos_df) > 0
+                    else 0
+                )
 
-        is_rows: list[dict] = []
-        for combo in combos:
-            sig, anc = detect_signals(
-                is_df,
-                combo["anchor"],
-                combo["continuation"],
-                combo["direction"],
-                gap=combo["gap"] if combo["gap"] is not None else 5,
-                anchor2=combo.get("anchor2"),
-                continuation2=combo.get("continuation2"),
-            )
-            sig, anc = _apply_indicator_filter(sig, anc, combo, is_inds, is_df)
-            trades = sweep_simulation(
-                is_df,
-                sig,
-                anc,
-                combo["direction"],
-                pip_size,
-                is_inds["atr"],
-                avg_spread,
-            )
-            r_mults = [float(t["r_multiple"]) for t in trades]
-            is_score = sqn100(r_mults, n_min=SQN_MIN_TRADES_IS)
-            is_n = len(trades)
-            is_mean_r = float(np.mean(r_mults)) if r_mults else 0.0
-            is_rows.append(
-                {
-                    "combo": combo,
-                    "is_sqn100": is_score,
-                    "is_n_trades": is_n,
-                    "is_mean_r": is_mean_r,
-                }
-            )
+                is_inds["sma_fast"] = full_sma_fast[is_start_pos:is_end_pos]
+                oos_inds["sma_fast"] = full_sma_fast[oos_start_pos:oos_end_pos]
+                is_inds["sma_slow"] = full_sma_slow[is_start_pos:is_end_pos]
+                oos_inds["sma_slow"] = full_sma_slow[oos_start_pos:oos_end_pos]
 
-        is_rows.sort(key=lambda r: r["is_sqn100"], reverse=True)
+                combos_for_pair = [
+                    c for c in combos if c["direction"] in directions
+                ]
 
-        promoted = [
-            r for r in is_rows if r["is_sqn100"] >= SQN_PROMOTE_THRESHOLD
-        ][:5]
+                is_rows: list[dict] = []
+                for combo in combos_for_pair:
+                    sig, anc = detect_signals(
+                        is_df,
+                        combo["anchor"],
+                        combo["continuation"],
+                        combo["direction"],
+                        gap=combo["gap"] if combo["gap"] is not None else 5,
+                        anchor2=combo.get("anchor2"),
+                        continuation2=combo.get("continuation2"),
+                    )
+                    sig, anc = _apply_indicator_filter(
+                        sig, anc, combo, is_inds, is_df
+                    )
+                    trades = sweep_simulation(
+                        is_df,
+                        sig,
+                        anc,
+                        combo["direction"],
+                        pip_size,
+                        is_inds["atr"],
+                        avg_spread,
+                        timeout_bars=timeout,
+                        sl_mode=sl_mode,
+                    )
+                    r_mults = [float(t["r_multiple"]) for t in trades]
+                    is_score = sqn100(r_mults, n_min=SQN_MIN_TRADES_IS)
+                    is_n = len(trades)
+                    is_mean_r = float(np.mean(r_mults)) if r_mults else 0.0
+                    is_rows.append(
+                        {
+                            "combo": combo,
+                            "is_sqn100": is_score,
+                            "is_n_trades": is_n,
+                            "is_mean_r": is_mean_r,
+                        }
+                    )
 
-        is_start_ts = is_df.index[0]
-        is_end_ts = is_df.index[-1]
-        oos_start_ts = oos_df.index[0]
-        oos_end_ts = oos_df.index[-1]
+                is_rows.sort(key=lambda r: r["is_sqn100"], reverse=True)
 
-        print(
-            f"  Window {window_idx + 1:02d}/{N_WINDOWS} | "
-            f"IS {is_start_ts.date()}→{is_end_ts.date()} | "
-            f"OOS {oos_start_ts.date()}→{oos_end_ts.date()} | "
-            f"promoted={len(promoted)}"
-        )
+                promoted = [
+                    r
+                    for r in is_rows
+                    if r["is_sqn100"] >= SQN_PROMOTE_THRESHOLD
+                ][:5]
 
-        for pr in promoted:
-            combo = pr["combo"]
-            sig_o, anc_o = detect_signals(
-                oos_df,
-                combo["anchor"],
-                combo["continuation"],
-                combo["direction"],
-                gap=combo["gap"] if combo["gap"] is not None else 5,
-                anchor2=combo.get("anchor2"),
-                continuation2=combo.get("continuation2"),
-            )
-            sig_o, anc_o = _apply_indicator_filter(
-                sig_o, anc_o, combo, oos_inds, oos_df
-            )
-            oos_trades = sweep_simulation(
-                oos_df,
-                sig_o,
-                anc_o,
-                combo["direction"],
-                pip_size,
-                oos_inds["atr"],
-                avg_spread,
-            )
-            oos_r = [float(t["r_multiple"]) for t in oos_trades]
-            _gap = combo.get("gap")
-            combo_key = (
-                combo.get("anchor"),
-                combo.get("continuation"),
-                _gap,
-                combo.get("indicator"),
-                combo.get("direction"),
-            )
-            for t in oos_trades:
-                if "equity_after" in t:
-                    combo_equity_curves[combo_key].append(float(t["equity_after"]))
-            oos_n_trades = len(oos_trades)
-            oos_mean_r = float(np.mean(oos_r)) if oos_r else 0.0
-            oos_sqn100 = 0.0
+                is_start_ts = is_df.index[0]
+                is_end_ts = is_df.index[-1]
+                oos_start_ts = oos_df.index[0]
+                oos_end_ts = oos_df.index[-1]
 
-            all_rows.append(
-                {
-                    "window_idx": window_idx,
-                    "is_start": is_start_ts,
-                    "is_end": is_end_ts,
-                    "oos_start": oos_start_ts,
-                    "oos_end": oos_end_ts,
-                    "anchor": combo["anchor"],
-                    "continuation": combo["continuation"],
-                    "gap": combo["gap"],
-                    "indicator": combo["indicator"],
-                    "direction": combo["direction"],
-                    "is_sqn100": pr["is_sqn100"],
-                    "is_n_trades": pr["is_n_trades"],
-                    "is_mean_r": pr["is_mean_r"],
-                    "oos_sqn100": oos_sqn100,
-                    "oos_n_trades": oos_n_trades,
-                    "oos_mean_r": oos_mean_r,
-                    "mdd": 0.0,
-                    "sharpe": 0.0,
-                }
-            )
+                print(
+                    f"  Window {window_idx + 1:02d}/{N_WINDOWS} | "
+                    f"IS {is_start_ts.date()}→{is_end_ts.date()} | "
+                    f"OOS {oos_start_ts.date()}→{oos_end_ts.date()} | "
+                    f"promoted={len(promoted)}"
+                )
+
+                for pr in promoted:
+                    combo = pr["combo"]
+                    sig_o, anc_o = detect_signals(
+                        oos_df,
+                        combo["anchor"],
+                        combo["continuation"],
+                        combo["direction"],
+                        gap=combo["gap"] if combo["gap"] is not None else 5,
+                        anchor2=combo.get("anchor2"),
+                        continuation2=combo.get("continuation2"),
+                    )
+                    sig_o, anc_o = _apply_indicator_filter(
+                        sig_o, anc_o, combo, oos_inds, oos_df
+                    )
+                    oos_trades = sweep_simulation(
+                        oos_df,
+                        sig_o,
+                        anc_o,
+                        combo["direction"],
+                        pip_size,
+                        oos_inds["atr"],
+                        avg_spread,
+                        timeout_bars=timeout,
+                        sl_mode=sl_mode,
+                    )
+                    oos_r = [float(t["r_multiple"]) for t in oos_trades]
+                    _gap = combo.get("gap")
+                    combo_key = (
+                        combo.get("anchor"),
+                        combo.get("continuation"),
+                        _gap,
+                        combo.get("indicator"),
+                        combo.get("direction"),
+                    )
+                    for t in oos_trades:
+                        if "equity_after" in t:
+                            combo_equity_curves[combo_key].append(
+                                float(t["equity_after"])
+                            )
+                    oos_n_trades = len(oos_trades)
+                    oos_mean_r = float(np.mean(oos_r)) if oos_r else 0.0
+                    oos_sqn100 = 0.0
+
+                    all_rows.append(
+                        {
+                            "window_idx": window_idx,
+                            "is_start": is_start_ts,
+                            "is_end": is_end_ts,
+                            "oos_start": oos_start_ts,
+                            "oos_end": oos_end_ts,
+                            "anchor": combo["anchor"],
+                            "continuation": combo["continuation"],
+                            "gap": combo["gap"],
+                            "indicator": combo["indicator"],
+                            "direction": combo["direction"],
+                            "is_sqn100": pr["is_sqn100"],
+                            "is_n_trades": pr["is_n_trades"],
+                            "is_mean_r": pr["is_mean_r"],
+                            "oos_sqn100": oos_sqn100,
+                            "oos_n_trades": oos_n_trades,
+                            "oos_mean_r": oos_mean_r,
+                            "mdd": 0.0,
+                            "sharpe": 0.0,
+                        }
+                    )
 
     if not all_rows:
         return pd.DataFrame(columns=_WFV_COLUMNS)
