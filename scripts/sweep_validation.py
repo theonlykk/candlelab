@@ -12,6 +12,19 @@ from psycopg2.extras import RealDictCursor
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
+import sys
+
+sys.path.insert(0, r"d:\oanda-trading")
+
+from regime_filter import (
+    ADX_TREND_THRESHOLD,
+    ADX_EXTREME_THRESHOLD,
+    ADX_CONT_MIN,
+    ADX_BLOWOFF_THRESHOLD,
+    BBW_DEAD_ZONE_DEFAULT,
+    BBW_DEAD_ZONE,
+)
+
 from candlelab_core.patterns import (
     engulfing as detect_engulfing,
     hammer_hanging_man as detect_hammer_hanging_man,
@@ -617,6 +630,10 @@ def sweep_simulation(
     sl_mode: str = "standard",
     initial_capital: float = 10_000.0,
     risk_pct: float = 0.01,
+    adx_arr: np.ndarray | None = None,
+    bbw_arr: np.ndarray | None = None,
+    profile: str = "Hybrid",
+    instrument: str = "",
 ) -> list[dict]:
     n = len(df)
     high = df["high"].to_numpy()
@@ -647,6 +664,37 @@ def sweep_simulation(
         fill_idx = sig_idx + 1
         if fill_idx >= n:
             continue
+
+        if adx_arr is not None and bbw_arr is not None:
+            _adx = (
+                float(adx_arr[sig_idx])
+                if np.isfinite(adx_arr[sig_idx])
+                else None
+            )
+            _bbw = (
+                float(bbw_arr[sig_idx])
+                if np.isfinite(bbw_arr[sig_idx])
+                else None
+            )
+
+            _bbw_threshold = BBW_DEAD_ZONE.get(
+                instrument, BBW_DEAD_ZONE_DEFAULT
+            )
+            if _bbw is not None and 0 < _bbw < _bbw_threshold:
+                continue
+
+            if _adx is not None:
+                if profile == "Counter-Trend":
+                    if _adx >= ADX_TREND_THRESHOLD:
+                        continue
+                elif profile == "Hybrid":
+                    if _adx >= ADX_EXTREME_THRESHOLD:
+                        continue
+                elif profile == "Pro-Trend":
+                    if _adx < ADX_CONT_MIN:
+                        continue
+                    if _adx >= ADX_BLOWOFF_THRESHOLD:
+                        continue
 
         if direction == "long":
             entry = float(ask_open[fill_idx])
@@ -865,6 +913,126 @@ def _apply_indicator_filter(
     return filtered_sig, filtered_anc
 
 
+def compute_regime_features(
+    df: pd.DataFrame, adx_period: int = 14, bbw_period: int = 20
+) -> pd.DataFrame:
+    """
+    Vectorized ADX + BBW computation using pandas ewm.
+    Mathematically identical to Wilder smoothing (alpha=1/period,
+    adjust=False). Converges with the 3-phase loop after ~150 bars.
+    Warmup drift is irrelevant for 177k-bar datasets.
+
+    Adds columns: df['adx'], df['bbw']
+    Expects columns: df['high'], df['low'], df['close']
+    """
+    tr1 = df["high"] - df["low"]
+    tr2 = (df["high"] - df["close"].shift(1)).abs()
+    tr3 = (df["low"] - df["close"].shift(1)).abs()
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+
+    up = df["high"].diff()
+    down = df["low"].shift(1) - df["low"]
+
+    plus_dm = np.where((up > down) & (up > 0), up, 0.0)
+    minus_dm = np.where((down > up) & (down > 0), down, 0.0)
+
+    alpha = 1.0 / adx_period
+
+    atr = tr.ewm(alpha=alpha, adjust=False).mean()
+    plus_di = (
+        100
+        * pd.Series(plus_dm, index=df.index).ewm(alpha=alpha, adjust=False).mean()
+        / atr
+    )
+    minus_di = (
+        100
+        * pd.Series(minus_dm, index=df.index).ewm(alpha=alpha, adjust=False).mean()
+        / atr
+    )
+
+    dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)
+
+    df = df.copy()
+    df["adx"] = dx.ewm(alpha=alpha, adjust=False).mean().round(2)
+
+    rolling = df["close"].rolling(window=bbw_period)
+    sma = rolling.mean()
+    std = rolling.std()
+    df["bbw"] = np.where(sma != 0, (4.0 * std) / sma, np.nan)
+    df["bbw"] = df["bbw"].round(6)
+
+    return df
+
+
+def profile_from_combo(combo: dict) -> str:
+    """
+    Map a sweep combo dict to its execution profile.
+    Uses the same recipe logic as TOLERANCE_MAP in Work server.py.
+
+    Recipe derivation:
+      has_cluster → 2R
+      r_count==1  → R
+      r_count>=2  → 2R
+      c_count==1  → recipe + '+C' or 'C'
+      c_count>=2  → recipe + '+2C' or '2C'
+
+    Profile mapping:
+      R, 2R       → Counter-Trend
+      R+C, 2R+C   → Hybrid
+      C, 2C       → Pro-Trend
+    """
+    REVERSAL_PATTERNS = {
+        "engulfing",
+        "hammer",
+        "hanging_man",
+        "morning_star",
+        "evening_star",
+        "shooting_star",
+        "inverted_hammer",
+    }
+    CONTINUATION_PATTERNS = {
+        "inside_bar",
+        "one_candle_flag",
+        "three_white_soldiers",
+        "three_black_crows",
+    }
+
+    anchor = combo.get("anchor") or ""
+    anchor2 = combo.get("anchor2") or ""
+    continuation = combo.get("continuation") or ""
+    has_cluster = combo.get("anchor") == "cluster"
+
+    r_count = sum(1 for p in [anchor, anchor2] if p in REVERSAL_PATTERNS)
+
+    c_count = sum(
+        1 for p in [anchor, anchor2, continuation] if p in CONTINUATION_PATTERNS
+    )
+
+    if has_cluster:
+        recipe = "2R"
+    elif r_count == 1:
+        recipe = "R"
+    elif r_count >= 2:
+        recipe = "2R"
+    else:
+        recipe = ""
+
+    if c_count == 1:
+        recipe = (recipe + "+C") if recipe else "C"
+    elif c_count >= 2:
+        recipe = (recipe + "+2C") if recipe else "2C"
+
+    PROFILE_MAP = {
+        "R": "Counter-Trend",
+        "2R": "Counter-Trend",
+        "R+C": "Hybrid",
+        "2R+C": "Hybrid",
+        "C": "Pro-Trend",
+        "2C": "Pro-Trend",
+    }
+    return PROFILE_MAP.get(recipe, "Hybrid")
+
+
 _WFV_COLUMNS = [
     "window_idx",
     "is_start",
@@ -890,6 +1058,11 @@ _WFV_COLUMNS = [
 def run_wfv(df: pd.DataFrame, instrument: str, pip_size: float) -> pd.DataFrame:
     avg_spread = float((df["ask_open"] - df["bid_open"]).mean())
     df = df.sort_index()
+
+    df = compute_regime_features(df)
+    adx_arr = df["adx"].to_numpy()
+    bbw_arr = df["bbw"].to_numpy()
+
     data_end = df.index.max()
     combos = build_combo_list()
 
@@ -942,6 +1115,11 @@ def run_wfv(df: pd.DataFrame, instrument: str, pip_size: float) -> pd.DataFrame:
                 is_inds["sma_slow"] = full_sma_slow[is_start_pos:is_end_pos]
                 oos_inds["sma_slow"] = full_sma_slow[oos_start_pos:oos_end_pos]
 
+                is_adx = adx_arr[is_start_pos:is_end_pos]
+                is_bbw = bbw_arr[is_start_pos:is_end_pos]
+                oos_adx = adx_arr[oos_start_pos:oos_end_pos]
+                oos_bbw = bbw_arr[oos_start_pos:oos_end_pos]
+
                 combos_for_pair = [
                     c for c in combos if c["direction"] in directions
                 ]
@@ -970,6 +1148,10 @@ def run_wfv(df: pd.DataFrame, instrument: str, pip_size: float) -> pd.DataFrame:
                         avg_spread,
                         timeout_bars=timeout,
                         sl_mode=sl_mode,
+                        adx_arr=is_adx,
+                        bbw_arr=is_bbw,
+                        profile=profile_from_combo(combo),
+                        instrument=instrument,
                     )
                     r_mults = [float(t["r_multiple"]) for t in trades]
                     is_score = sqn100(r_mults, n_min=SQN_MIN_TRADES_IS)
@@ -1028,6 +1210,10 @@ def run_wfv(df: pd.DataFrame, instrument: str, pip_size: float) -> pd.DataFrame:
                         avg_spread,
                         timeout_bars=timeout,
                         sl_mode=sl_mode,
+                        adx_arr=oos_adx,
+                        bbw_arr=oos_bbw,
+                        profile=profile_from_combo(combo),
+                        instrument=instrument,
                     )
                     oos_r = [float(t["r_multiple"]) for t in oos_trades]
                     _gap = combo.get("gap")
@@ -1067,6 +1253,7 @@ def run_wfv(df: pd.DataFrame, instrument: str, pip_size: float) -> pd.DataFrame:
                             "oos_mean_r": oos_mean_r,
                             "mdd": 0.0,
                             "sharpe": 0.0,
+                            "regime_filtered": True,
                         }
                     )
 
