@@ -1022,13 +1022,32 @@ def profile_from_combo(combo: dict) -> str:
         recipe = (recipe + "+2C") if recipe else "2C"
 
     PROFILE_MAP = {
-        "R": "Counter-Trend",
         "2R": "Counter-Trend",
         "R+C": "Hybrid",
         "2R+C": "Hybrid",
         "C": "Pro-Trend",
         "2C": "Pro-Trend",
     }
+
+    # Dynamic profile for 1R — indicator changes the profile
+    if recipe == "R":
+        ind_val = combo.get("indicator_filter") or combo.get("indicator")
+
+        if ind_val and isinstance(ind_val, dict):
+            ind_type = ind_val.get("type", "")
+            if "ma_" in ind_type:
+                return "Pro-Trend"
+            elif "rsi" in ind_type:
+                return "Counter-Trend"
+        elif isinstance(ind_val, str):
+            if "ma_" in ind_val:
+                return "Pro-Trend"
+            elif "rsi" in ind_val:
+                return "Counter-Trend"
+
+        # Naked 1R with no indicator → Counter-Trend
+        return "Counter-Trend"
+
     return PROFILE_MAP.get(recipe, "Hybrid")
 
 
