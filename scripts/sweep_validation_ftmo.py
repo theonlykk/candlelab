@@ -299,14 +299,13 @@ def build_combo_list() -> list[dict]:
 
 
 def fetch_instrument_data(instrument: str, conn) -> pd.DataFrame:
-    """Load M5 candles from oanda_candles; mid OHLC from bid/ask for signal logic."""
+    """Load M5 candles (FTMO spread simulation) from oanda_candles; mid OHLC from bid/ask for signal logic."""
     sql = """
 SELECT time, open, high, low, close,
        bid_open, bid_close, ask_open, ask_close, volume
 FROM oanda_candles
 WHERE instrument = %s
   AND granularity = 'M5'
-  AND time >= NOW() - INTERVAL '14 months'
 ORDER BY time ASC
 """
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
