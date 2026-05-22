@@ -304,7 +304,6 @@ SELECT time, open, high, low, close,
 FROM oanda_candles
 WHERE instrument = %s
   AND granularity = 'M5'
-  AND time >= NOW() - INTERVAL '14 months'
 ORDER BY time ASC
 """
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
