@@ -1080,7 +1080,7 @@ def run_wfv(df: pd.DataFrame, instrument: str, pip_size: float) -> pd.DataFrame:
 
         for timeout in timeouts:
             for window_idx in range(N_WINDOWS):
-                weeks_shift = N_WINDOWS - 1 - window_idx
+                weeks_shift = (N_WINDOWS - 1 - window_idx) * OOS_WEEKS
                 oos_end = data_end - pd.Timedelta(weeks=weeks_shift)
                 oos_start = oos_end - pd.Timedelta(weeks=OOS_WEEKS)
                 is_start = oos_start - pd.Timedelta(weeks=IS_WEEKS)
