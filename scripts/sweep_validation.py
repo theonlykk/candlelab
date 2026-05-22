@@ -1181,8 +1181,8 @@ def run_wfv(df: pd.DataFrame, instrument: str, pip_size: float) -> pd.DataFrame:
 
                 print(
                     f"  Window {window_idx + 1:02d}/{N_WINDOWS} | "
-                    f"IS {is_start_ts.date()}→{is_end_ts.date()} | "
-                    f"OOS {oos_start_ts.date()}→{oos_end_ts.date()} | "
+                    f"IS {is_start_ts.date()}->{is_end_ts.date()} | "
+                    f"OOS {oos_start_ts.date()}->{oos_end_ts.date()} | "
                     f"promoted={len(promoted)}"
                 )
 
