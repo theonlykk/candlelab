@@ -138,8 +138,10 @@ RSI_PERIOD = 14
 RSI_OVERSOLD = 30.0
 RSI_OVERBOUGHT = 70.0
 DEAD_ZONE_HOURS = frozenset({21, 22, 23})  # new — UTC hours excluded from all signals
-OUTPUT_DIR = r"d:\candlelab\scripts\output"
-ROSTER_FILE = r"d:\candlelab\scripts\output\deployment_roster.json"
+OUTPUT_DIR = r"d:\candlelab\scripts\output\ftmo"
+import os as _os
+_os.makedirs(OUTPUT_DIR, exist_ok=True)
+ROSTER_FILE = r"d:\candlelab\scripts\output\ftmo\deployment_roster.json"
 
 ANCHORS = ["engulfing", "hammer", "shooting_star", "morning_star"]
 CONTINUATIONS = [None, "inside_bar", "one_candle_flag"]  # one_candle_flag re-enabled for AUD_JPY validation
