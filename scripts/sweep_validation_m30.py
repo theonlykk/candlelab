@@ -117,7 +117,7 @@ PAIR_CONFIG = {
         "ma_pairs": [(5, 20)],
         "timeouts": [4, 8, 12],
         "directions": ["long"],
-        "sl_mode": "atr_only",
+        "sl_mode": "standard",
         "enabled": True,
     },
 }
