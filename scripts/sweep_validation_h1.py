@@ -1539,7 +1539,7 @@ def main():
             print(f"{'='*60}")
 
             df = fetch_instrument_data(instrument, conn)
-            print(f"  Fetched {len(df):,} M5 bars")
+            print(f"  Fetched {len(df):,} {GRANULARITY} bars")
 
             wfv_df = run_wfv(df, instrument, PIP[instrument])
 
