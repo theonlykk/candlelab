@@ -297,7 +297,7 @@ def build_combo_list() -> list[dict]:
 
 
 def fetch_instrument_data(instrument: str, conn) -> pd.DataFrame:
-    """Load H1 candles from oanda_candles; mid OHLC from bid/ask for signal logic."""
+    """Load M15 candles from oanda_candles; mid OHLC from bid/ask for signal logic."""
     sql = """
 SELECT time, open, high, low, close,
        bid_open, bid_close, ask_open, ask_close, volume
