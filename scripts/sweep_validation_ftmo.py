@@ -267,17 +267,16 @@ def build_combo_list() -> list[dict]:
 
 
 def fetch_instrument_data(instrument: str, conn) -> pd.DataFrame:
-    """Load M5 candles (FTMO spread simulation) from oanda_candles; mid OHLC from bid/ask for signal logic."""
+    """Load M5 candles from ftmo_candles with real measured spread_points."""
     sql = """
-SELECT time, open, high, low, close,
-       bid_open, bid_close, ask_open, ask_close, volume
-FROM oanda_candles
+SELECT time, open, high, low, close, volume, spread_points
+FROM ftmo_candles
 WHERE instrument = %s
-  AND granularity = 'M5'
+  AND granularity = %s
 ORDER BY time ASC
 """
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute(sql, (instrument,))
+        cur.execute(sql, (instrument, GRANULARITY))
         rows = cur.fetchall()
 
     df = pd.DataFrame(rows)
@@ -291,8 +290,10 @@ ORDER BY time ASC
     df["time"] = pd.to_datetime(df["time"], utc=True)
     df = df.set_index("time").sort_index()
 
-    df["open"] = (df["bid_open"] + df["ask_open"]) / 2
-    df["close"] = (df["bid_close"] + df["ask_close"]) / 2
+    df["bid_open"] = df["open"]
+    df["ask_open"] = df["open"]
+    df["bid_close"] = df["close"]
+    df["ask_close"] = df["close"]
 
     return df
 
@@ -1025,9 +1026,9 @@ _WFV_COLUMNS = [
 
 
 def run_wfv(df: pd.DataFrame, instrument: str, pip_size: float) -> pd.DataFrame:
-    # FTMO spread simulation: 0.5 pips flat
-    # pip_size varies by instrument — passed as parameter
-    avg_spread = 0.5 * pip_size
+    # Real FTMO spread from ftmo_candles spread_points column
+    # FTMO is 5-digit broker: 1 point = pip_size / 10
+    avg_spread = float(df["spread_points"].mean()) * (pip_size / 10)
     df = df.sort_index()
 
     df = compute_regime_features(df)
