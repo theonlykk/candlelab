@@ -805,6 +805,8 @@ def sweep_simulation(
                 "sl_dist": sl_dist,
                 "pnl_dollars": float(trade_pnl),
                 "equity_after": float(current_equity),
+                "resolution_bar": int(exit_bar - fill_idx),
+                "exit_reason": result,
             }
         )
         block_fill = fill_idx
