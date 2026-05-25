@@ -1277,7 +1277,11 @@ def run_wfv(df: pd.DataFrame, instrument: str, pip_size: float) -> pd.DataFrame:
                             )
                     oos_n_trades = len(oos_trades)
                     oos_mean_r = float(np.mean(oos_r)) if oos_r else 0.0
-                    oos_sqn100 = 0.0
+                    if len(oos_r) >= 2:
+                        _oos_std = float(np.std(oos_r, ddof=1))
+                        oos_sqn100 = float(np.mean(oos_r) / _oos_std * np.sqrt(min(len(oos_r), 100))) if _oos_std > 0 else 0.0
+                    else:
+                        oos_sqn100 = 0.0
 
                     all_rows.append(
                         {
@@ -1295,6 +1299,7 @@ def run_wfv(df: pd.DataFrame, instrument: str, pip_size: float) -> pd.DataFrame:
                             "is_n_trades": pr["is_n_trades"],
                             "is_mean_r": pr["is_mean_r"],
                             "oos_sqn100": oos_sqn100,
+                            "oos_r_list": oos_r,
                             "oos_n_trades": oos_n_trades,
                             "oos_mean_r": oos_mean_r,
                             "mdd": 0.0,
@@ -1419,9 +1424,15 @@ def write_leaderboard_csv(wfv_df: pd.DataFrame, instrument: str) -> None:
             oos_mean = float((g["oos_mean_r"] * g["oos_n_trades"]).sum() / nt)
         else:
             oos_mean = 0.0
+        pooled_r = [r for r_list in g["oos_r_list"] for r in r_list]
+        if len(pooled_r) >= 2:
+            _pooled_std = float(np.std(pooled_r, ddof=1))
+            agg_sqn100 = float(np.mean(pooled_r) / _pooled_std * np.sqrt(min(len(pooled_r), 100))) if _pooled_std > 0 else 0.0
+        else:
+            agg_sqn100 = 0.0
         return pd.Series(
             {
-                "oos_sqn100": 0.0,
+                "oos_sqn100": agg_sqn100,
                 "oos_mean_r": oos_mean,
                 "oos_n_trades": nt,
                 "is_sqn100": float(g["is_sqn100"].mean()),
