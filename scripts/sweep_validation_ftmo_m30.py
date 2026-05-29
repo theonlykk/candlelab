@@ -1333,7 +1333,17 @@ def run_wfv(df: pd.DataFrame, instrument: str, pip_size: float, conn) -> pd.Data
                             combo_equity_curves[combo_key].append(
                                 float(t["equity_after"])
                             )
-                    oos_n_trades = len(oos_trades)
+                    # On cache hit oos_trades is empty — derive count
+                    # and equity curve directly from oos_r
+                    oos_n_trades_override = len(oos_r)
+                    if not oos_trades and oos_r:
+                        # Reconstruct synthetic equity curve from R-multiples
+                        # Uses 1% risk, $10,000 base — consistent with sweep_simulation
+                        _eq = 10_000.0
+                        for _r in oos_r:
+                            _eq *= (1 + 0.01 * _r)
+                            combo_equity_curves[combo_key].append(_eq)
+                    oos_n_trades = len(oos_r)
                     oos_mean_r = float(np.mean(oos_r)) if oos_r else 0.0
                     if len(oos_r) >= 2:
                         _oos_std = float(np.std(oos_r, ddof=1))
