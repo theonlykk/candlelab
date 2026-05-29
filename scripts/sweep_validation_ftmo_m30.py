@@ -3,6 +3,7 @@ Sweep validation — foundation: DB fetch and signal detection (Prompt 1).
 """
 
 import collections
+import hashlib
 import os
 import json
 import numpy as np
@@ -62,32 +63,32 @@ PIP = {
     "AUD_CAD": 0.0001, "AUD_NZD": 0.0001, "NZD_CAD": 0.0001, "CAD_CHF": 0.0001,
 }
 PAIR_CONFIG = {
-    "AUD_USD": {"ma_pairs": [(10, 50)], "timeouts": [40], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "NZD_USD": {"ma_pairs": [(10, 50)], "timeouts": [40], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "USD_CHF": {"ma_pairs": [(10, 50)], "timeouts": [40], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "USD_JPY": {"ma_pairs": [(10, 50)], "timeouts": [40], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "USD_CAD": {"ma_pairs": [(10, 50)], "timeouts": [40], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "EUR_USD": {"ma_pairs": [(10, 50)], "timeouts": [40], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "GBP_USD": {"ma_pairs": [(10, 50)], "timeouts": [40], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "AUD_JPY": {"ma_pairs": [(10, 50)], "timeouts": [40], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "CAD_JPY": {"ma_pairs": [(10, 50)], "timeouts": [40], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "EUR_JPY": {"ma_pairs": [(10, 50)], "timeouts": [40], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "GBP_JPY": {"ma_pairs": [(10, 50)], "timeouts": [40], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "NZD_JPY": {"ma_pairs": [(10, 50)], "timeouts": [40], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "CHF_JPY": {"ma_pairs": [(10, 50)], "timeouts": [40], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "EUR_AUD": {"ma_pairs": [(10, 50)], "timeouts": [40], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "EUR_CAD": {"ma_pairs": [(10, 50)], "timeouts": [40], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "EUR_CHF": {"ma_pairs": [(10, 50)], "timeouts": [40], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "EUR_GBP": {"ma_pairs": [(10, 50)], "timeouts": [40], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "EUR_NZD": {"ma_pairs": [(10, 50)], "timeouts": [40], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "GBP_AUD": {"ma_pairs": [(10, 50)], "timeouts": [40], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "GBP_CAD": {"ma_pairs": [(10, 50)], "timeouts": [40], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "GBP_CHF": {"ma_pairs": [(10, 50)], "timeouts": [40], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "GBP_NZD": {"ma_pairs": [(10, 50)], "timeouts": [40], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "AUD_CAD": {"ma_pairs": [(10, 50)], "timeouts": [40], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "AUD_NZD": {"ma_pairs": [(10, 50)], "timeouts": [40], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "NZD_CAD": {"ma_pairs": [(10, 50)], "timeouts": [40], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "CAD_CHF": {"ma_pairs": [(10, 50)], "timeouts": [40], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
+    "AUD_USD": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
+    "NZD_USD": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
+    "USD_CHF": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
+    "USD_JPY": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
+    "USD_CAD": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
+    "EUR_USD": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
+    "GBP_USD": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
+    "AUD_JPY": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
+    "CAD_JPY": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
+    "EUR_JPY": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
+    "GBP_JPY": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
+    "NZD_JPY": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
+    "CHF_JPY": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
+    "EUR_AUD": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
+    "EUR_CAD": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
+    "EUR_CHF": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
+    "EUR_GBP": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
+    "EUR_NZD": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
+    "GBP_AUD": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
+    "GBP_CAD": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
+    "GBP_CHF": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
+    "GBP_NZD": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
+    "AUD_CAD": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
+    "AUD_NZD": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
+    "NZD_CAD": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
+    "CAD_CHF": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
 }
 GRANULARITY = "M30"
 IS_WEEKS = 12
@@ -95,10 +96,10 @@ OOS_WEEKS = 4
 N_WINDOWS = 27
 SQN_MIN_TRADES_IS = 5  # IS promotion floor — new, replaces SQN_MIN_TRADES in IS gate
 SQN_MIN_TRADES = 10  # final leaderboard floor — unchanged
-SQN_PROMOTE_THRESHOLD = 1.0
+SQN_PROMOTE_THRESHOLD = 1.2
 TP_MULT = 3.0
 SL_MULT = 1.0
-TIMEOUT_BARS = 40
+TIMEOUT_BARS = 28
 ATR_PERIOD = 14
 MA_FAST = 10  # was 5
 MA_SLOW = 50  # was 20
@@ -266,11 +267,109 @@ def build_combo_list() -> list[dict]:
     return deduped
 
 
+def _make_block_hash(
+    instrument: str,
+    granularity: str,
+    oos_start: pd.Timestamp,
+    oos_end: pd.Timestamp,
+    combo: dict,
+    timeout: int,
+    tp_mult: float,
+    sl_mult: float,
+    sl_mode: str,
+) -> str:
+    """
+    Deterministic SHA-256 hash identifying a unique OOS evaluation block.
+    All float params rounded to 6dp. Dict keys sorted for stability.
+    """
+    payload = {
+        "instrument": instrument,
+        "granularity": granularity,
+        "oos_start": oos_start.isoformat(),
+        "oos_end": oos_end.isoformat(),
+        "combo": {k: round(v, 6) if isinstance(v, float) else v
+                  for k, v in sorted(combo.items())},
+        "timeout": timeout,
+        "tp_mult": round(tp_mult, 6),
+        "sl_mult": round(sl_mult, 6),
+        "sl_mode": sl_mode,
+    }
+    raw = json.dumps(payload, sort_keys=True, default=str)
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _cache_lookup(block_hash: str, conn) -> dict | None:
+    """
+    Returns cached OOS result dict if found, else None.
+    Never raises — cache misses are silent.
+    """
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                "SELECT result_json FROM sweep_oos_cache WHERE block_hash = %s",
+                (block_hash,),
+            )
+            row = cur.fetchone()
+        if row:
+            return json.loads(row["result_json"])
+        return None
+    except Exception as e:
+        print(f"  [cache] lookup error (non-fatal): {e}")
+        return None
+
+
+def _cache_store(block_hash: str, instrument: str, oos_start: pd.Timestamp,
+                 oos_end: pd.Timestamp, combo: dict, timeout: int,
+                 oos_r: list[float], conn) -> None:
+    """
+    Stores OOS result in cache. Silently skips on conflict (already cached).
+    Never raises — cache write failures are non-fatal.
+    """
+    n = len(oos_r)
+    mean_r = float(np.mean(oos_r)) if n > 0 else 0.0
+    std_r = float(np.std(oos_r, ddof=1)) if n >= 2 else 0.0
+    sqn = round((mean_r / std_r) * np.sqrt(min(n, 100)), 4) if std_r > 0 else 0.0
+
+    result = {
+        "oos_r_list": oos_r,
+        "oos_n_trades": n,
+        "oos_mean_r": mean_r,
+        "oos_sqn100": sqn,
+    }
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO sweep_oos_cache
+                    (block_hash, instrument, granularity, oos_start, oos_end,
+                     config_hash, signal_count, mean_r, sqn100, result_json)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (block_hash) DO NOTHING
+                """,
+                (
+                    block_hash,
+                    instrument,
+                    GRANULARITY,
+                    oos_start,
+                    oos_end,
+                    block_hash[:16],
+                    n,
+                    mean_r,
+                    sqn,
+                    json.dumps(result),
+                ),
+            )
+        conn.commit()
+    except Exception as e:
+        print(f"  [cache] store error (non-fatal): {e}")
+
+
 def fetch_instrument_data(instrument: str, conn) -> pd.DataFrame:
     """Load M30 candles from ftmo_candles with real measured spread_points."""
     sql = """
-SELECT time, open, high, low, close, volume, spread_points
-FROM ftmo_candles
+SELECT time, open, high, low, close, volume,
+       (ask_close - bid_close) AS spread_points
+FROM oanda_candles
 WHERE instrument = %s
   AND granularity = %s
 ORDER BY time ASC
@@ -1027,10 +1126,9 @@ _WFV_COLUMNS = [
 ]
 
 
-def run_wfv(df: pd.DataFrame, instrument: str, pip_size: float) -> pd.DataFrame:
-    # Real FTMO spread from ftmo_candles spread_points column
-    # FTMO is 5-digit broker: 1 point = pip_size / 10
-    avg_spread = float(df["spread_points"].mean()) * (pip_size / 10)
+def run_wfv(df: pd.DataFrame, instrument: str, pip_size: float, conn) -> pd.DataFrame:
+    # Spread from oanda_candles (ask_close - bid_close) — already in price units
+    avg_spread = float(df["spread_points"].mean())
     df = df.sort_index()
 
     df = compute_regime_features(df)
@@ -1162,34 +1260,55 @@ def run_wfv(df: pd.DataFrame, instrument: str, pip_size: float) -> pd.DataFrame:
 
                 for pr in promoted:
                     combo = pr["combo"]
-                    sig_o, anc_o = detect_signals(
-                        oos_df,
-                        combo["anchor"],
-                        combo["continuation"],
-                        combo["direction"],
-                        gap=combo["gap"] if combo["gap"] is not None else 5,
-                        anchor2=combo.get("anchor2"),
-                        continuation2=combo.get("continuation2"),
-                    )
-                    sig_o, anc_o = _apply_indicator_filter(
-                        sig_o, anc_o, combo, oos_inds, oos_df
-                    )
-                    oos_trades = sweep_simulation(
-                        oos_df,
-                        sig_o,
-                        anc_o,
-                        combo["direction"],
-                        pip_size,
-                        oos_inds["atr"],
-                        avg_spread,
-                        timeout_bars=timeout,
-                        sl_mode=sl_mode,
-                        adx_arr=oos_adx,
-                        bbw_arr=oos_bbw,
-                        profile=profile_from_combo(combo),
+
+                    block_hash = _make_block_hash(
                         instrument=instrument,
+                        granularity=GRANULARITY,
+                        oos_start=oos_start_ts,
+                        oos_end=oos_end_ts,
+                        combo=combo,
+                        timeout=timeout,
+                        tp_mult=TP_MULT,
+                        sl_mult=SL_MULT,
+                        sl_mode=sl_mode,
                     )
-                    oos_r = [float(t["r_multiple"]) for t in oos_trades]
+
+                    cached = _cache_lookup(block_hash, conn)
+                    if cached is not None:
+                        oos_r = cached["oos_r_list"]
+                        oos_trades = []
+                        print(f"    [cache HIT] {instrument} w{window_idx+1:02d} {combo.get('anchor')}/{combo.get('continuation')}")
+                    else:
+                        sig_o, anc_o = detect_signals(
+                            oos_df,
+                            combo["anchor"],
+                            combo["continuation"],
+                            combo["direction"],
+                            gap=combo["gap"] if combo["gap"] is not None else 5,
+                            anchor2=combo.get("anchor2"),
+                            continuation2=combo.get("continuation2"),
+                        )
+                        sig_o, anc_o = _apply_indicator_filter(
+                            sig_o, anc_o, combo, oos_inds, oos_df
+                        )
+                        oos_trades = sweep_simulation(
+                            oos_df,
+                            sig_o,
+                            anc_o,
+                            combo["direction"],
+                            pip_size,
+                            oos_inds["atr"],
+                            avg_spread,
+                            timeout_bars=timeout,
+                            sl_mode=sl_mode,
+                            adx_arr=oos_adx,
+                            bbw_arr=oos_bbw,
+                            profile=profile_from_combo(combo),
+                            instrument=instrument,
+                        )
+                        oos_r = [float(t["r_multiple"]) for t in oos_trades]
+                        _cache_store(block_hash, instrument, oos_start_ts, oos_end_ts,
+                                     combo, timeout, oos_r, conn)
                     _gap = combo.get("gap")
                     combo_key = (
                         combo.get("anchor"),
@@ -1481,7 +1600,7 @@ def main():
                 df = fetch_instrument_data(instrument, conn)
                 print(f"  Fetched {len(df):,} {GRANULARITY} bars")
 
-                wfv_df = run_wfv(df, instrument, PIP[instrument])
+                wfv_df = run_wfv(df, instrument, PIP[instrument], conn)
             except ValueError as e:
                 print(f"  Skipping {instrument}: {e}")
                 continue
