@@ -52,6 +52,10 @@ ENABLED_INSTRUMENTS = {
     "GBP_AUD": True, "GBP_CAD": True, "GBP_CHF": True, "GBP_NZD": True,
     "AUD_CAD": True, "AUD_NZD": True, "NZD_CAD": True, "CAD_CHF": True,
 }
+_override = os.environ.get("CANDLELAB_INSTRUMENTS_OVERRIDE")
+if _override:
+    INSTRUMENTS = [i.strip() for i in _override.split(",")]
+    ENABLED_INSTRUMENTS = {i: True for i in INSTRUMENTS}
 PIP = {
     "AUD_USD": 0.0001, "NZD_USD": 0.0001, "USD_CHF": 0.0001, "USD_JPY": 0.01,
     "USD_CAD": 0.0001, "EUR_USD": 0.0001, "GBP_USD": 0.0001,
@@ -305,15 +309,19 @@ def _cache_lookup(block_hash: str, conn) -> dict | None:
     """
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SAVEPOINT cache_lookup")
             cur.execute(
                 "SELECT result_json FROM sweep_oos_cache WHERE block_hash = %s",
                 (block_hash,),
             )
             row = cur.fetchone()
+            cur.execute("RELEASE SAVEPOINT cache_lookup")
         if row:
             return json.loads(row["result_json"])
         return None
     except Exception as e:
+        with conn.cursor() as rollback_cur:
+            rollback_cur.execute("ROLLBACK TO SAVEPOINT cache_lookup")
         print(f"  [cache] lookup error (non-fatal): {e}")
         return None
 
@@ -325,19 +333,20 @@ def _cache_store(block_hash: str, instrument: str, oos_start: pd.Timestamp,
     Stores OOS result in cache. Silently skips on conflict (already cached).
     Never raises — cache write failures are non-fatal.
     """
-    n = len(oos_r)
+    n = int(len(oos_r))
     mean_r = float(np.mean(oos_r)) if n > 0 else 0.0
     std_r = float(np.std(oos_r, ddof=1)) if n >= 2 else 0.0
-    sqn = round((mean_r / std_r) * np.sqrt(min(n, 100)), 4) if std_r > 0 else 0.0
+    sqn = float(round((mean_r / std_r) * np.sqrt(min(n, 100)), 4)) if std_r > 0 else 0.0
 
     result = {
-        "oos_r_list": oos_r,
+        "oos_r_list": [float(r) for r in oos_r],
         "oos_n_trades": n,
         "oos_mean_r": mean_r,
         "oos_sqn100": sqn,
     }
     try:
         with conn.cursor() as cur:
+            cur.execute("SAVEPOINT cache_store")
             cur.execute(
                 """
                 INSERT INTO sweep_oos_cache
@@ -359,8 +368,11 @@ def _cache_store(block_hash: str, instrument: str, oos_start: pd.Timestamp,
                     json.dumps(result),
                 ),
             )
+            cur.execute("RELEASE SAVEPOINT cache_store")
         conn.commit()
     except Exception as e:
+        with conn.cursor() as rollback_cur:
+            rollback_cur.execute("ROLLBACK TO SAVEPOINT cache_store")
         print(f"  [cache] store error (non-fatal): {e}")
 
 
