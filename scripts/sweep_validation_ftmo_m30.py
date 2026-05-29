@@ -315,10 +315,9 @@ def _cache_lookup(block_hash: str, conn) -> dict | None:
                 (block_hash,),
             )
             row = cur.fetchone()
+            result = row["result_json"] if row else None
             cur.execute("RELEASE SAVEPOINT cache_lookup")
-        if row:
-            return json.loads(row["result_json"])
-        return None
+        return result
     except Exception as e:
         with conn.cursor() as rollback_cur:
             rollback_cur.execute("ROLLBACK TO SAVEPOINT cache_lookup")
