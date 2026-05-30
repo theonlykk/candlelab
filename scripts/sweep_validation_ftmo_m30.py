@@ -109,6 +109,7 @@ TIMEOUT_BARS = 28
 SQN_SHRINKAGE_K = 10.0
 MIN_TRADES_ELIGIBLE = 3
 MIN_TRADES_WATCHLIST = 1
+MIN_SQN_ELIGIBLE = 1.0
 RELATIVE_SCORE_FRACTION = 0.80
 ATR_PERIOD = 14
 MA_FAST = 10  # was 5
@@ -1328,14 +1329,14 @@ def run_wfv(
                     r_mults = [float(t["r_multiple"]) for t in trades]
                     n = len(r_mults)
                     mean_r = float(np.mean(r_mults)) if r_mults else 0.0
-                    raw_sqn = sqn100(r_mults, n_min=SQN_MIN_TRADES_IS)
+                    raw_sqn = sqn100(r_mults, n_min=1)
 
                     # Shrinkage-adjusted SQN
                     shrink = float(np.sqrt(n / (n + SQN_SHRINKAGE_K))) if n > 0 else 0.0
                     adjusted_score = raw_sqn * shrink
 
                     # Bucket assignment
-                    if n < 1 or mean_r <= 0 or raw_sqn <= 0:
+                    if n < 1 or mean_r <= 0 or adjusted_score < MIN_SQN_ELIGIBLE:
                         initial_bucket = "REJECTED"
                     elif n < MIN_TRADES_ELIGIBLE and mean_r > 0:
                         initial_bucket = "WATCHLIST"
@@ -1368,7 +1369,7 @@ def run_wfv(
                     if r["initial_bucket"] == "ELIGIBLE":
                         # Gemini patch: if best_score <= 0, nothing promoted
                         passes_band = (
-                            best_score > 0
+                            best_score >= MIN_SQN_ELIGIBLE
                             and r["adjusted_score"] >= best_score * RELATIVE_SCORE_FRACTION
                         )
                         r["passes_band"] = passes_band
@@ -1477,9 +1478,11 @@ def run_wfv(
                     # and equity curve directly from oos_r
                     oos_n_trades_override = len(oos_r)
                     if not oos_trades and oos_r:
-                        # Reconstruct synthetic equity curve from R-multiples
-                        # Uses 1% risk, $10,000 base — consistent with sweep_simulation
-                        _eq = 10_000.0
+                        # Reconstruct synthetic equity curve from R-multiples.
+                        # Seed from last known equity for this combo across windows
+                        # to prevent artificial reset to 10,000 on each cache hit.
+                        existing = combo_equity_curves.get(combo_key, [])
+                        _eq = existing[-1] if existing else 10_000.0
                         for _r in oos_r:
                             _eq *= (1 + 0.01 * _r)
                             combo_equity_curves[combo_key].append(_eq)
