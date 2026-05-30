@@ -983,10 +983,12 @@ def sqn100(r_multiples: list[float], n_min: int = SQN_MIN_TRADES) -> float:
     n = len(r_multiples)
     if n < n_min:
         return 0.0
+    if n < 2:
+        return 0.0
     r = np.array(r_multiples, dtype=float)
     mean_r = np.mean(r)
     std_r = np.std(r, ddof=1)
-    if std_r == 0.0:
+    if std_r == 0.0 or not np.isfinite(std_r):
         return 0.0
     return round((mean_r / std_r) * np.sqrt(min(n, 100)), 4)
 
