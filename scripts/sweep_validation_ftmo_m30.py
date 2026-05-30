@@ -6,6 +6,7 @@ import collections
 import hashlib
 import os
 import json
+import uuid
 import numpy as np
 import pandas as pd
 import psycopg2
@@ -104,6 +105,11 @@ SQN_PROMOTE_THRESHOLD = 1.2
 TP_MULT = 3.0
 SL_MULT = 1.0
 TIMEOUT_BARS = 28
+# IS Gate v2
+SQN_SHRINKAGE_K = 10.0
+MIN_TRADES_ELIGIBLE = 3
+MIN_TRADES_WATCHLIST = 1
+RELATIVE_SCORE_FRACTION = 0.80
 ATR_PERIOD = 14
 MA_FAST = 10  # was 5
 MA_SLOW = 50  # was 20
@@ -373,6 +379,82 @@ def _cache_store(block_hash: str, instrument: str, oos_start: pd.Timestamp,
         with conn.cursor() as rollback_cur:
             rollback_cur.execute("ROLLBACK TO SAVEPOINT cache_store")
         print(f"  [cache] store error (non-fatal): {e}")
+
+
+def _write_is_results(
+    is_rows: list[dict],
+    instrument: str,
+    window_id: int,
+    window_start,
+    window_end,
+    timeout: int,
+    run_id: str,
+    batch_id: str,
+    conn,
+) -> None:
+    """
+    Write all IS evaluation results to sweep_is_results.
+    Uses ON CONFLICT DO NOTHING — safe to re-run.
+    Never raises — write failure is non-fatal.
+    """
+    sql = """
+        INSERT INTO sweep_is_results (
+            run_id, batch_id,
+            instrument, granularity, window_id, window_start, window_end,
+            anchor, anchor2, continuation, continuation2,
+            gap, indicator, direction, combo_type, pure_cont,
+            timeout_bars, tp_mult, sl_mult,
+            trade_count_is, mean_r_is, sqn_is, net_r_is,
+            adjusted_score_is, initial_bucket, passes_band,
+            final_bucket, oos_eligible
+        ) VALUES (
+            %s, %s,
+            %s, %s, %s, %s, %s,
+            %s, %s, %s, %s,
+            %s, %s, %s, %s, %s,
+            %s, %s, %s,
+            %s, %s, %s, %s,
+            %s, %s, %s,
+            %s, %s
+        )
+        ON CONFLICT DO NOTHING
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SAVEPOINT is_results_write")
+            for row in is_rows:
+                combo = row["combo"]
+                r_list = row.get("r_mults", [])
+                net_r = float(sum(r_list)) if r_list else 0.0
+                cur.execute(sql, (
+                    run_id, batch_id,
+                    instrument, GRANULARITY, window_id,
+                    window_start, window_end,
+                    combo.get("anchor"), combo.get("anchor2"),
+                    combo.get("continuation"), combo.get("continuation2"),
+                    combo.get("gap"), combo.get("indicator"),
+                    combo.get("direction"), combo.get("combo_type"),
+                    bool(combo.get("pure_cont", False)),
+                    int(timeout), float(TP_MULT), float(SL_MULT),
+                    int(row["n_trades"]),
+                    float(row["mean_r"]),
+                    float(row["raw_sqn"]),
+                    float(net_r),
+                    float(row["adjusted_score"]),
+                    row["initial_bucket"],
+                    bool(row["passes_band"]),
+                    row["final_bucket"],
+                    bool(row["oos_eligible"]),
+                ))
+            cur.execute("RELEASE SAVEPOINT is_results_write")
+        conn.commit()
+        print(f"  [is_results] wrote {len(is_rows)} rows")
+    except Exception as e:
+        with conn.cursor() as rollback_cur:
+            rollback_cur.execute(
+                "ROLLBACK TO SAVEPOINT is_results_write"
+            )
+        print(f"  [is_results] write error (non-fatal): {e}")
 
 
 def fetch_instrument_data(instrument: str, conn) -> pd.DataFrame:
@@ -1137,7 +1219,14 @@ _WFV_COLUMNS = [
 ]
 
 
-def run_wfv(df: pd.DataFrame, instrument: str, pip_size: float, conn) -> pd.DataFrame:
+def run_wfv(
+    df: pd.DataFrame,
+    instrument: str,
+    pip_size: float,
+    conn,
+    run_id: str,
+    batch_id: str,
+) -> pd.DataFrame:
     # Spread from oanda_candles (ask_close - bid_close) — already in price units
     avg_spread = float(df["spread_points"].mean())
     df = df.sort_index()
@@ -1207,6 +1296,12 @@ def run_wfv(df: pd.DataFrame, instrument: str, pip_size: float, conn) -> pd.Data
                     c for c in combos if c["direction"] in directions
                 ]
 
+                is_start_ts = is_df.index[0]
+                is_end_ts = is_df.index[-1]
+                oos_start_ts = oos_df.index[0]
+                oos_end_ts = oos_df.index[-1]
+
+                # --- IS EVALUATION (ALL combos) ---
                 is_rows: list[dict] = []
                 for combo in combos_for_pair:
                     sig, anc = detect_signals(
@@ -1222,53 +1317,98 @@ def run_wfv(df: pd.DataFrame, instrument: str, pip_size: float, conn) -> pd.Data
                         sig, anc, combo, is_inds, is_df
                     )
                     trades = sweep_simulation(
-                        is_df,
-                        sig,
-                        anc,
-                        combo["direction"],
-                        pip_size,
-                        is_inds["atr"],
-                        avg_spread,
-                        timeout_bars=timeout,
-                        sl_mode=sl_mode,
-                        adx_arr=is_adx,
-                        bbw_arr=is_bbw,
+                        is_df, sig, anc,
+                        combo["direction"], pip_size,
+                        is_inds["atr"], avg_spread,
+                        timeout_bars=timeout, sl_mode=sl_mode,
+                        adx_arr=is_adx, bbw_arr=is_bbw,
                         profile=profile_from_combo(combo),
                         instrument=instrument,
                     )
                     r_mults = [float(t["r_multiple"]) for t in trades]
-                    is_score = sqn100(r_mults, n_min=SQN_MIN_TRADES_IS)
-                    is_n = len(trades)
-                    is_mean_r = float(np.mean(r_mults)) if r_mults else 0.0
-                    is_rows.append(
-                        {
-                            "combo": combo,
-                            "is_sqn100": is_score,
-                            "is_n_trades": is_n,
-                            "is_mean_r": is_mean_r,
-                        }
-                    )
+                    n = len(r_mults)
+                    mean_r = float(np.mean(r_mults)) if r_mults else 0.0
+                    raw_sqn = sqn100(r_mults, n_min=SQN_MIN_TRADES_IS)
 
-                is_rows.sort(key=lambda r: r["is_sqn100"], reverse=True)
+                    # Shrinkage-adjusted SQN
+                    shrink = float(np.sqrt(n / (n + SQN_SHRINKAGE_K))) if n > 0 else 0.0
+                    adjusted_score = raw_sqn * shrink
 
-                promoted = [
-                    r
-                    for r in is_rows
-                    if r["is_sqn100"] >= SQN_PROMOTE_THRESHOLD
-                ][:5]
+                    # Bucket assignment
+                    if n < 1 or mean_r <= 0 or raw_sqn <= 0:
+                        initial_bucket = "REJECTED"
+                    elif n < MIN_TRADES_ELIGIBLE and mean_r > 0:
+                        initial_bucket = "WATCHLIST"
+                    else:
+                        initial_bucket = "ELIGIBLE"
 
-                is_start_ts = is_df.index[0]
-                is_end_ts = is_df.index[-1]
-                oos_start_ts = oos_df.index[0]
-                oos_end_ts = oos_df.index[-1]
+                    is_rows.append({
+                        "combo": combo,
+                        "n_trades": n,
+                        "mean_r": mean_r,
+                        "raw_sqn": raw_sqn,
+                        "r_mults": r_mults,
+                        "adjusted_score": adjusted_score,
+                        "initial_bucket": initial_bucket,
+                        "passes_band": False,
+                        "final_bucket": "REJECTED",
+                        "oos_eligible": False,
+                        "is_sqn100": raw_sqn,
+                        "is_n_trades": n,
+                        "is_mean_r": mean_r,
+                    })
+
+                # --- BAND SELECTION (ELIGIBLE only) ---
+                eligible = [r for r in is_rows if r["initial_bucket"] == "ELIGIBLE"]
+                best_score = max(
+                    (r["adjusted_score"] for r in eligible), default=0.0
+                )
+
+                for r in is_rows:
+                    if r["initial_bucket"] == "ELIGIBLE":
+                        # Gemini patch: if best_score <= 0, nothing promoted
+                        passes_band = (
+                            best_score > 0
+                            and r["adjusted_score"] >= best_score * RELATIVE_SCORE_FRACTION
+                        )
+                        r["passes_band"] = passes_band
+                        r["final_bucket"] = "PROMOTED" if passes_band else "ELIGIBLE_NOT_BANDED"
+                        r["oos_eligible"] = passes_band
+                    elif r["initial_bucket"] == "WATCHLIST":
+                        r["passes_band"] = False
+                        r["final_bucket"] = "WATCHLIST"
+                        r["oos_eligible"] = False
+                    else:
+                        r["passes_band"] = False
+                        r["final_bucket"] = "REJECTED"
+                        r["oos_eligible"] = False
+
+                # --- IS PERSISTENCE (write ALL rows before OOS) ---
+                _write_is_results(
+                    is_rows=is_rows,
+                    instrument=instrument,
+                    window_id=window_idx,
+                    window_start=is_start_ts,
+                    window_end=is_end_ts,
+                    timeout=timeout,
+                    run_id=run_id,
+                    batch_id=batch_id,
+                    conn=conn,
+                )
+
+                promoted = [r for r in is_rows if r["oos_eligible"]]
 
                 print(
                     f"  Window {window_idx + 1:02d}/{N_WINDOWS} | "
                     f"IS {is_start_ts.date()}->{is_end_ts.date()} | "
                     f"OOS {oos_start_ts.date()}->{oos_end_ts.date()} | "
-                    f"promoted={len(promoted)}"
+                    f"eligible={len(eligible)} "
+                    f"promoted={len(promoted)} "
+                    f"watchlist={sum(1 for r in is_rows if r['initial_bucket']=='WATCHLIST')} "
+                    f"rejected={sum(1 for r in is_rows if r['initial_bucket']=='REJECTED')}"
                 )
 
+                # --- OOS EXECUTION (PROMOTED only) ---
                 for pr in promoted:
                     combo = pr["combo"]
 
@@ -1608,6 +1748,9 @@ def main():
         "instruments": {},
     }
 
+    global_run_id = str(uuid.uuid4())
+    print(f"Run ID: {global_run_id}")
+
     with psycopg2.connect(db_url) as conn:
         for instrument in INSTRUMENTS:
             if not ENABLED_INSTRUMENTS.get(instrument, True):
@@ -1617,11 +1760,16 @@ def main():
             print(f"Sweeping {instrument}")
             print(f"{'='*60}")
 
+            instrument_batch_id = str(uuid.uuid4())
+
             try:
                 df = fetch_instrument_data(instrument, conn)
                 print(f"  Fetched {len(df):,} {GRANULARITY} bars")
 
-                wfv_df = run_wfv(df, instrument, PIP[instrument], conn)
+                wfv_df = run_wfv(
+                    df, instrument, PIP[instrument], conn,
+                    global_run_id, instrument_batch_id
+                )
             except ValueError as e:
                 print(f"  Skipping {instrument}: {e}")
                 continue
