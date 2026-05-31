@@ -607,8 +607,75 @@ def _write_is_results(
         print(f"  [is_results] write error (non-fatal): {e}")
 
 
+def precompute_currency_matrix(conn, cfg: dict) -> dict:
+    """
+    Precompute per-pair currency strength panels using target-excluded
+    pseudo-inverses. Called once in main() before the instrument loop.
+    """
+    pairs = sorted(PAIR_CONFIG.keys())
+    granularity = cfg["granularity"]
+
+    sql = """
+        SELECT time, instrument, close
+        FROM oanda_candles
+        WHERE instrument = ANY(%s)
+        AND granularity = %s
+        ORDER BY instrument, time ASC
+    """
+    with conn.cursor() as cur:
+        cur.execute(sql, (pairs, granularity))
+        rows = cur.fetchall()
+
+    df_long = pd.DataFrame(rows, columns=["time", "instrument", "close"])
+    df_long["time"] = pd.to_datetime(df_long["time"], utc=True)
+
+    P = df_long.pivot(index="time", columns="instrument", values="close")
+    P = P.reindex(columns=pairs)
+    P = P.sort_index()
+
+    P = P.ffill()
+    P = P.fillna(0.0)
+
+    R = np.log(P / P.shift(1)).fillna(0.0)
+
+    CURRENCIES = [
+        "AUD", "CAD", "CHF", "EUR", "GBP",
+        "JPY", "NOK", "NZD", "SEK", "USD",
+    ]
+
+    n_pairs = len(pairs)
+    A = np.zeros((n_pairs, len(CURRENCIES)))
+    for i, pair in enumerate(pairs):
+        base = pair[:3]
+        quote = pair[4:]
+        A[i, CURRENCIES.index(base)] = +1
+        A[i, CURRENCIES.index(quote)] = -1
+
+    A_aug = np.vstack([A, np.ones((1, len(CURRENCIES)))])
+
+    pinv_dict: dict[str, np.ndarray] = {}
+    for i, p in enumerate(pairs):
+        A_excl = np.delete(A_aug, i, axis=0)
+        pinv_dict[p] = np.linalg.pinv(A_excl)
+
+    strength_dict: dict[str, pd.DataFrame] = {}
+    T = len(R)
+    for p in pairs:
+        R_excl = R.drop(columns=[p]).to_numpy()
+        R_excl_aug = np.hstack([R_excl, np.zeros((T, 1))])
+        S_p = (pinv_dict[p] @ R_excl_aug.T).T
+        strength_dict[p] = pd.DataFrame(
+            S_p,
+            index=R.index,
+            columns=CURRENCIES,
+        )
+
+    return strength_dict
+
+
 def fetch_instrument_data(instrument: str, conn,
-                          cfg: dict | None = None) -> pd.DataFrame:
+                          cfg: dict | None = None,
+                          strength_dict: dict | None = None) -> pd.DataFrame:
     """Load M30 candles from ftmo_candles with real measured spread_points."""
     sql = """
 SELECT time, open, high, low, close, volume,
@@ -672,6 +739,32 @@ ORDER BY time ASC
     except Exception as e:
         df["ma_200_d1"] = np.nan
         print(f"  [regime] {instrument}: D1 merge error (non-fatal): {e}")
+
+    if strength_dict is not None and instrument in strength_dict:
+        base  = instrument[:3]
+        quote = instrument[4:]
+        S_p   = strength_dict[instrument]
+
+        if base in S_p.columns and quote in S_p.columns:
+            strength_df = pd.DataFrame({
+                "time":           S_p.index,
+                "base_strength":  S_p[base].values,
+                "quote_strength": S_p[quote].values,
+            })
+            primary_reset = df.reset_index()
+            merged = pd.merge_asof(
+                primary_reset.sort_values("time"),
+                strength_df.sort_values("time"),
+                on="time",
+                direction="backward",
+            )
+            df = merged.set_index("time").sort_index()
+        else:
+            df["base_strength"]  = np.nan
+            df["quote_strength"] = np.nan
+    else:
+        df["base_strength"]  = np.nan
+        df["quote_strength"] = np.nan
 
     return df
 
@@ -1886,6 +1979,41 @@ def compute_window_thresholds(
                 thresholds["dist_ma_p70"] = float(
                     np.percentile(dist_clean, 70)
                 )
+
+        if ("base_strength" in is_df.columns
+                and "quote_strength" in is_df.columns):
+            base_s  = is_df["base_strength"].to_numpy(dtype=float)
+            quote_s = is_df["quote_strength"].to_numpy(dtype=float)
+
+            base_mean  = np.nanmean(base_s)
+            base_std   = np.nanstd(base_s)
+            quote_mean = np.nanmean(quote_s)
+            quote_std  = np.nanstd(quote_s)
+
+            with np.errstate(divide="ignore", invalid="ignore"):
+                z_base  = np.where(base_std  > 0,
+                                   (base_s  - base_mean)  / base_std,  0.0)
+                z_quote = np.where(quote_std > 0,
+                                   (quote_s - quote_mean) / quote_std, 0.0)
+
+            z_spread       = z_base - z_quote
+            z_spread_clean = z_spread[np.isfinite(z_spread)]
+
+            if len(z_spread_clean) >= 20:
+                thresholds["z_spread_p50"]  = float(np.percentile(
+                                                  z_spread_clean, 50))
+                thresholds["z_spread_p70"]  = float(np.percentile(
+                                                  z_spread_clean, 70))
+                thresholds["base_mean"]     = float(base_mean)
+                thresholds["base_std"]      = float(base_std)
+                thresholds["quote_mean"]    = float(quote_mean)
+                thresholds["quote_std"]     = float(quote_std)
+            else:
+                for k in ["z_spread_p50", "z_spread_p70",
+                          "base_mean", "base_std",
+                          "quote_mean", "quote_std"]:
+                    thresholds[k] = None
+
         return thresholds
 
     except Exception as e:
@@ -1905,10 +2033,11 @@ def apply_regime_gate(
     Apply window-calibrated regime gate to signal array.
     Returns filtered (sig, anc) copies — never mutates in place.
 
-    Three gate layers in order:
+    Four gate layers in order:
     1. BBW dead zone — kill signals in compressed markets
     2. ADX profile gate — dynamic percentile thresholds
     3. HTF MA_200_D1 direction gate — D1 structural anchor
+    4. Currency matrix Z-spread confirmation — cross-sectional gate
 
     Graceful degradation: missing data skips the gate,
     never crashes, never silently corrupts.
@@ -1985,6 +2114,42 @@ def apply_regime_gate(
                 if anc is not None:
                     anc[too_far] = 0
         # Hybrid: no HTF gate
+
+    # Gate 4 — Currency matrix Z-spread confirmation
+    if ("base_strength" in df_slice.columns
+            and "quote_strength" in df_slice.columns):
+
+        z_thresh   = thresholds.get("z_spread_p50")
+        base_mean  = thresholds.get("base_mean")
+        base_std   = thresholds.get("base_std")
+        quote_mean = thresholds.get("quote_mean")
+        quote_std  = thresholds.get("quote_std")
+
+        if all(v is not None for v in [z_thresh, base_mean, base_std,
+                                        quote_mean, quote_std]):
+            base_s  = df_slice["base_strength"].to_numpy(dtype=float)
+            quote_s = df_slice["quote_strength"].to_numpy(dtype=float)
+
+            with np.errstate(divide="ignore", invalid="ignore"):
+                z_base  = np.where(base_std  > 0,
+                                   (base_s  - base_mean)  / base_std,
+                                   0.0)
+                z_quote = np.where(quote_std > 0,
+                                   (quote_s - quote_mean) / quote_std,
+                                   0.0)
+
+            z_spread = z_base - z_quote
+
+            if direction == "long":
+                no_confirmation = (np.isfinite(z_spread)
+                                   & (z_spread < z_thresh))
+            else:
+                no_confirmation = (np.isfinite(z_spread)
+                                   & (z_spread > -z_thresh))
+
+            sig[no_confirmation] = 0
+            if anc is not None:
+                anc[no_confirmation] = 0
 
     return sig, anc
 
@@ -2405,6 +2570,7 @@ def main():
     print(f"Run ID: {global_run_id}")
 
     with psycopg2.connect(db_url) as conn:
+        strength_dict = precompute_currency_matrix(conn, cfg)
         for instrument in INSTRUMENTS:
             if not ENABLED_INSTRUMENTS.get(instrument, True):
                 print(f"  Skipping {instrument} (disabled in ENABLED_INSTRUMENTS)")
@@ -2416,7 +2582,10 @@ def main():
             instrument_batch_id = str(uuid.uuid4())
 
             try:
-                df = fetch_instrument_data(instrument, conn, cfg=cfg)
+                df = fetch_instrument_data(
+                    instrument, conn, cfg=cfg,
+                    strength_dict=strength_dict,
+                )
                 print(f"  Fetched {len(df):,} {GRANULARITY} bars")
 
                 wfv_df = run_wfv(
