@@ -637,6 +637,40 @@ ORDER BY time ASC
     df["bid_close"] = df["close"]
     df["ask_close"] = df["close"]
 
+    # --- D1 MA_200 forward-fill merge ---
+    try:
+        with conn.cursor() as _cur:
+            _cur.execute("""
+                SELECT time, close
+                FROM oanda_candles
+                WHERE instrument = %s AND granularity = 'D'
+                ORDER BY time ASC
+            """, (instrument,))
+            d1_rows = _cur.fetchall()
+
+        if len(d1_rows) >= 200:
+            d1_df = pd.DataFrame(d1_rows, columns=["time", "close"])
+            d1_df["time"] = pd.to_datetime(d1_df["time"], utc=True)
+            d1_df = d1_df.sort_values("time").reset_index(drop=True)
+            d1_df["ma_200_d1"] = (
+                d1_df["close"].rolling(200, min_periods=1).mean()
+            )
+            primary_reset = df.reset_index()
+            merged = pd.merge_asof(
+                primary_reset.sort_values("time"),
+                d1_df[["time", "ma_200_d1"]].sort_values("time"),
+                on="time",
+                direction="backward",
+            )
+            df = merged.set_index("time").sort_index()
+        else:
+            df["ma_200_d1"] = np.nan
+            print(f"  [regime] {instrument}: insufficient D1 bars for MA_200")
+
+    except Exception as e:
+        df["ma_200_d1"] = np.nan
+        print(f"  [regime] {instrument}: D1 merge error (non-fatal): {e}")
+
     return df
 
 
@@ -1464,6 +1498,14 @@ def run_wfv(
                 oos_adx = adx_arr[oos_start_pos:oos_end_pos]
                 oos_bbw = bbw_arr[oos_start_pos:oos_end_pos]
 
+                is_inds["adx"] = is_adx
+                is_inds["bbw"] = is_bbw
+                oos_inds["adx"] = oos_adx
+                oos_inds["bbw"] = oos_bbw
+
+                # Compute window-calibrated regime thresholds from IS data
+                window_thresholds = compute_window_thresholds(is_df, is_inds)
+
                 combos_for_pair = [
                     c for c in combos if c["direction"] in directions
                 ]
@@ -1534,12 +1576,18 @@ def run_wfv(
                     sig, anc = _apply_indicator_filter(
                         sig, anc, combo, is_inds, is_df
                     )
+                    sig, anc = apply_regime_gate(
+                        sig, anc,
+                        is_df, is_inds,
+                        window_thresholds,
+                        combo,
+                    )
                     trades = sweep_simulation(
                         is_df, sig, anc,
                         combo["direction"], pip_size,
                         is_inds["atr"], avg_spread,
                         timeout_bars=timeout, sl_mode=sl_mode,
-                        adx_arr=is_adx, bbw_arr=is_bbw,
+                        adx_arr=None, bbw_arr=None,
                         profile=profile_from_combo(combo),
                         instrument=instrument,
                     )
@@ -1668,6 +1716,12 @@ def run_wfv(
                         sig_o, anc_o = _apply_indicator_filter(
                             sig_o, anc_o, combo, oos_inds, oos_df
                         )
+                        sig_o, anc_o = apply_regime_gate(
+                            sig_o, anc_o,
+                            oos_df, oos_inds,
+                            window_thresholds,
+                            combo,
+                        )
                         oos_trades = sweep_simulation(
                             oos_df,
                             sig_o,
@@ -1678,8 +1732,7 @@ def run_wfv(
                             avg_spread,
                             timeout_bars=timeout,
                             sl_mode=sl_mode,
-                            adx_arr=oos_adx,
-                            bbw_arr=oos_bbw,
+                            adx_arr=None, bbw_arr=None,
                             profile=profile_from_combo(combo),
                             instrument=instrument,
                         )
@@ -1774,6 +1827,164 @@ def run_wfv(
         wfv_df["sharpe"] = 0.0
 
     return wfv_df
+
+
+def compute_window_thresholds(
+    is_df: pd.DataFrame,
+    is_inds: dict,
+) -> dict:
+    """
+    Compute percentile-based regime thresholds from IS window
+    data only. Strictly causal — no OOS data used.
+    Called once per (window_idx, timeout) inside run_wfv.
+    Returns SAFE hardcoded fallback dict if data insufficient.
+    """
+    SAFE = {
+        "adx_building":  20.0,
+        "adx_trending":  25.0,
+        "adx_strong":    45.0,
+        "adx_blowoff":   70.0,
+        "bbw_dead_zone": 0.00045,
+        "dist_ma_p30":   None,
+        "dist_ma_p70":   None,
+    }
+    try:
+        adx_vals  = np.array(is_inds.get("adx", []), dtype=float)
+        bbw_vals  = np.array(is_inds.get("bbw", []), dtype=float)
+        adx_clean = adx_vals[np.isfinite(adx_vals)]
+        bbw_clean = bbw_vals[np.isfinite(bbw_vals)]
+
+        if len(adx_clean) < 20 or len(bbw_clean) < 20:
+            return SAFE
+
+        thresholds = {
+            "adx_building":  float(np.percentile(adx_clean, 50)),
+            "adx_trending":  float(np.percentile(adx_clean, 65)),
+            "adx_strong":    float(np.percentile(adx_clean, 85)),
+            "adx_blowoff":   float(np.percentile(adx_clean, 97)),
+            "bbw_dead_zone": float(np.percentile(bbw_clean, 30)),
+            "dist_ma_p30":   None,
+            "dist_ma_p70":   None,
+        }
+
+        if "ma_200_d1" in is_df.columns:
+            atr_vals   = np.array(is_inds.get("atr", []), dtype=float)
+            ma_vals    = is_df["ma_200_d1"].to_numpy(dtype=float)
+            close_vals = is_df["close"].to_numpy(dtype=float)
+            dist_raw   = np.abs(close_vals - ma_vals)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                dist_norm = np.where(
+                    atr_vals > 0, dist_raw / atr_vals, np.nan
+                )
+            dist_clean = dist_norm[np.isfinite(dist_norm)]
+            if len(dist_clean) >= 20:
+                thresholds["dist_ma_p30"] = float(
+                    np.percentile(dist_clean, 30)
+                )
+                thresholds["dist_ma_p70"] = float(
+                    np.percentile(dist_clean, 70)
+                )
+        return thresholds
+
+    except Exception as e:
+        print(f"  [regime] threshold compute error (non-fatal): {e}")
+        return SAFE
+
+
+def apply_regime_gate(
+    sig: np.ndarray,
+    anc: np.ndarray,
+    df_slice: pd.DataFrame,
+    inds: dict,
+    thresholds: dict,
+    combo: dict,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Apply window-calibrated regime gate to signal array.
+    Returns filtered (sig, anc) copies — never mutates in place.
+
+    Three gate layers in order:
+    1. BBW dead zone — kill signals in compressed markets
+    2. ADX profile gate — dynamic percentile thresholds
+    3. HTF MA_200_D1 direction gate — D1 structural anchor
+
+    Graceful degradation: missing data skips the gate,
+    never crashes, never silently corrupts.
+    """
+    if sig is None or len(sig) == 0:
+        return sig, anc
+
+    sig = sig.copy()
+    anc = anc.copy() if anc is not None else anc
+
+    direction = combo.get("direction", "long")
+    profile   = profile_from_combo(combo)
+    bbw_arr   = np.array(inds.get("bbw", [np.nan]*len(sig)), dtype=float)
+    adx_arr   = np.array(inds.get("adx", [np.nan]*len(sig)), dtype=float)
+
+    # Gate 1 — BBW dead zone
+    bbw_thresh = thresholds.get("bbw_dead_zone")
+    if bbw_thresh is not None:
+        dead_bbw = np.isfinite(bbw_arr) & (bbw_arr < bbw_thresh)
+        sig[dead_bbw] = 0
+        if anc is not None:
+            anc[dead_bbw] = 0
+
+    # Gate 2 — ADX profile gate
+    adx_trending = thresholds.get("adx_trending")
+    adx_building = thresholds.get("adx_building")
+    adx_blowoff  = thresholds.get("adx_blowoff")
+
+    if adx_trending is not None and profile == "Counter-Trend":
+        in_trend = np.isfinite(adx_arr) & (adx_arr >= adx_trending)
+        sig[in_trend] = 0
+        if anc is not None:
+            anc[in_trend] = 0
+
+    if adx_building is not None and adx_blowoff is not None \
+            and profile == "Pro-Trend":
+        too_flat = np.isfinite(adx_arr) & (adx_arr < adx_building)
+        blowoff  = np.isfinite(adx_arr) & (adx_arr >= adx_blowoff)
+        sig[too_flat | blowoff] = 0
+        if anc is not None:
+            anc[too_flat | blowoff] = 0
+
+    # Gate 3 — HTF MA_200_D1 direction gate
+    if "ma_200_d1" in df_slice.columns:
+        ma_vals    = df_slice["ma_200_d1"].to_numpy(dtype=float)
+        close_vals = df_slice["close"].to_numpy(dtype=float)
+        atr_vals   = np.array(inds.get("atr", [np.nan]*len(sig)), dtype=float)
+        ma_valid   = np.isfinite(ma_vals)
+
+        if profile == "Pro-Trend":
+            if direction == "long":
+                wrong_dir = ma_valid & (close_vals <= ma_vals)
+            else:
+                wrong_dir = ma_valid & (close_vals >= ma_vals)
+            sig[wrong_dir] = 0
+            if anc is not None:
+                anc[wrong_dir] = 0
+
+        elif profile == "Counter-Trend":
+            dist_p30 = thresholds.get("dist_ma_p30")
+            if dist_p30 is not None:
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    dist_norm = np.where(
+                        atr_vals > 0,
+                        np.abs(close_vals - ma_vals) / atr_vals,
+                        np.nan,
+                    )
+                too_far = (
+                    ma_valid
+                    & np.isfinite(dist_norm)
+                    & (dist_norm >= dist_p30)
+                )
+                sig[too_far] = 0
+                if anc is not None:
+                    anc[too_far] = 0
+        # Hybrid: no HTF gate
+
+    return sig, anc
 
 
 def compute_shadow_status(wfv_df: pd.DataFrame, instrument: str,
