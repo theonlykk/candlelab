@@ -526,6 +526,41 @@ def _load_window_is_cache(
         return {}
 
 
+def _compute_bucket_label(
+    n_trades,
+    sqn100,
+    cfg: dict | None,
+) -> str | None:
+    """
+    Derive PROMOTED / WATCHLIST / REJECTED from cfg thresholds.
+    Returns None when inputs are missing or non-finite.
+    """
+    if n_trades is None or sqn100 is None:
+        return None
+    try:
+        n = int(n_trades)
+        sqn = float(sqn100)
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(sqn):
+        return None
+
+    if cfg is None:
+        min_promoted = MIN_TRADES_ELIGIBLE
+        sqn_min_is = SQN_MIN_TRADES_IS
+        min_watchlist = MIN_TRADES_WATCHLIST
+    else:
+        min_promoted = cfg["min_trades_eligible"]
+        sqn_min_is = cfg["sqn_min_trades_is"]
+        min_watchlist = cfg["min_trades_watchlist"]
+
+    if n >= min_promoted and sqn >= sqn_min_is:
+        return "PROMOTED"
+    if n >= min_watchlist:
+        return "WATCHLIST"
+    return "REJECTED"
+
+
 def _write_is_results(
     is_rows: list[dict],
     instrument: str,
@@ -553,7 +588,7 @@ def _write_is_results(
             trade_count_is, mean_r_is, sqn_is, net_r_is,
             adjusted_score_is, initial_bucket, passes_band,
             final_bucket, oos_eligible,
-            is_cache_version, is_r_list
+            is_cache_version, is_r_list, bucket_label
         ) VALUES (
             %s, %s,
             %s, %s, %s, %s, %s,
@@ -563,7 +598,7 @@ def _write_is_results(
             %s, %s, %s, %s,
             %s, %s, %s,
             %s, %s,
-            %s, %s
+            %s, %s, %s
         )
         ON CONFLICT DO NOTHING
     """
@@ -574,6 +609,11 @@ def _write_is_results(
                 combo = row["combo"]
                 r_list = row.get("r_mults", [])
                 net_r = float(sum(r_list)) if r_list else 0.0
+                bucket_label = _compute_bucket_label(
+                    row.get("n_trades"),
+                    row.get("raw_sqn"),
+                    cfg,
+                )
                 cur.execute(sql, (
                     run_id, batch_id,
                     instrument, (cfg["granularity"] if cfg is not None else GRANULARITY), window_id,
@@ -595,6 +635,7 @@ def _write_is_results(
                     bool(row["oos_eligible"]),
                     IS_CACHE_VERSION,
                     json.dumps([float(r) for r in row.get("r_mults", [])]),
+                    bucket_label,
                 ))
             cur.execute("RELEASE SAVEPOINT is_results_write")
         conn.commit()
