@@ -199,7 +199,7 @@ PATTERN_FN = {
     "morning_star": detect_morning_evening_star,
 }
 
-def build_combo_list() -> list[dict]:
+def build_combo_list(cfg: dict) -> list[dict]:
     """
     Unique strategy combos: 126 reversal-anchored (after dedup) plus 8 pure
     continuation rows (anchor=None) = 134 total. Gap is stored per row; when
@@ -217,7 +217,7 @@ def build_combo_list() -> list[dict]:
     combos = []
     for anchor in ANCHORS:
         for continuation in CONTINUATIONS:
-            for gap in CONTINUATION_GAPS:
+            for gap in cfg["continuation_gaps"]:
                 for indicator in INDICATORS:
                     for direction in DIRECTIONS:
                         combos.append(
@@ -301,7 +301,7 @@ def build_combo_list() -> list[dict]:
     if ENABLED_TOPOLOGIES["2R+1C"]:
         for a1, a2 in anchor_pairs:
             for continuation in ["inside_bar", "one_candle_flag"]:
-                for gap in CONTINUATION_GAPS:
+                for gap in cfg["continuation_gaps"]:
                     for indicator in INDICATORS:
                         for direction in DIRECTIONS:
                             deduped.append(
@@ -395,7 +395,8 @@ def _cache_lookup(block_hash: str, conn) -> dict | None:
 
 def _cache_store(block_hash: str, instrument: str, oos_start: pd.Timestamp,
                  oos_end: pd.Timestamp, combo: dict, timeout: int,
-                 oos_r: list[float], conn) -> None:
+                 oos_r: list[float], conn,
+                 cfg: dict | None = None) -> None:
     """
     Stores OOS result in cache. Silently skips on conflict (already cached).
     Never raises — cache write failures are non-fatal.
@@ -425,7 +426,7 @@ def _cache_store(block_hash: str, instrument: str, oos_start: pd.Timestamp,
                 (
                     block_hash,
                     instrument,
-                    GRANULARITY,
+                    cfg["granularity"] if cfg is not None else GRANULARITY,
                     oos_start,
                     oos_end,
                     block_hash[:16],
@@ -533,6 +534,7 @@ def _write_is_results(
     run_id: str,
     batch_id: str,
     conn,
+    cfg: dict | None = None,
 ) -> None:
     """
     Write all IS evaluation results to sweep_is_results.
@@ -572,7 +574,7 @@ def _write_is_results(
                 net_r = float(sum(r_list)) if r_list else 0.0
                 cur.execute(sql, (
                     run_id, batch_id,
-                    instrument, GRANULARITY, window_id,
+                    instrument, (cfg["granularity"] if cfg is not None else GRANULARITY), window_id,
                     window_start, window_end,
                     combo.get("anchor"), combo.get("anchor2"),
                     combo.get("continuation"), combo.get("continuation2"),
@@ -603,7 +605,8 @@ def _write_is_results(
         print(f"  [is_results] write error (non-fatal): {e}")
 
 
-def fetch_instrument_data(instrument: str, conn) -> pd.DataFrame:
+def fetch_instrument_data(instrument: str, conn,
+                          cfg: dict | None = None) -> pd.DataFrame:
     """Load M30 candles from ftmo_candles with real measured spread_points."""
     sql = """
 SELECT time, open, high, low, close, volume,
@@ -614,7 +617,8 @@ WHERE instrument = %s
 ORDER BY time ASC
 """
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute(sql, (instrument, GRANULARITY))
+        _gran = cfg["granularity"] if cfg is not None else GRANULARITY
+        cur.execute(sql, (instrument, _gran))
         rows = cur.fetchall()
 
     df = pd.DataFrame(rows)
@@ -703,6 +707,7 @@ def detect_signals(
     gap: int = 5,
     anchor2: str | None = None,
     continuation2: str | None = None,
+    cfg: dict | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Per-bar signals (+1 long, -1 short, 0 none) and anchor bar index.
@@ -722,7 +727,8 @@ def detect_signals(
 
     # Dead zone mask — applied to ALL signals regardless of continuation
     if isinstance(df.index, pd.DatetimeIndex):
-        dead_mask = df.index.hour.isin(DEAD_ZONE_HOURS)
+        _dead_zone = cfg["dead_zone_hours"] if cfg is not None else DEAD_ZONE_HOURS
+        dead_mask = df.index.hour.isin(_dead_zone)
     else:
         dead_mask = np.zeros(n, dtype=bool)
 
@@ -807,7 +813,10 @@ def wilder_rma(series: np.ndarray, period: int) -> np.ndarray:
     return result
 
 
-def compute_atr(df: pd.DataFrame, period: int = ATR_PERIOD) -> np.ndarray:
+def compute_atr(df: pd.DataFrame, period: int | None = None,
+                cfg: dict | None = None) -> np.ndarray:
+    if period is None:
+        period = cfg["atr_period"] if cfg is not None else ATR_PERIOD
     high = df["high"].values
     low = df["low"].values
     close = df["close"].values
@@ -822,7 +831,8 @@ def compute_atr(df: pd.DataFrame, period: int = ATR_PERIOD) -> np.ndarray:
     return wilder_rma(tr, period)
 
 
-def compute_indicators(df: pd.DataFrame) -> dict:
+def compute_indicators(df: pd.DataFrame,
+                       cfg: dict | None = None) -> dict:
     close = df["close"].to_numpy()
 
     delta = np.diff(close, prepend=close[0])
@@ -833,10 +843,12 @@ def compute_indicators(df: pd.DataFrame) -> dict:
     rs = np.where(avg_loss == 0, np.inf, avg_gain / avg_loss)
     rsi = 100.0 - (100.0 / (1.0 + rs))
 
-    sma_fast = df["close"].rolling(MA_FAST).mean().to_numpy()
-    sma_slow = df["close"].rolling(MA_SLOW).mean().to_numpy()
+    _ma_fast = cfg["ma_fast"] if cfg is not None else MA_FAST
+    _ma_slow = cfg["ma_slow"] if cfg is not None else MA_SLOW
+    sma_fast = df["close"].rolling(_ma_fast).mean().to_numpy()
+    sma_slow = df["close"].rolling(_ma_slow).mean().to_numpy()
 
-    atr = compute_atr(df)
+    atr = compute_atr(df, cfg=cfg)
 
     return {"rsi": rsi, "sma_fast": sma_fast, "sma_slow": sma_slow, "atr": atr}
 
@@ -1378,6 +1390,7 @@ def run_wfv(
     conn,
     run_id: str,
     batch_id: str,
+    cfg: dict | None = None,
 ) -> pd.DataFrame:
     # Spread from oanda_candles (ask_close - bid_close) — already in price units
     avg_spread = float(df["spread_points"].mean())
@@ -1388,13 +1401,18 @@ def run_wfv(
     bbw_arr = df["bbw"].to_numpy()
 
     data_end = df.index.max()
-    combos = build_combo_list()
+    combos = build_combo_list(cfg)
 
     pair_cfg = PAIR_CONFIG.get(instrument, {})
-    ma_pairs = pair_cfg.get("ma_pairs", [(MA_FAST, MA_SLOW)])
+    _ma_fast = cfg["ma_fast"] if cfg else MA_FAST
+    _ma_slow = cfg["ma_slow"] if cfg else MA_SLOW
+    ma_pairs = pair_cfg.get("ma_pairs", [(_ma_fast, _ma_slow)])
     timeouts = pair_cfg.get("timeouts", [TIMEOUT_BARS])
     directions = pair_cfg.get("directions", DIRECTIONS)
     sl_mode = pair_cfg.get("sl_mode", "standard")
+
+    _n_win = cfg["n_windows"] if cfg else N_WINDOWS
+    _oos_w = cfg["oos_weeks"] if cfg else OOS_WEEKS
 
     all_rows: list[dict] = []
     combo_equity_curves = collections.defaultdict(list)
@@ -1404,11 +1422,13 @@ def run_wfv(
         full_sma_slow = df["close"].rolling(ma_slow).mean().to_numpy()
 
         for timeout in timeouts:
-            for window_idx in range(N_WINDOWS):
-                weeks_shift = (N_WINDOWS - 1 - window_idx) * OOS_WEEKS
+            for window_idx in range(_n_win):
+                weeks_shift = (_n_win - 1 - window_idx) * _oos_w
                 oos_end = data_end - pd.Timedelta(weeks=weeks_shift)
-                oos_start = oos_end - pd.Timedelta(weeks=OOS_WEEKS)
-                is_start = oos_start - pd.Timedelta(weeks=IS_WEEKS)
+                oos_start = oos_end - pd.Timedelta(weeks=_oos_w)
+                is_start = oos_start - pd.Timedelta(
+                    weeks=cfg["is_weeks"] if cfg else IS_WEEKS
+                )
 
                 is_df = df.loc[(df.index >= is_start) & (df.index < oos_start)]
                 oos_df = df.loc[(df.index >= oos_start) & (df.index <= oos_end)]
@@ -1416,8 +1436,8 @@ def run_wfv(
                 if len(is_df) < 1000 or len(oos_df) < 100:
                     continue
 
-                is_inds = compute_indicators(is_df)
-                oos_inds = compute_indicators(oos_df)
+                is_inds = compute_indicators(is_df, cfg=cfg)
+                oos_inds = compute_indicators(oos_df, cfg=cfg)
 
                 is_start_pos = (
                     df.index.get_loc(is_df.index[0]) if len(is_df) > 0 else 0
@@ -1459,7 +1479,7 @@ def run_wfv(
                 # Bulk-fetch entire window cache in one network call
                 window_is_cache = _load_window_is_cache(
                     instrument=instrument,
-                    granularity=GRANULARITY,
+                    granularity=cfg["granularity"] if cfg else GRANULARITY,
                     is_start=is_start_ts,
                     is_end=is_end_ts,
                     timeout=timeout,
@@ -1509,6 +1529,7 @@ def run_wfv(
                         gap=combo["gap"] if combo["gap"] is not None else 5,
                         anchor2=combo.get("anchor2"),
                         continuation2=combo.get("continuation2"),
+                        cfg=cfg,
                     )
                     sig, anc = _apply_indicator_filter(
                         sig, anc, combo, is_inds, is_df
@@ -1534,7 +1555,7 @@ def run_wfv(
                     # Bucket assignment
                     if n < 1 or mean_r <= 0 or adjusted_score < MIN_SQN_ELIGIBLE:
                         initial_bucket = "REJECTED"
-                    elif n < MIN_TRADES_ELIGIBLE and mean_r > 0:
+                    elif n < (cfg["min_trades_eligible"] if cfg else MIN_TRADES_ELIGIBLE) and mean_r > 0:
                         initial_bucket = "WATCHLIST"
                     else:
                         initial_bucket = "ELIGIBLE"
@@ -1594,6 +1615,7 @@ def run_wfv(
                         run_id=run_id,
                         batch_id=batch_id,
                         conn=conn,
+                        cfg=cfg,
                     )
                 else:
                     n_cached = sum(1 for r in is_rows if r.get("from_cache", False))
@@ -1602,7 +1624,7 @@ def run_wfv(
                 promoted = [r for r in is_rows if r["oos_eligible"]]
 
                 print(
-                    f"  Window {window_idx + 1:02d}/{N_WINDOWS} | "
+                    f"  Window {window_idx + 1:02d}/{_n_win} | "
                     f"IS {is_start_ts.date()}->{is_end_ts.date()} | "
                     f"OOS {oos_start_ts.date()}->{oos_end_ts.date()} | "
                     f"eligible={len(eligible)} "
@@ -1617,7 +1639,7 @@ def run_wfv(
 
                     block_hash = _make_block_hash(
                         instrument=instrument,
-                        granularity=GRANULARITY,
+                        granularity=cfg["granularity"] if cfg else GRANULARITY,
                         oos_start=oos_start_ts,
                         oos_end=oos_end_ts,
                         combo=combo,
@@ -1641,6 +1663,7 @@ def run_wfv(
                             gap=combo["gap"] if combo["gap"] is not None else 5,
                             anchor2=combo.get("anchor2"),
                             continuation2=combo.get("continuation2"),
+                            cfg=cfg,
                         )
                         sig_o, anc_o = _apply_indicator_filter(
                             sig_o, anc_o, combo, oos_inds, oos_df
@@ -1662,7 +1685,7 @@ def run_wfv(
                         )
                         oos_r = [float(t["r_multiple"]) for t in oos_trades]
                         _cache_store(block_hash, instrument, oos_start_ts, oos_end_ts,
-                                     combo, timeout, oos_r, conn)
+                                     combo, timeout, oos_r, conn, cfg=cfg)
                     _gap = combo.get("gap")
                     combo_key = (
                         combo.get("anchor"),
@@ -1753,7 +1776,8 @@ def run_wfv(
     return wfv_df
 
 
-def compute_shadow_status(wfv_df: pd.DataFrame, instrument: str) -> dict:
+def compute_shadow_status(wfv_df: pd.DataFrame, instrument: str,
+                          cfg: dict | None = None) -> dict:
     total_trades = int(wfv_df["oos_n_trades"].sum())
     if total_trades == 0:
         agg_mean_r = 0.0
@@ -1790,7 +1814,8 @@ def compute_shadow_status(wfv_df: pd.DataFrame, instrument: str) -> dict:
     grouped = wfv_df.groupby(
         combo_cols, sort=False, dropna=False
     ).apply(_combo_agg).reset_index()
-    eligible_combos = grouped[grouped["oos_n_trades"] >= SQN_MIN_TRADES]
+    _sqn_min = cfg["sqn_min_trades"] if cfg is not None else SQN_MIN_TRADES
+    eligible_combos = grouped[grouped["oos_n_trades"] >= _sqn_min]
     if len(eligible_combos) == 0:
         top_combo_str = ""
         top_sqn100 = 0.0
@@ -1835,7 +1860,8 @@ def compute_shadow_status(wfv_df: pd.DataFrame, instrument: str) -> dict:
     }
 
 
-def write_leaderboard_csv(wfv_df: pd.DataFrame, instrument: str) -> None:
+def write_leaderboard_csv(wfv_df: pd.DataFrame, instrument: str,
+                          cfg: dict | None = None) -> None:
     combo_cols = [
         "anchor", "anchor2", "continuation", "continuation2",
         "gap", "indicator", "direction", "combo_type", "timeout_bars"
@@ -1882,7 +1908,8 @@ def write_leaderboard_csv(wfv_df: pd.DataFrame, instrument: str) -> None:
         .sort_values(["_passes_gate", "sharpe"], ascending=[False, False])
         .drop(columns=["_passes_gate"])
     )
-    path = os.path.join(OUTPUT_DIR, f"leaderboard_{instrument}.csv")
+    _out = cfg["output_dir"] if cfg is not None else OUTPUT_DIR
+    path = os.path.join(_out, f"leaderboard_{instrument}.csv")
     grouped.to_csv(path, index=False)
 
 
@@ -1891,6 +1918,7 @@ def _write_leaderboard(
     instrument: str,
     run_id: str,
     conn,
+    cfg: dict | None = None,
 ) -> None:
     """
     Write aggregated OOS leaderboard results to sweep_leaderboard.
@@ -2004,7 +2032,7 @@ def _write_leaderboard(
                 ) if r_list else json.dumps([])
 
                 cur.execute(sql, (
-                    GRANULARITY, instrument,
+                    (cfg["granularity"] if cfg is not None else GRANULARITY), instrument,
                     _safe_str(row.get("anchor")),
                     _safe_str(row.get("anchor2")),
                     _safe_str(row.get("continuation")),
@@ -2034,7 +2062,8 @@ def _write_leaderboard(
         print(f"  [leaderboard] {n_written} rows written, {n_errors} errors")
 
 
-def write_paper_roster(promoted_combos: list[dict]) -> None:
+def write_paper_roster(promoted_combos: list[dict],
+                       cfg: dict | None = None) -> None:
     """
     Write paper_roster.json — manually promoted combos for shadow monitoring.
     Schema mirrors deployment_roster.json for downstream parser compatibility.
@@ -2055,7 +2084,8 @@ def write_paper_roster(promoted_combos: list[dict]) -> None:
                 "n_trades": entry["n_trades"],
             }
         )
-    path = os.path.join(OUTPUT_DIR, "paper_roster.json")
+    _out = cfg["output_dir"] if cfg is not None else OUTPUT_DIR
+    path = os.path.join(_out, "paper_roster.json")
     with open(path, "w") as f:
         json.dump(roster, f, indent=2)
     print(f"  Paper roster written: output/paper_roster.json")
@@ -2145,7 +2175,7 @@ def main():
         raise RuntimeError("DATABASE_URL not set. Add it to d:\\candlelab\\.env")
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    combos = build_combo_list()
+    combos = build_combo_list(cfg)
     print(f"Combo space: {len(combos)} combinations")
     test_combo = next(c for c in combos if c["continuation"] is not None)
     print(f"Smoke test combo: {test_combo}")
@@ -2173,12 +2203,13 @@ def main():
             instrument_batch_id = str(uuid.uuid4())
 
             try:
-                df = fetch_instrument_data(instrument, conn)
+                df = fetch_instrument_data(instrument, conn, cfg=cfg)
                 print(f"  Fetched {len(df):,} {GRANULARITY} bars")
 
                 wfv_df = run_wfv(
                     df, instrument, PIP[instrument], conn,
-                    global_run_id, instrument_batch_id
+                    global_run_id, instrument_batch_id,
+                    cfg=cfg,
                 )
             except ValueError as e:
                 print(f"  Skipping {instrument}: {e}")
@@ -2199,10 +2230,10 @@ def main():
                     "top_configs": [],
                 }
             else:
-                write_leaderboard_csv(wfv_df, instrument)
-                _write_leaderboard(wfv_df, instrument, global_run_id, conn)
+                write_leaderboard_csv(wfv_df, instrument, cfg=cfg)
+                _write_leaderboard(wfv_df, instrument, global_run_id, conn, cfg=cfg)
                 print(f"  Leaderboard written: output/leaderboard_{instrument}.csv")
-                shadow = compute_shadow_status(wfv_df, instrument)
+                shadow = compute_shadow_status(wfv_df, instrument, cfg=cfg)
 
             all_shadow_rows.append(shadow)
             roster["instruments"][instrument] = {

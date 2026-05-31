@@ -64,11 +64,52 @@ H1 example differences from M30: 16-week IS, gaps `[5,10,15]`, timeouts `[10,20,
 - No function signatures changed; helpers still read globals — behavior identical to pre-refactor for default M30 run.
 - `parse_known_args()` avoids breaking Jupyter or wrapper scripts that pass extra flags.
 
-**Prompt B** will thread `cfg` through function signatures and remove the global bridge.
+**Prompt B** threads `cfg` through function signatures. Module-level globals remain as import-time defaults and `main()` bridge fallbacks (`cfg[...] if cfg else GLOBAL`).
 
 ---
 
-## PAIR_CONFIG timeout override
+## Prompt B — cfg threading (completed)
+
+All sweep helpers accept optional `cfg: dict | None = None`. When `cfg` is passed, reads use `cfg[...]`; when `None`, fall back to module-level constants (supports import without running `main()`).
+
+| Function | cfg keys used |
+|----------|---------------|
+| `build_combo_list(cfg)` | `continuation_gaps` |
+| `detect_signals(..., cfg=cfg)` | `dead_zone_hours` |
+| `compute_atr(..., cfg=cfg)` | `atr_period` |
+| `compute_indicators(..., cfg=cfg)` | `ma_fast`, `ma_slow` |
+| `_cache_store(..., cfg=cfg)` | `granularity` |
+| `_write_is_results(..., cfg=cfg)` | `granularity` |
+| `fetch_instrument_data(..., cfg=cfg)` | `granularity` |
+| `compute_shadow_status(..., cfg=cfg)` | `sqn_min_trades` |
+| `run_wfv(..., cfg=cfg)` | `n_windows`, `oos_weeks`, `is_weeks`, `ma_fast`, `ma_slow`, `min_trades_eligible`, `granularity`; passes `cfg` to all helpers |
+| `write_leaderboard_csv(..., cfg=cfg)` | `output_dir` |
+| `write_paper_roster(..., cfg=cfg)` | `output_dir` |
+| `_write_leaderboard(..., cfg=cfg)` | `granularity` |
+
+`main()` passes `cfg=cfg` to all top-level call sites. Global bridge assignments in `main()` are **unchanged** (backward compat for any code still reading module globals).
+
+**Verification:** No bare global reads inside function bodies except `cfg`-guard fallbacks, `def` default args, docstrings, and `main()`.
+
+---
+
+## Dependency injection (Prompt B — completed)
+
+`cfg` is now threaded through all functions listed above. Global bridge in `main()` retained for module-level constants used at import time (`_os.makedirs(OUTPUT_DIR)` etc.).
+
+Future Prompt C may remove the global bridge entirely once import-time side effects are eliminated.
+
+---
+
+## Negative space — Prompt B does NOT
+
+- Remove `main()` global bridge (retained)
+- Change business logic or `TIMEFRAME_CONFIGS`
+- Touch `_make_block_hash`, Postgres schemas, external repos
+
+---
+
+## Negative space — Prompt A did NOT
 
 `PAIR_CONFIG` is initialized at module load with M30 timeouts `[20, 40, 60, 96]` on every pair. At runtime:
 
@@ -87,15 +128,7 @@ for pair in PAIR_CONFIG:
 
 ---
 
-## Dependency injection (Prompt B — upcoming)
-
-Prompt A does **not** pass `cfg` into:
-
-- `run_wfv`, `build_combo_list`, `_load_window_is_cache`, `_write_leaderboard`, etc.
-
-Prompt B will add `cfg` parameter threading and eliminate runtime global mutation.
-
----
+## PAIR_CONFIG timeout override
 
 ## git rm of legacy files
 
