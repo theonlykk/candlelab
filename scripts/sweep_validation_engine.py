@@ -67,34 +67,7 @@ PIP = {
     "GBP_AUD": 0.0001, "GBP_CAD": 0.0001, "GBP_CHF": 0.0001, "GBP_NZD": 0.0001,
     "AUD_CAD": 0.0001, "AUD_NZD": 0.0001, "NZD_CAD": 0.0001, "CAD_CHF": 0.0001,
 }
-PAIR_CONFIG = {
-    "AUD_USD": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "NZD_USD": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "USD_CHF": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "USD_JPY": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "USD_CAD": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "EUR_USD": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "GBP_USD": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "AUD_JPY": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "CAD_JPY": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "EUR_JPY": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "GBP_JPY": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "NZD_JPY": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "CHF_JPY": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "EUR_AUD": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "EUR_CAD": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "EUR_CHF": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "EUR_GBP": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "EUR_NZD": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "GBP_AUD": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "GBP_CAD": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "GBP_CHF": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "GBP_NZD": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "AUD_CAD": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "AUD_NZD": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "NZD_CAD": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-    "CAD_CHF": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
-}
+from shared_config import PAIR_CONFIG, ALL_PAIRS
 import argparse as _argparse
 
 TIMEFRAME_CONFIGS = {
