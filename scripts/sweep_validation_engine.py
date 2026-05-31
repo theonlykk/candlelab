@@ -95,6 +95,66 @@ PAIR_CONFIG = {
     "NZD_CAD": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
     "CAD_CHF": {"ma_pairs": [(10, 50)], "timeouts": [20, 40, 60, 96], "directions": ["long", "short"], "sl_mode": "standard", "enabled": True},
 }
+import argparse as _argparse
+
+TIMEFRAME_CONFIGS = {
+    "M30": {
+        "granularity":           "M30",
+        "is_weeks":              12,
+        "oos_weeks":             4,
+        "n_windows":             27,
+        "sqn_min_trades_is":     5,
+        "sqn_min_trades":        10,
+        "sqn_promote_threshold": 1.2,
+        "timeout_bars_default":  28,
+        "min_trades_eligible":   3,
+        "min_trades_watchlist":  1,
+        "atr_period":            14,
+        "ma_fast":               10,
+        "ma_slow":               50,
+        "dead_zone_hours":       frozenset({20, 21, 22, 23}),
+        "continuation_gaps":     [2, 4, 6],
+        "pair_timeouts":         [20, 40, 60, 96],
+        "output_dir":            r"d:\candlelab\scripts\output\ftmo_m30",
+        "roster_file":           r"d:\candlelab\scripts\output\ftmo_m30\deployment_roster.json",
+    },
+    "H1": {
+        "granularity":           "H1",
+        "is_weeks":              16,
+        "oos_weeks":             4,
+        "n_windows":             27,
+        "sqn_min_trades_is":     3,
+        "sqn_min_trades":        8,
+        "sqn_promote_threshold": 1.2,
+        "timeout_bars_default":  20,
+        "min_trades_eligible":   2,
+        "min_trades_watchlist":  1,
+        "atr_period":            14,
+        "ma_fast":               10,
+        "ma_slow":               50,
+        "dead_zone_hours":       frozenset({20, 21, 22, 23}),
+        "continuation_gaps":     [5, 10, 15],
+        "pair_timeouts":         [10, 20, 30, 48],
+        "output_dir":            r"d:\candlelab\scripts\output\ftmo_h1",
+        "roster_file":           r"d:\candlelab\scripts\output\ftmo_h1\deployment_roster.json",
+    },
+}
+
+
+def _parse_args():
+    parser = _argparse.ArgumentParser(
+        description="CandleLab universal sweep engine"
+    )
+    parser.add_argument(
+        "--tf",
+        choices=["M30", "H1"],
+        default="M30",
+        help="Timeframe to sweep (default: M30)",
+    )
+    args, _ = parser.parse_known_args()
+    return args
+
+
 GRANULARITY = "M30"
 IS_WEEKS = 12
 OOS_WEEKS = 4
@@ -2032,6 +2092,53 @@ def write_shadow_book_state(shadow_rows: list[dict], conn) -> None:
 
 
 def main():
+    # Resolve timeframe config from CLI argument
+    if __name__ == "__main__":
+        _args = _parse_args()
+        _tf = _args.tf
+    else:
+        _tf = "M30"  # safe default when imported as module
+    cfg = TIMEFRAME_CONFIGS[_tf]
+
+    # Temporary global bridge (Prompt A only):
+    # Set module-level globals from cfg so existing helper
+    # functions continue to work before Prompt B threads cfg
+    # through function signatures.
+    global GRANULARITY, IS_WEEKS, OOS_WEEKS, N_WINDOWS
+    global SQN_MIN_TRADES_IS, SQN_MIN_TRADES, SQN_PROMOTE_THRESHOLD
+    global TIMEOUT_BARS, MIN_TRADES_ELIGIBLE, MIN_TRADES_WATCHLIST
+    global ATR_PERIOD, MA_FAST, MA_SLOW, DEAD_ZONE_HOURS
+    global CONTINUATION_GAPS, OUTPUT_DIR, ROSTER_FILE
+    global PAIR_CONFIG
+
+    GRANULARITY             = cfg["granularity"]
+    IS_WEEKS                = cfg["is_weeks"]
+    OOS_WEEKS               = cfg["oos_weeks"]
+    N_WINDOWS               = cfg["n_windows"]
+    SQN_MIN_TRADES_IS       = cfg["sqn_min_trades_is"]
+    SQN_MIN_TRADES          = cfg["sqn_min_trades"]
+    SQN_PROMOTE_THRESHOLD   = cfg["sqn_promote_threshold"]
+    TIMEOUT_BARS            = cfg["timeout_bars_default"]
+    MIN_TRADES_ELIGIBLE     = cfg["min_trades_eligible"]
+    MIN_TRADES_WATCHLIST    = cfg["min_trades_watchlist"]
+    ATR_PERIOD              = cfg["atr_period"]
+    MA_FAST                 = cfg["ma_fast"]
+    MA_SLOW                 = cfg["ma_slow"]
+    DEAD_ZONE_HOURS         = cfg["dead_zone_hours"]
+    CONTINUATION_GAPS       = cfg["continuation_gaps"]
+    OUTPUT_DIR              = cfg["output_dir"]
+    ROSTER_FILE             = cfg["roster_file"]
+
+    # Ensure output directory exists
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+    # Override hardcoded timeouts in PAIR_CONFIG.
+    # CRITICAL: pair_cfg.get("timeouts", [TIMEOUT_BARS]) will
+    # never trigger the fallback because the key already exists.
+    # Must explicitly overwrite to enforce cfg["pair_timeouts"].
+    for pair in PAIR_CONFIG:
+        PAIR_CONFIG[pair]["timeouts"] = cfg["pair_timeouts"]
+
     load_dotenv()
     db_url = os.environ.get("DATABASE_URL")
     if not db_url:
