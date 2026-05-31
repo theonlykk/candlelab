@@ -15,13 +15,65 @@ After ADR-078/079, full walk-forward sweeps in `scripts/sweep_validation_ftmo_m3
 
 ## Decision
 
-Add **read-through IS caching** backed by the existing `sweep_is_results` table:
+Add **read-through IS caching** backed by the existing `sweep_is_results` table.
 
-1. Before `detect_signals` in the IS loop, call `_lookup_is_cache()`.
-2. On hit, append cached metrics to `is_rows` and `continue` — skip simulation.
-3. On miss, run existing IS path; `_write_is_results()` persists `is_r_list` and `is_cache_version` for future lookups.
+### Phase 2.5b (initial)
+
+Per-combo `_lookup_is_cache()` — one Postgres query per combo per window (N+1 bottleneck).
+
+### Phase 2.5c (current)
+
+**Bulk window load** via `_load_window_is_cache()`:
+
+1. Before the combo loop, one SELECT fetches **all** cached rows for `(instrument, granularity, window_start, window_end, timeout, tp/sl, is_cache_version)`.
+2. Results are keyed by combo signature tuple for O(1) in-memory lookup per combo.
+3. On hit, append cached metrics with `from_cache=True` and `continue` — skip simulation.
+4. On miss, run existing IS path with `from_cache=False`; **write bypass** sends only non-cached rows to `_write_is_results()`.
 
 Version string `IS_CACHE_VERSION = "v1"` is part of the lookup key. Bump the constant when IS logic changes to invalidate stale rows without DB migration or manual deletes.
+
+---
+
+## Bulk lookup architecture
+
+```
+for window in windows:
+    window_is_cache = _load_window_is_cache(...)   # 1 query
+    for combo in combos:
+        cached = window_is_cache.get(combo_sig)    # O(1) dict lookup
+        if cached: append + continue
+        else: simulate + append(from_cache=False)
+    new_is_rows = [r for r in is_rows if not r.get("from_cache")]
+    if new_is_rows: _write_is_results(new_is_rows)
+    else: print("window fully cached")
+```
+
+**Combo signature key** (must match between load and lookup):
+
+```python
+(direction, anchor, anchor2, continuation, continuation2, gap, indicator, combo_type)
+```
+
+Built from `combo.get(...)` on lookup; built from DB row columns on load. Python `None` matches Postgres `NULL` in tuple keys when rows were stored with NULL combo fields.
+
+**Query scope:** Window-level filters only (no per-combo WHERE). All combo identity columns are returned in the SELECT and used to build keys in Python. This replaces per-combo `IS NOT DISTINCT FROM` predicates with a single round-trip.
+
+---
+
+## Write bypass
+
+Cached rows are already in `sweep_is_results`. Re-writing them would:
+
+- Waste network and INSERT work
+- Hit `ON CONFLICT DO NOTHING` anyway (no benefit)
+
+Only rows with `from_cache=False` (fresh simulation) are passed to `_write_is_results()`. When every combo hits cache:
+
+```
+[is_cache] window fully cached (190 hits, 0 writes)
+```
+
+Band selection still runs on the full `is_rows` list (cached + fresh).
 
 ---
 
@@ -50,20 +102,15 @@ Examples **not** requiring a bump: band selection thresholds applied *after* IS 
 
 ---
 
-## Why `IS NOT DISTINCT FROM`, not `=`
+## Why `IS NOT DISTINCT FROM` (Phase 2.5b only)
 
-Combo identity columns (`anchor`, `anchor2`, `continuation`, `continuation2`, `gap`, `indicator`, `combo_type`) are nullable. In SQL:
-
-- `NULL = NULL` → **UNKNOWN** (no match)
-- `NULL IS NOT DISTINCT FROM NULL` → **TRUE**
-
-Pure continuation and single-anchor combos rely on NULL anchors; `=` would never cache-hit those rows.
+Phase 2.5c bulk load no longer uses per-combo SQL predicates. Combo matching is done in Python via tuple keys. The NULL-equality issue that motivated `IS NOT DISTINCT FROM` in the per-combo query is handled because DB NULLs deserialize to Python `None`, matching `combo.get("anchor")` etc.
 
 ---
 
 ## Cache hit semantics
 
-On hit, `_lookup_is_cache` returns IS metrics and `initial_bucket`. **`passes_band`, `final_bucket`, and `oos_eligible` are reset** before append:
+On hit, `_load_window_is_cache` returns IS metrics and `initial_bucket`. **`passes_band`, `final_bucket`, and `oos_eligible` are reset** before append:
 
 ```python
 "passes_band": False,
@@ -91,6 +138,8 @@ Lookup SELECT retrieves: `adjusted_score_is`, buckets (for `initial_bucket` only
 **Positive**
 
 - Repeat sweeps skip IS simulation for unchanged windows/combos.
+- One query per window (not per combo) — eliminates N+1 Postgres bottleneck.
+- Write bypass avoids redundant INSERTs for cache hits.
 - No new table — reuses `sweep_is_results` as cache backing store.
 - Version bump provides cheap, explicit invalidation.
 

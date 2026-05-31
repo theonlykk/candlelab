@@ -383,27 +383,30 @@ def _cache_store(block_hash: str, instrument: str, oos_start: pd.Timestamp,
         print(f"  [cache] store error (non-fatal): {e}")
 
 
-def _lookup_is_cache(
+def _load_window_is_cache(
     instrument: str,
     granularity: str,
     is_start: pd.Timestamp,
     is_end: pd.Timestamp,
-    combo: dict,
     timeout: int,
     conn,
-) -> dict | None:
+) -> dict:
     """
-    Returns cached IS result dict if found, else None.
-    Uses IS_CACHE_VERSION for automatic invalidation on
-    logic changes — bump IS_CACHE_VERSION to invalidate
-    all historical IS cache entries without touching the DB.
-    Never raises — cache misses are silent.
-    Uses IS NOT DISTINCT FROM for NULL-safe column matching.
-    Lookup key uses window_start/window_end timestamps,
-    NOT window_idx, which shifts as new data arrives.
+    Bulk-fetch all cached IS results for a single window in one
+    network round-trip. Returns a dict keyed by combo signature
+    tuple for O(1) per-combo lookup.
+
+    Key: (direction, anchor, anchor2, continuation, continuation2,
+           gap, indicator, combo_type)
+    Value: dict of IS metrics
+
+    Returns empty dict on any error — non-fatal, falls through to
+    full IS simulation.
     """
     sql = """
-        SELECT adjusted_score_is, initial_bucket, final_bucket,
+        SELECT anchor, anchor2, continuation, continuation2,
+               gap, indicator, direction, combo_type,
+               adjusted_score_is, initial_bucket, final_bucket,
                oos_eligible, trade_count_is, mean_r_is, sqn_is,
                is_r_list
         FROM sweep_is_results
@@ -415,50 +418,49 @@ def _lookup_is_cache(
         AND timeout_bars = %s
         AND tp_mult = %s
         AND sl_mult = %s
-        AND direction = %s
-        AND (anchor IS NOT DISTINCT FROM %s)
-        AND (anchor2 IS NOT DISTINCT FROM %s)
-        AND (continuation IS NOT DISTINCT FROM %s)
-        AND (continuation2 IS NOT DISTINCT FROM %s)
-        AND (gap IS NOT DISTINCT FROM %s)
-        AND (indicator IS NOT DISTINCT FROM %s)
-        AND (combo_type IS NOT DISTINCT FROM %s)
-        LIMIT 1
     """
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SAVEPOINT is_cache_lookup")
+            cur.execute("SAVEPOINT window_is_cache_load")
             cur.execute(sql, (
                 instrument, granularity,
                 is_start, is_end,
                 IS_CACHE_VERSION,
                 int(timeout), float(TP_MULT), float(SL_MULT),
-                combo.get("direction"),
-                combo.get("anchor"), combo.get("anchor2"),
-                combo.get("continuation"), combo.get("continuation2"),
-                combo.get("gap"), combo.get("indicator"),
-                combo.get("combo_type"),
             ))
-            row = cur.fetchone()
-            cur.execute("RELEASE SAVEPOINT is_cache_lookup")
-        if row is None:
-            return None
-        r_mults = list(row["is_r_list"]) if row["is_r_list"] else []
-        return {
-            "adjusted_score": float(row["adjusted_score_is"]),
-            "initial_bucket": row["initial_bucket"],
-            "final_bucket":   row["final_bucket"],
-            "oos_eligible":   bool(row["oos_eligible"]),
-            "n_trades":       int(row["trade_count_is"]),
-            "mean_r":         float(row["mean_r_is"]),
-            "raw_sqn":        float(row["sqn_is"]),
-            "r_mults":        r_mults,
-        }
+            rows = cur.fetchall()
+            cur.execute("RELEASE SAVEPOINT window_is_cache_load")
+
+        cache = {}
+        for row in rows:
+            key = (
+                row["direction"],
+                row["anchor"],
+                row["anchor2"],
+                row["continuation"],
+                row["continuation2"],
+                row["gap"],
+                row["indicator"],
+                row["combo_type"],
+            )
+            r_mults = list(row["is_r_list"]) if row["is_r_list"] else []
+            cache[key] = {
+                "adjusted_score": float(row["adjusted_score_is"]),
+                "initial_bucket": row["initial_bucket"],
+                "final_bucket":   row["final_bucket"],
+                "oos_eligible":   bool(row["oos_eligible"]),
+                "n_trades":       int(row["trade_count_is"]),
+                "mean_r":         float(row["mean_r_is"]),
+                "raw_sqn":        float(row["sqn_is"]),
+                "r_mults":        r_mults,
+            }
+        return cache
+
     except Exception as e:
         with conn.cursor() as rc:
-            rc.execute("ROLLBACK TO SAVEPOINT is_cache_lookup")
-        print(f"  [is_cache] lookup error (non-fatal): {e}")
-        return None
+            rc.execute("ROLLBACK TO SAVEPOINT window_is_cache_load")
+        print(f"  [is_cache] window load error (non-fatal): {e}")
+        return {}
 
 
 def _write_is_results(
@@ -1389,17 +1391,31 @@ def run_wfv(
 
                 # --- IS EVALUATION (ALL combos) ---
                 is_rows: list[dict] = []
+
+                # Bulk-fetch entire window cache in one network call
+                window_is_cache = _load_window_is_cache(
+                    instrument=instrument,
+                    granularity=GRANULARITY,
+                    is_start=is_start_ts,
+                    is_end=is_end_ts,
+                    timeout=timeout,
+                    conn=conn,
+                )
+
                 for combo in combos_for_pair:
-                    # --- IS CACHE LOOKUP ---
-                    cached_is = _lookup_is_cache(
-                        instrument=instrument,
-                        granularity=GRANULARITY,
-                        is_start=is_start_ts,
-                        is_end=is_end_ts,
-                        combo=combo,
-                        timeout=timeout,
-                        conn=conn,
+                    # Build combo signature for cache lookup
+                    combo_sig = (
+                        combo.get("direction"),
+                        combo.get("anchor"),
+                        combo.get("anchor2"),
+                        combo.get("continuation"),
+                        combo.get("continuation2"),
+                        combo.get("gap"),
+                        combo.get("indicator"),
+                        combo.get("combo_type"),
                     )
+                    cached_is = window_is_cache.get(combo_sig)
+
                     if cached_is is not None:
                         is_rows.append({
                             "combo":          combo,
@@ -1415,8 +1431,11 @@ def run_wfv(
                             "is_sqn100":      cached_is["raw_sqn"],
                             "is_n_trades":    cached_is["n_trades"],
                             "is_mean_r":      cached_is["mean_r"],
+                            "from_cache":     True,
                         })
                         continue
+
+                    # Cache miss — run full IS simulation
 
                     sig, anc = detect_signals(
                         is_df,
@@ -1470,6 +1489,7 @@ def run_wfv(
                         "is_sqn100": raw_sqn,
                         "is_n_trades": n,
                         "is_mean_r": mean_r,
+                        "from_cache": False,
                     })
 
                 # --- BAND SELECTION (ELIGIBLE only) ---
@@ -1497,18 +1517,23 @@ def run_wfv(
                         r["final_bucket"] = "REJECTED"
                         r["oos_eligible"] = False
 
-                # --- IS PERSISTENCE (write ALL rows before OOS) ---
-                _write_is_results(
-                    is_rows=is_rows,
-                    instrument=instrument,
-                    window_id=window_idx,
-                    window_start=is_start_ts,
-                    window_end=is_end_ts,
-                    timeout=timeout,
-                    run_id=run_id,
-                    batch_id=batch_id,
-                    conn=conn,
-                )
+                # Write bypass — skip rows that came from cache
+                new_is_rows = [r for r in is_rows if not r.get("from_cache", False)]
+                if new_is_rows:
+                    _write_is_results(
+                        is_rows=new_is_rows,
+                        instrument=instrument,
+                        window_id=window_idx,
+                        window_start=is_start_ts,
+                        window_end=is_end_ts,
+                        timeout=timeout,
+                        run_id=run_id,
+                        batch_id=batch_id,
+                        conn=conn,
+                    )
+                else:
+                    n_cached = sum(1 for r in is_rows if r.get("from_cache", False))
+                    print(f"  [is_cache] window fully cached ({n_cached} hits, 0 writes)")
 
                 promoted = [r for r in is_rows if r["oos_eligible"]]
 
