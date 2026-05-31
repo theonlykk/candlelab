@@ -111,6 +111,7 @@ MIN_TRADES_ELIGIBLE = 3
 MIN_TRADES_WATCHLIST = 1
 MIN_SQN_ELIGIBLE = 1.0
 RELATIVE_SCORE_FRACTION = 0.80
+IS_CACHE_VERSION = "v1"  # increment when IS logic changes
 ATR_PERIOD = 14
 MA_FAST = 10  # was 5
 MA_SLOW = 50  # was 20
@@ -382,6 +383,84 @@ def _cache_store(block_hash: str, instrument: str, oos_start: pd.Timestamp,
         print(f"  [cache] store error (non-fatal): {e}")
 
 
+def _lookup_is_cache(
+    instrument: str,
+    granularity: str,
+    is_start: pd.Timestamp,
+    is_end: pd.Timestamp,
+    combo: dict,
+    timeout: int,
+    conn,
+) -> dict | None:
+    """
+    Returns cached IS result dict if found, else None.
+    Uses IS_CACHE_VERSION for automatic invalidation on
+    logic changes — bump IS_CACHE_VERSION to invalidate
+    all historical IS cache entries without touching the DB.
+    Never raises — cache misses are silent.
+    Uses IS NOT DISTINCT FROM for NULL-safe column matching.
+    Lookup key uses window_start/window_end timestamps,
+    NOT window_idx, which shifts as new data arrives.
+    """
+    sql = """
+        SELECT adjusted_score_is, initial_bucket, final_bucket,
+               oos_eligible, trade_count_is, mean_r_is, sqn_is,
+               is_r_list
+        FROM sweep_is_results
+        WHERE instrument = %s
+        AND granularity = %s
+        AND window_start = %s
+        AND window_end = %s
+        AND is_cache_version = %s
+        AND timeout_bars = %s
+        AND tp_mult = %s
+        AND sl_mult = %s
+        AND direction = %s
+        AND (anchor IS NOT DISTINCT FROM %s)
+        AND (anchor2 IS NOT DISTINCT FROM %s)
+        AND (continuation IS NOT DISTINCT FROM %s)
+        AND (continuation2 IS NOT DISTINCT FROM %s)
+        AND (gap IS NOT DISTINCT FROM %s)
+        AND (indicator IS NOT DISTINCT FROM %s)
+        AND (combo_type IS NOT DISTINCT FROM %s)
+        LIMIT 1
+    """
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SAVEPOINT is_cache_lookup")
+            cur.execute(sql, (
+                instrument, granularity,
+                is_start, is_end,
+                IS_CACHE_VERSION,
+                int(timeout), float(TP_MULT), float(SL_MULT),
+                combo.get("direction"),
+                combo.get("anchor"), combo.get("anchor2"),
+                combo.get("continuation"), combo.get("continuation2"),
+                combo.get("gap"), combo.get("indicator"),
+                combo.get("combo_type"),
+            ))
+            row = cur.fetchone()
+            cur.execute("RELEASE SAVEPOINT is_cache_lookup")
+        if row is None:
+            return None
+        r_mults = list(row["is_r_list"]) if row["is_r_list"] else []
+        return {
+            "adjusted_score": float(row["adjusted_score_is"]),
+            "initial_bucket": row["initial_bucket"],
+            "final_bucket":   row["final_bucket"],
+            "oos_eligible":   bool(row["oos_eligible"]),
+            "n_trades":       int(row["trade_count_is"]),
+            "mean_r":         float(row["mean_r_is"]),
+            "raw_sqn":        float(row["sqn_is"]),
+            "r_mults":        r_mults,
+        }
+    except Exception as e:
+        with conn.cursor() as rc:
+            rc.execute("ROLLBACK TO SAVEPOINT is_cache_lookup")
+        print(f"  [is_cache] lookup error (non-fatal): {e}")
+        return None
+
+
 def _write_is_results(
     is_rows: list[dict],
     instrument: str,
@@ -407,7 +486,8 @@ def _write_is_results(
             timeout_bars, tp_mult, sl_mult,
             trade_count_is, mean_r_is, sqn_is, net_r_is,
             adjusted_score_is, initial_bucket, passes_band,
-            final_bucket, oos_eligible
+            final_bucket, oos_eligible,
+            is_cache_version, is_r_list
         ) VALUES (
             %s, %s,
             %s, %s, %s, %s, %s,
@@ -416,6 +496,7 @@ def _write_is_results(
             %s, %s, %s,
             %s, %s, %s, %s,
             %s, %s, %s,
+            %s, %s,
             %s, %s
         )
         ON CONFLICT DO NOTHING
@@ -446,6 +527,8 @@ def _write_is_results(
                     bool(row["passes_band"]),
                     row["final_bucket"],
                     bool(row["oos_eligible"]),
+                    IS_CACHE_VERSION,
+                    json.dumps([float(r) for r in row.get("r_mults", [])]),
                 ))
             cur.execute("RELEASE SAVEPOINT is_results_write")
         conn.commit()
@@ -1307,6 +1390,34 @@ def run_wfv(
                 # --- IS EVALUATION (ALL combos) ---
                 is_rows: list[dict] = []
                 for combo in combos_for_pair:
+                    # --- IS CACHE LOOKUP ---
+                    cached_is = _lookup_is_cache(
+                        instrument=instrument,
+                        granularity=GRANULARITY,
+                        is_start=is_start_ts,
+                        is_end=is_end_ts,
+                        combo=combo,
+                        timeout=timeout,
+                        conn=conn,
+                    )
+                    if cached_is is not None:
+                        is_rows.append({
+                            "combo":          combo,
+                            "n_trades":       cached_is["n_trades"],
+                            "mean_r":         cached_is["mean_r"],
+                            "raw_sqn":        cached_is["raw_sqn"],
+                            "r_mults":        cached_is["r_mults"],
+                            "adjusted_score": cached_is["adjusted_score"],
+                            "initial_bucket": cached_is["initial_bucket"],
+                            "passes_band":    False,
+                            "final_bucket":   "REJECTED",
+                            "oos_eligible":   False,
+                            "is_sqn100":      cached_is["raw_sqn"],
+                            "is_n_trades":    cached_is["n_trades"],
+                            "is_mean_r":      cached_is["mean_r"],
+                        })
+                        continue
+
                     sig, anc = detect_signals(
                         is_df,
                         combo["anchor"],
