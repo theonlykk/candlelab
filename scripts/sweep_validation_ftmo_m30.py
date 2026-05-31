@@ -1292,10 +1292,14 @@ _WFV_COLUMNS = [
     "oos_start",
     "oos_end",
     "anchor",
+    "anchor2",
     "continuation",
+    "continuation2",
     "gap",
     "indicator",
     "direction",
+    "combo_type",
+    "timeout_bars",
     "is_sqn100",
     "is_n_trades",
     "is_mean_r",
@@ -1644,6 +1648,10 @@ def run_wfv(
                             "gap": combo["gap"],
                             "indicator": combo["indicator"],
                             "direction": combo["direction"],
+                            "anchor2":        combo.get("anchor2"),
+                            "continuation2":  combo.get("continuation2"),
+                            "combo_type":     combo.get("combo_type"),
+                            "timeout_bars":   int(timeout),
                             "is_sqn100": pr["is_sqn100"],
                             "is_n_trades": pr["is_n_trades"],
                             "is_mean_r": pr["is_mean_r"],
@@ -1700,7 +1708,10 @@ def compute_shadow_status(wfv_df: pd.DataFrame, instrument: str) -> dict:
     else:
         base_rate = float((eligible["oos_mean_r"] > 0).sum() / len(eligible))
 
-    combo_cols = ["anchor", "continuation", "indicator", "direction"]
+    combo_cols = [
+        "anchor", "anchor2", "continuation", "continuation2",
+        "gap", "indicator", "direction", "combo_type", "timeout_bars"
+    ]
 
     def _combo_agg(g: pd.DataFrame) -> pd.Series:
         nt = int(g["oos_n_trades"].sum())
@@ -1765,7 +1776,10 @@ def compute_shadow_status(wfv_df: pd.DataFrame, instrument: str) -> dict:
 
 
 def write_leaderboard_csv(wfv_df: pd.DataFrame, instrument: str) -> None:
-    combo_cols = ["anchor", "continuation", "gap", "indicator", "direction"]
+    combo_cols = [
+        "anchor", "anchor2", "continuation", "continuation2",
+        "gap", "indicator", "direction", "combo_type", "timeout_bars"
+    ]
 
     def _lb_agg(g: pd.DataFrame) -> pd.Series:
         nt = int(g["oos_n_trades"].sum())
@@ -1810,6 +1824,154 @@ def write_leaderboard_csv(wfv_df: pd.DataFrame, instrument: str) -> None:
     )
     path = os.path.join(OUTPUT_DIR, f"leaderboard_{instrument}.csv")
     grouped.to_csv(path, index=False)
+
+
+def _write_leaderboard(
+    wfv_df: pd.DataFrame,
+    instrument: str,
+    run_id: str,
+    conn,
+) -> None:
+    """
+    Write aggregated OOS leaderboard results to sweep_leaderboard.
+    Runs parallel to write_leaderboard_csv during Phase 3 validation.
+    ON CONFLICT DO UPDATE — leaderboard is a living snapshot of the
+    current 27-window dataset (Gemini ruling: not a historical museum).
+    SAVEPOINT is per-row so one bad row never kills the batch.
+    Never raises — write failures are non-fatal.
+    """
+    if wfv_df.empty:
+        return
+
+    combo_cols = [
+        "anchor", "anchor2", "continuation", "continuation2",
+        "gap", "indicator", "direction", "combo_type", "timeout_bars"
+    ]
+
+    def _lb_agg_db(g: pd.DataFrame) -> pd.Series:
+        nt = int(g["oos_n_trades"].sum())
+        oos_mean = float(
+            (g["oos_mean_r"] * g["oos_n_trades"]).sum() / nt
+        ) if nt > 0 else 0.0
+        pooled_r = [r for r_list in g["oos_r_list"] for r in r_list]
+        if len(pooled_r) >= 2:
+            _std = float(np.std(pooled_r, ddof=1))
+            sqn = float(
+                np.mean(pooled_r) / _std * np.sqrt(min(len(pooled_r), 100))
+            ) if _std > 0 else 0.0
+        else:
+            sqn = 0.0
+        return pd.Series({
+            "oos_sqn100":         sqn,
+            "oos_mean_r":         oos_mean,
+            "oos_n_trades":       nt,
+            "n_windows_promoted": int(len(g)),
+            "mdd":    float(g["mdd"].mean()) if "mdd" in g.columns else 0.0,
+            "sharpe": float(g["sharpe"].mean()) if "sharpe" in g.columns else 0.0,
+            "oos_r_list": pooled_r,
+        })
+
+    existing_combo_cols = [c for c in combo_cols if c in wfv_df.columns]
+    grouped = (
+        wfv_df.groupby(existing_combo_cols, sort=False, dropna=False)
+        .apply(_lb_agg_db)
+        .reset_index()
+    )
+
+    sql = """
+        INSERT INTO sweep_leaderboard (
+            granularity, instrument,
+            anchor, anchor2, continuation, continuation2,
+            gap, indicator, direction, combo_type,
+            timeout_bars,
+            oos_sqn100, oos_mean_r, oos_n_trades,
+            n_windows_promoted, mdd, sharpe, oos_r_list,
+            sweep_run_id
+        ) VALUES (
+            %s, %s,
+            %s, %s, %s, %s,
+            %s, %s, %s, %s,
+            %s,
+            %s, %s, %s,
+            %s, %s, %s, %s,
+            %s
+        )
+        ON CONFLICT (
+            granularity, instrument,
+            anchor, anchor2, continuation, continuation2,
+            gap, indicator, direction, combo_type,
+            timeout_bars
+        ) DO UPDATE SET
+            oos_sqn100         = EXCLUDED.oos_sqn100,
+            oos_mean_r         = EXCLUDED.oos_mean_r,
+            oos_n_trades       = EXCLUDED.oos_n_trades,
+            n_windows_promoted = EXCLUDED.n_windows_promoted,
+            mdd                = EXCLUDED.mdd,
+            sharpe             = EXCLUDED.sharpe,
+            oos_r_list         = EXCLUDED.oos_r_list,
+            sweep_run_id       = EXCLUDED.sweep_run_id,
+            updated_at         = NOW()
+    """
+
+    def _safe_float(v):
+        try:
+            f = float(v)
+            return None if f != f else f
+        except (TypeError, ValueError):
+            return None
+
+    def _safe_int(v):
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return None
+
+    def _safe_str(v):
+        if v is None or (isinstance(v, float) and v != v):
+            return None
+        s = str(v).strip()
+        return None if s.lower() in ("none", "nan", "") else s
+
+    n_written = 0
+    n_errors = 0
+    with conn.cursor() as cur:
+        for _, row in grouped.iterrows():
+            try:
+                cur.execute("SAVEPOINT row_write")
+                r_list = row.get("oos_r_list", [])
+                r_list_json = json.dumps(
+                    [float(r) for r in r_list if r == r]
+                ) if r_list else json.dumps([])
+
+                cur.execute(sql, (
+                    GRANULARITY, instrument,
+                    _safe_str(row.get("anchor")),
+                    _safe_str(row.get("anchor2")),
+                    _safe_str(row.get("continuation")),
+                    _safe_str(row.get("continuation2")),
+                    _safe_int(row.get("gap")),
+                    _safe_str(row.get("indicator")),
+                    _safe_str(row.get("direction")),
+                    _safe_str(row.get("combo_type")),
+                    _safe_int(row.get("timeout_bars")),
+                    _safe_float(row.get("oos_sqn100")),
+                    _safe_float(row.get("oos_mean_r")),
+                    _safe_int(row.get("oos_n_trades")),
+                    _safe_int(row.get("n_windows_promoted")),
+                    _safe_float(row.get("mdd")),
+                    _safe_float(row.get("sharpe")),
+                    r_list_json,
+                    run_id,
+                ))
+                cur.execute("RELEASE SAVEPOINT row_write")
+                n_written += 1
+            except Exception as e:
+                cur.execute("ROLLBACK TO SAVEPOINT row_write")
+                n_errors += 1
+                print(f"  [leaderboard] row write error: {e}")
+    conn.commit()
+    if n_written > 0 or n_errors > 0:
+        print(f"  [leaderboard] {n_written} rows written, {n_errors} errors")
 
 
 def write_paper_roster(promoted_combos: list[dict]) -> None:
@@ -1931,6 +2093,7 @@ def main():
                 }
             else:
                 write_leaderboard_csv(wfv_df, instrument)
+                _write_leaderboard(wfv_df, instrument, global_run_id, conn)
                 print(f"  Leaderboard written: output/leaderboard_{instrument}.csv")
                 shadow = compute_shadow_status(wfv_df, instrument)
 
