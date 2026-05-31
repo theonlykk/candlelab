@@ -59,5 +59,42 @@ def migrate_sweep_leaderboard():
     print("migrate_sweep_leaderboard: done")
 
 
+# ---------------------------------------------------------------------------
+# ADR-089: live_regime_parameters — IS-calibrated Z-score params for
+# live Gate 4 execution. Written by export_live_params.py after meta_sweep.
+# Manual execution only — never run at application startup.
+# ---------------------------------------------------------------------------
+
+def migrate_live_regime_parameters():
+    """ADR-089: live_regime_parameters table for live Gate 4 Z-score params."""
+    ddl = """
+        -- ---------------------------------------------------------------------------
+        -- ADR-089: live_regime_parameters — IS-calibrated Z-score params for
+        -- live Gate 4 execution. Written by export_live_params.py after meta_sweep.
+        -- Manual execution only — never run at application startup.
+        -- ---------------------------------------------------------------------------
+
+        CREATE TABLE IF NOT EXISTS live_regime_parameters (
+            instrument          VARCHAR(10)      NOT NULL,
+            granularity         VARCHAR(10)      NOT NULL,
+            base_mean           DOUBLE PRECISION NOT NULL,
+            base_std            DOUBLE PRECISION NOT NULL,
+            quote_mean          DOUBLE PRECISION NOT NULL,
+            quote_std           DOUBLE PRECISION NOT NULL,
+            z_spread_p50        DOUBLE PRECISION NOT NULL,
+            z_spread_p70        DOUBLE PRECISION NOT NULL,
+            calibrated_at       TIMESTAMPTZ      NOT NULL DEFAULT NOW(),
+            sweep_window_start  TIMESTAMPTZ      NOT NULL,
+            sweep_window_end    TIMESTAMPTZ      NOT NULL,
+            PRIMARY KEY (instrument, granularity)
+        );
+    """
+    with psycopg2.connect(DB_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute(ddl)
+        conn.commit()
+    print("migrate_live_regime_parameters: done")
+
+
 if __name__ == "__main__":
     migrate_sweep_leaderboard()
