@@ -146,7 +146,7 @@ MIN_TRADES_ELIGIBLE = 3
 MIN_TRADES_WATCHLIST = 1
 MIN_SQN_ELIGIBLE = 1.0
 RELATIVE_SCORE_FRACTION = 0.80
-IS_CACHE_VERSION = "v1"  # increment when IS logic changes
+IS_CACHE_VERSION = "v2"  # increment when IS logic changes
 ATR_PERIOD = 14
 MA_FAST = 10  # was 5
 MA_SLOW = 50  # was 20
@@ -340,6 +340,7 @@ def _make_block_hash(
         "tp_mult": round(tp_mult, 6),
         "sl_mult": round(sl_mult, 6),
         "sl_mode": sl_mode,
+        "oos_cache_version": "v2",
     }
     raw = json.dumps(payload, sort_keys=True, default=str)
     return hashlib.sha256(raw.encode()).hexdigest()
