@@ -124,7 +124,9 @@ def register(app) -> None:
         oos_df = get_oos_curve(
             row["instrument"],
             row["granularity"],
-            row["combo_hash"],
+            row["anchor"],
+            row["direction"],
+            row["timeout_bars"],
         )
 
         if oos_df.empty:

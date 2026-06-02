@@ -17,9 +17,12 @@ def get_leaderboard() -> pd.DataFrame:
     conn = pool.getconn()
     try:
         query = """
-            SELECT instrument, granularity, combo_hash,
-                   oos_sqn100, oos_win_rate, oos_trade_count,
-                   oos_mean_r, meta_status
+            SELECT instrument, granularity,
+                   anchor, anchor2, continuation, continuation2,
+                   gap, indicator, direction, combo_type, timeout_bars,
+                   oos_sqn100, oos_mean_r, oos_n_trades,
+                   n_windows_promoted, meta_status,
+                   id
             FROM sweep_leaderboard
             ORDER BY oos_sqn100 DESC NULLS LAST
         """
@@ -34,7 +37,11 @@ def get_leaderboard() -> pd.DataFrame:
 
 
 def get_oos_curve(
-    instrument: str, granularity: str, combo_hash: str
+    instrument: str,
+    granularity: str,
+    anchor: str,
+    direction: str,
+    timeout_bars: int,
 ) -> pd.DataFrame:
     conn = pool.getconn()
     try:
@@ -45,15 +52,21 @@ def get_oos_curve(
               ON o.instrument = i.instrument
              AND o.granularity = i.granularity
              AND o.window_start = i.window_start
-             AND o.combo_hash = i.combo_hash
+             AND o.anchor = i.anchor
+             AND o.direction = i.direction
+             AND o.timeout_bars = i.timeout_bars
             WHERE o.instrument = %s
               AND o.granularity = %s
-              AND o.combo_hash = %s
+              AND o.anchor = %s
+              AND o.direction = %s
+              AND o.timeout_bars = %s
               AND i.bucket_label = 'PROMOTED'
             ORDER BY o.window_start ASC
         """
         df = pd.read_sql(
-            query, conn, params=(instrument, granularity, combo_hash)
+            query,
+            conn,
+            params=(instrument, granularity, anchor, direction, timeout_bars),
         )
         for col in df.select_dtypes(include='object').columns:
             df[col] = df[col].apply(
