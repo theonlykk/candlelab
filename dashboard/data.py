@@ -37,41 +37,34 @@ def get_leaderboard() -> pd.DataFrame:
 
 
 def get_oos_curve(
-    instrument: str,
-    granularity: str,
-    anchor: str,
-    direction: str,
-    timeout_bars: int,
+    instrument: str, granularity: str, anchor: str,
+    direction: str, timeout_bars: int
 ) -> pd.DataFrame:
     conn = pool.getconn()
     try:
         query = """
-            SELECT o.window_start, o.window_end, o.oos_r_list
+            SELECT 
+                o.oos_start AS window_start,
+                o.oos_end   AS window_end,
+                (o.result_json->>'oos_r_list')::text AS oos_r_list
             FROM sweep_oos_cache o
             JOIN sweep_is_results i
-              ON o.instrument = i.instrument
-             AND o.granularity = i.granularity
-             AND o.window_start = i.window_start
-             AND o.anchor = i.anchor
-             AND o.direction = i.direction
-             AND o.timeout_bars = i.timeout_bars
-            WHERE o.instrument = %s
+              ON o.instrument   = i.instrument
+             AND o.granularity  = i.granularity
+             AND o.oos_start    = i.window_start
+             AND i.anchor       = %s
+             AND i.direction    = %s
+             AND i.timeout_bars = %s
+            WHERE o.instrument  = %s
               AND o.granularity = %s
-              AND o.anchor = %s
-              AND o.direction = %s
-              AND o.timeout_bars = %s
               AND i.bucket_label = 'PROMOTED'
-            ORDER BY o.window_start ASC
+            ORDER BY o.oos_start ASC
         """
         df = pd.read_sql(
-            query,
-            conn,
-            params=(instrument, granularity, anchor, direction, timeout_bars),
+            query, conn,
+            params=(anchor, direction, timeout_bars,
+                    instrument, granularity)
         )
-        for col in df.select_dtypes(include='object').columns:
-            df[col] = df[col].apply(
-                lambda x: float(x) if isinstance(x, decimal.Decimal) else x
-            )
         return df
     finally:
         pool.putconn(conn)
