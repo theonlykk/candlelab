@@ -40,30 +40,27 @@ def get_oos_curve(
     instrument: str, granularity: str, anchor: str,
     direction: str, timeout_bars: int
 ) -> pd.DataFrame:
+    """
+    Fetch oos_r_list directly from sweep_leaderboard.
+    No join needed — leaderboard already contains the pooled OOS returns.
+    Returns single-row DataFrame with oos_r_list column.
+    """
     conn = pool.getconn()
     try:
         query = """
-            SELECT 
-                o.oos_start AS window_start,
-                o.oos_end   AS window_end,
-                (o.result_json->>'oos_r_list')::text AS oos_r_list
-            FROM sweep_oos_cache o
-            JOIN sweep_is_results i
-              ON o.instrument   = i.instrument
-             AND o.granularity  = i.granularity
-             AND o.oos_start    = i.window_start
-             AND i.anchor       = %s
-             AND i.direction    = %s
-             AND i.timeout_bars = %s
-            WHERE o.instrument  = %s
-              AND o.granularity = %s
-              AND i.bucket_label = 'PROMOTED'
-            ORDER BY o.oos_start ASC
+            SELECT oos_r_list
+            FROM sweep_leaderboard
+            WHERE instrument   = %s
+              AND granularity   = %s
+              AND anchor        = %s
+              AND direction     = %s
+              AND timeout_bars  = %s
+            LIMIT 1
         """
         df = pd.read_sql(
             query, conn,
-            params=(anchor, direction, timeout_bars,
-                    instrument, granularity)
+            params=(instrument, granularity, anchor,
+                    direction, timeout_bars)
         )
         return df
     finally:
@@ -88,21 +85,14 @@ def _parse_oos_r_list(value) -> list[float] | None:
 
 def build_equity_curve(oos_df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
     """
-    Flatten per-window oos_r_list into one returns series.
-    Insert NaN between non-contiguous windows; cumulative sum of R multiples.
+    Build equity curve from pooled oos_r_list in sweep_leaderboard.
+    oos_r_list is a flat list of R-multiples across all promoted windows.
     """
-    returns: list[float] = []
-    rows = oos_df.to_dict("records")
+    if oos_df.empty:
+        return np.array([]), np.array([])
 
-    for i, row in enumerate(rows):
-        chunk = _parse_oos_r_list(row.get("oos_r_list"))
-        if chunk is None:
-            continue
-        if i > 0 and returns:
-            prev = rows[i - 1]
-            if prev.get("window_end") != row.get("window_start"):
-                returns.append(np.nan)
-        returns.extend(chunk)
+    raw = oos_df["oos_r_list"].iloc[0]
+    returns = _parse_oos_r_list(raw)
 
     if not returns:
         return np.array([]), np.array([])
