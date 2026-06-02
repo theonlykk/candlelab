@@ -1,7 +1,5 @@
 from datetime import datetime
 import io
-import logging
-import traceback
 
 import numpy as np
 import pandas as pd
@@ -35,11 +33,13 @@ def _build_heatmap(df: pd.DataFrame) -> go.Figure:
     if df.empty:
         return _empty_figure("No data — sweep may still be running.")
 
-    sqn_pivot = df.pivot(
-        index="instrument", columns="granularity", values="oos_sqn100"
+    sqn_pivot = df.pivot_table(
+        index="instrument", columns="granularity",
+        values="oos_sqn100", aggfunc="max"
     )
-    trades_pivot = df.pivot(
-        index="instrument", columns="granularity", values="oos_trade_count"
+    trades_pivot = df.pivot_table(
+        index="instrument", columns="granularity",
+        values="oos_n_trades", aggfunc="sum"
     )
 
     t_vals = trades_pivot.to_numpy(dtype=float)
@@ -96,28 +96,22 @@ def register(app) -> None:
             empty = _empty_figure("No data — sweep may still be running.")
             return [], empty
 
-        try:
-            df = pd.read_json(io.StringIO(data), orient="records")
+        df = pd.read_json(io.StringIO(data), orient="records")
 
-            if meta_filter != "ALL":
-                if meta_filter == "NULL":
-                    df = df[df["meta_status"].isna()]
-                else:
-                    df = df[df["meta_status"] == meta_filter]
+        if meta_filter != "ALL":
+            if meta_filter == "NULL":
+                df = df[df["meta_status"].isna()]
+            else:
+                df = df[df["meta_status"] == meta_filter]
 
-            if granularity_filter != "ALL":
-                df = df[df["granularity"] == granularity_filter]
+        if granularity_filter != "ALL":
+            df = df[df["granularity"] == granularity_filter]
 
-            if df.empty:
-                return [], _empty_figure("No data — sweep may still be running.")
+        if df.empty:
+            return [], _empty_figure("No data — sweep may still be running.")
 
-            table_data = df.to_dict("records")
-            return table_data, _build_heatmap(df)
-        except Exception as e:
-            logging.error("=== CALLBACK 2 FATAL EXCEPTION ===")
-            logging.error(traceback.format_exc())
-            logging.error("==================================")
-            raise e
+        table_data = df.to_dict("records")
+        return table_data, _build_heatmap(df)
 
     @app.callback(
         Output("equity-curve", "figure"),
