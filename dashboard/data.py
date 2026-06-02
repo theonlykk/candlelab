@@ -1,3 +1,4 @@
+import decimal
 import json
 import os
 
@@ -23,6 +24,10 @@ def get_leaderboard() -> pd.DataFrame:
             ORDER BY oos_sqn100 DESC NULLS LAST
         """
         df = pd.read_sql(query, conn)
+        for col in df.select_dtypes(include='object').columns:
+            df[col] = df[col].apply(
+                lambda x: float(x) if isinstance(x, decimal.Decimal) else x
+            )
         return df
     finally:
         pool.putconn(conn)
@@ -50,6 +55,10 @@ def get_oos_curve(
         df = pd.read_sql(
             query, conn, params=(instrument, granularity, combo_hash)
         )
+        for col in df.select_dtypes(include='object').columns:
+            df[col] = df[col].apply(
+                lambda x: float(x) if isinstance(x, decimal.Decimal) else x
+            )
         return df
     finally:
         pool.putconn(conn)
