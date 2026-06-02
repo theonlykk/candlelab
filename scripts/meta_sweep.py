@@ -284,7 +284,7 @@ def run_discovery(conn, granularity: str, cfg: dict) -> None:
             continue
 
         # Per-instrument threshold — no cross-instrument contamination
-        nqs_vals = [s["neighborhood_quality_score"]
+        nqs_vals = [float(s["neighborhood_quality_score"])
                     for s in instrument_scores]
         nqs_p70  = float(np.percentile(nqs_vals, DISCOVERY_PERCENTILE))
         threshold = max(nqs_p70, NPR_ABS_FLOOR)
