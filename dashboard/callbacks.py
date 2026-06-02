@@ -1,7 +1,6 @@
 from datetime import datetime
 import io
 
-import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from dash import Input, Output
@@ -42,21 +41,12 @@ def _build_heatmap(df: pd.DataFrame) -> go.Figure:
         values="oos_n_trades", aggfunc="sum"
     )
 
-    t_vals = trades_pivot.to_numpy(dtype=float)
-    t_min = np.nanmin(t_vals)
-    t_max = np.nanmax(t_vals)
-    if t_max == t_min:
-        opacity = np.full(trades_pivot.shape, 1.0)
-    else:
-        opacity = 0.4 + 0.6 * (trades_pivot - t_min) / (t_max - t_min)
-
     fig = go.Figure(
         data=go.Heatmap(
             z=sqn_pivot.values,
             x=sqn_pivot.columns.tolist(),
             y=sqn_pivot.index.tolist(),
             customdata=trades_pivot.values,
-            opacity=opacity.values,
             colorscale="RdYlGn",
             zmid=1.5,
             hovertemplate="SQN: %{z:.2f}<br>Trades: %{customdata}<extra></extra>",
