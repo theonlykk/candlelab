@@ -1,4 +1,5 @@
 from datetime import datetime
+import io
 
 import numpy as np
 import pandas as pd
@@ -93,7 +94,7 @@ def register(app) -> None:
             empty = _empty_figure("No data — sweep may still be running.")
             return [], empty
 
-        df = pd.read_json(data, orient="records")
+        df = pd.read_json(io.StringIO(data), orient="records")
 
         if meta_filter != "ALL":
             if meta_filter == "NULL":
