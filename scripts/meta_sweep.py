@@ -11,6 +11,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import decimal
 import json
 import os
 import sys
@@ -167,7 +168,13 @@ def fetch_universe(conn, granularity: str, instrument: str,
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(sql, (granularity, instrument, min_windows))
         rows = cur.fetchall()
-    return [_norm_row(dict(r)) for r in rows]
+    return [
+        _norm_row({
+            k: float(v) if isinstance(v, decimal.Decimal) else v
+            for k, v in dict(r).items()
+        })
+        for r in rows
+    ]
 
 
 def write_meta_status(
