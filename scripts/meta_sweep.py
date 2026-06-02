@@ -74,17 +74,10 @@ def _norm(v: Any) -> Any:
 
 
 def _norm_row(row: dict) -> dict:
-    """Normalize all combo identity columns in a row dict."""
-    COMBO_COLS = [
-        "anchor", "anchor2", "continuation", "continuation2",
-        "gap", "indicator", "direction", "combo_type",
-    ]
-    out = dict(row)
-    for col in COMBO_COLS:
-        out[col] = _norm(out.get(col))
-    if "timeout_bars" in out and out["timeout_bars"] is not None:
-        out["timeout_bars"] = int(out["timeout_bars"])
-    return out
+    for k, v in row.items():
+        if isinstance(v, decimal.Decimal):
+            row[k] = float(v)
+    return row
 
 
 def weighted_distance(a: dict, b: dict) -> float:
@@ -168,13 +161,7 @@ def fetch_universe(conn, granularity: str, instrument: str,
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(sql, (granularity, instrument, min_windows))
         rows = cur.fetchall()
-    return [
-        _norm_row({
-            k: float(v) if isinstance(v, decimal.Decimal) else v
-            for k, v in dict(r).items()
-        })
-        for r in rows
-    ]
+    return [_norm_row(dict(r)) for r in rows]
 
 
 def write_meta_status(
@@ -284,7 +271,7 @@ def run_discovery(conn, granularity: str, cfg: dict) -> None:
             continue
 
         # Per-instrument threshold — no cross-instrument contamination
-        nqs_vals = [float(s["neighborhood_quality_score"])
+        nqs_vals = [s["neighborhood_quality_score"]
                     for s in instrument_scores]
         nqs_p70  = float(np.percentile(nqs_vals, DISCOVERY_PERCENTILE))
         threshold = max(nqs_p70, NPR_ABS_FLOOR)
