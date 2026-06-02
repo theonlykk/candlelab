@@ -82,35 +82,26 @@ def register(app) -> None:
         Input("granularity-filter", "value"),
     )
     def render_dashboard(data, meta_filter, granularity_filter):
-        print("=== CALLBACK 2 TRIGGERED ===", flush=True)
         if not data:
-            print("=== CALLBACK 2 ABORTED: NO DATA ===", flush=True)
             empty = _empty_figure("No data — sweep may still be running.")
             return [], empty
 
-        try:
-            df = pd.read_json(io.StringIO(data), orient="records")
+        df = pd.read_json(io.StringIO(data), orient="records")
 
-            if meta_filter != "ALL":
-                if meta_filter == "NULL":
-                    df = df[df["meta_status"].isna()]
-                else:
-                    df = df[df["meta_status"] == meta_filter]
+        if meta_filter != "ALL":
+            if meta_filter == "NULL":
+                df = df[df["meta_status"].isna()]
+            else:
+                df = df[df["meta_status"] == meta_filter]
 
-            if granularity_filter != "ALL":
-                df = df[df["granularity"] == granularity_filter]
+        if granularity_filter != "ALL":
+            df = df[df["granularity"] == granularity_filter]
 
-            if df.empty:
-                return [], _empty_figure("No data — sweep may still be running.")
+        if df.empty:
+            return [], _empty_figure("No data — sweep may still be running.")
 
-            table_data = df.to_dict("records")
-            return table_data, _build_heatmap(df)
-        except Exception as e:
-            import traceback
-            print("=== CALLBACK 2 FATAL EXCEPTION ===", flush=True)
-            print(traceback.format_exc(), flush=True)
-            print("==================================", flush=True)
-            raise e
+        table_data = df.to_dict("records")
+        return table_data, _build_heatmap(df)
 
     @app.callback(
         Output("equity-curve", "figure"),
@@ -118,7 +109,6 @@ def register(app) -> None:
         Input("leaderboard-table", "data"),
     )
     def render_equity_curve(selected_rows, table_data):
-        print("=== CALLBACK 3 TRIGGERED ===", flush=True)
         if not selected_rows or not table_data:
             return _empty_figure("Select a row to view equity curve")
 
