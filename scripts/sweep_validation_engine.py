@@ -340,7 +340,7 @@ def _make_block_hash(
         "tp_mult": round(tp_mult, 6),
         "sl_mult": round(sl_mult, 6),
         "sl_mode": sl_mode,
-        "oos_cache_version": "v2",
+        "oos_cache_version": "v3",
     }
     raw = json.dumps(payload, sort_keys=True, default=str)
     return hashlib.sha256(raw.encode()).hexdigest()
@@ -693,8 +693,7 @@ def fetch_instrument_data(instrument: str, conn,
                           strength_dict: dict | None = None) -> pd.DataFrame:
     """Load M30 candles from ftmo_candles with real measured spread_points."""
     sql = """
-SELECT time, open, high, low, close, volume,
-       (ask_close - bid_close) AS spread_points
+SELECT time, open, high, low, close, volume, spread_points
 FROM ftmo_candles
 WHERE instrument = %s
   AND granularity = %s
