@@ -146,14 +146,14 @@ MIN_TRADES_ELIGIBLE = 3
 MIN_TRADES_WATCHLIST = 1
 MIN_SQN_ELIGIBLE = 1.0
 RELATIVE_SCORE_FRACTION = 0.80
-IS_CACHE_VERSION = "v2"  # increment when IS logic changes
+IS_CACHE_VERSION = "v3"  # ADR-093: ftmo_candles + D1 shift(1) + DST dead zone + spread P80
 ATR_PERIOD = 14
 MA_FAST = 10  # was 5
 MA_SLOW = 50  # was 20
 RSI_PERIOD = 14
 RSI_OVERSOLD = 30.0
 RSI_OVERBOUGHT = 70.0
-DEAD_ZONE_HOURS = frozenset({20, 21, 22, 23})  # new — UTC hours excluded from all signals
+# DEAD_ZONE_HOURS = frozenset({20, 21, 22, 23})  # superseded by ADR-093 vectorized DST logic in detect_signals()
 OUTPUT_DIR = r"d:\candlelab\scripts\output\ftmo_m30"
 import os as _os
 _os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -632,7 +632,7 @@ def precompute_currency_matrix(conn, cfg: dict) -> dict:
 
     sql = """
         SELECT time, instrument, close
-        FROM oanda_candles
+        FROM ftmo_candles
         WHERE instrument = ANY(%s)
         AND granularity = %s
         ORDER BY instrument, time ASC
@@ -695,7 +695,7 @@ def fetch_instrument_data(instrument: str, conn,
     sql = """
 SELECT time, open, high, low, close, volume,
        (ask_close - bid_close) AS spread_points
-FROM oanda_candles
+FROM ftmo_candles
 WHERE instrument = %s
   AND granularity = %s
 ORDER BY time ASC
@@ -726,8 +726,8 @@ ORDER BY time ASC
         with conn.cursor() as _cur:
             _cur.execute("""
                 SELECT time, close
-                FROM oanda_candles
-                WHERE instrument = %s AND granularity = 'D'
+                FROM ftmo_candles
+                WHERE instrument = %s AND granularity = 'D1'
                 ORDER BY time ASC
             """, (instrument,))
             d1_rows = _cur.fetchall()
@@ -739,12 +739,32 @@ ORDER BY time ASC
             d1_df["ma_200_d1"] = (
                 d1_df["close"].rolling(200, min_periods=1).mean()
             )
+
+            # ADR-093: shift forward one row so intraday bars on day T only see
+            # the MA value as it stood at day T-1 close.
+            # FTMO D1 bars are stamped at 00:00 UTC — without this shift, the entire
+            # trading day sees the current day's unrealized close in the MA.
+            d1_df["ma_200_d1"] = d1_df["ma_200_d1"].shift(1)
+
+            # Weekend gap guard — warn if any D1 gap exceeds 4 calendar days
+            d1_df["_time_diff_days"] = d1_df["time"].diff().dt.total_seconds() / 86400
+            wide_gaps = d1_df[d1_df["_time_diff_days"] > 4]
+            if not wide_gaps.empty:
+                import warnings
+                warnings.warn(
+                    f"D1 gap warning for {instrument}: {len(wide_gaps)} gaps wider than "
+                    f"4 calendar days. Dates: {wide_gaps['time'].dt.date.tolist()[:5]}",
+                    stacklevel=2
+                )
+            d1_df = d1_df.drop(columns=["_time_diff_days"])
+
             primary_reset = df.reset_index()
             merged = pd.merge_asof(
                 primary_reset.sort_values("time"),
                 d1_df[["time", "ma_200_d1"]].sort_values("time"),
                 on="time",
                 direction="backward",
+                tolerance=pd.Timedelta("4 days"),
             )
             df = merged.set_index("time").sort_index()
         else:
@@ -856,7 +876,7 @@ def detect_signals(
     """
     Per-bar signals (+1 long, -1 short, 0 none) and anchor bar index.
     gap: max bars to search forward for continuation pattern (ignored if continuation=None).
-    Dead zone guard: bars in DEAD_ZONE_HOURS (21, 22, 23 UTC) are zeroed out.
+    Dead zone guard: bars in 17:00–20:00 ET (ADR-093 DST-aware) are zeroed out.
     """
     if direction == "long":
         dir_val = 1
@@ -869,10 +889,12 @@ def detect_signals(
     sig_array = np.zeros(n, dtype=np.int64)
     anchor_array = np.zeros(n, dtype=np.int64)
 
-    # Dead zone mask — applied to ALL signals regardless of continuation
+    # Dead zone mask — DST-aware vectorized conversion (ADR-093)
+    # Targets 17:00-20:00 ET (NY illiquidity window) regardless of DST.
+    # Replaces static UTC frozenset which was incorrect in EST (winter).
     if isinstance(df.index, pd.DatetimeIndex):
-        _dead_zone = cfg["dead_zone_hours"] if cfg is not None else DEAD_ZONE_HOURS
-        dead_mask = df.index.hour.isin(_dead_zone)
+        et_index = df.index.tz_convert("America/New_York")
+        dead_mask = et_index.hour.isin([17, 18, 19, 20]).to_numpy()
     else:
         dead_mask = np.zeros(n, dtype=bool)
 
@@ -1536,8 +1558,10 @@ def run_wfv(
     batch_id: str,
     cfg: dict | None = None,
 ) -> pd.DataFrame:
-    # Spread from oanda_candles (ask_close - bid_close) — already in price units
-    avg_spread = float(df["spread_points"].mean())
+    # Spread from ftmo_candles: spread_points is in MT5 points (1 point = 1/10 pip).
+    # Use P80 to penalise marginal strategies with a conservative spread assumption.
+    # PIP[instrument] / 10.0 converts MT5 points to price units.
+    avg_spread = float(df["spread_points"].quantile(0.80)) * (PIP[instrument] / 10.0)
     df = df.sort_index()
 
     df = compute_regime_features(df)
@@ -2530,7 +2554,7 @@ def main():
     global GRANULARITY, IS_WEEKS, OOS_WEEKS, N_WINDOWS
     global SQN_MIN_TRADES_IS, SQN_MIN_TRADES, SQN_PROMOTE_THRESHOLD
     global TIMEOUT_BARS, MIN_TRADES_ELIGIBLE, MIN_TRADES_WATCHLIST
-    global ATR_PERIOD, MA_FAST, MA_SLOW, DEAD_ZONE_HOURS
+    global ATR_PERIOD, MA_FAST, MA_SLOW
     global CONTINUATION_GAPS, OUTPUT_DIR, ROSTER_FILE
     global PAIR_CONFIG
 
@@ -2547,7 +2571,7 @@ def main():
     ATR_PERIOD              = cfg["atr_period"]
     MA_FAST                 = cfg["ma_fast"]
     MA_SLOW                 = cfg["ma_slow"]
-    DEAD_ZONE_HOURS         = cfg["dead_zone_hours"]
+    # DEAD_ZONE_HOURS superseded by ADR-093 vectorized ET logic in detect_signals()
     CONTINUATION_GAPS       = cfg["continuation_gaps"]
     OUTPUT_DIR              = cfg["output_dir"]
     ROSTER_FILE             = cfg["roster_file"]
