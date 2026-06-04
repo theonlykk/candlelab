@@ -50,7 +50,6 @@ PARAM_WEIGHTS: dict[str, float] = {
 NEIGHBORHOOD_THRESHOLD = 1.0   # weighted distance <= 1.0 = valid neighbor
 MIN_NEIGHBORS          = 2   # ADR-088: reduced from 3 — single-pattern combos have constrained neighbor space
 SPIKE_TOLERANCE        = 1.0   # candidate SQN cannot exceed neighborhood by > 1.0
-NPR_ABS_FLOOR          = 0.20  # absolute minimum neighborhood quality score
 NQS_GLOBAL_FLOOR       = 0.30  # ADR-094: absolute global standard — no relative ranking
 
 # Stability uses P60 (discovery uses NQS_GLOBAL_FLOOR — ADR-094)
@@ -200,7 +199,6 @@ def fetch_universe(conn, granularity: str, instrument: str,
         WHERE granularity = %s
           AND instrument  = %s
           AND n_windows_promoted >= %s
-          AND oos_sqn100  > 0
         ORDER BY oos_sqn100 DESC
     """
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
