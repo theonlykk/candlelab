@@ -146,7 +146,7 @@ MIN_TRADES_ELIGIBLE = 3
 MIN_TRADES_WATCHLIST = 1
 MIN_SQN_ELIGIBLE = 1.0
 RELATIVE_SCORE_FRACTION = 0.80
-IS_CACHE_VERSION = "v3"  # ADR-093: ftmo_candles + D1 shift(1) + DST dead zone + spread P80
+IS_CACHE_VERSION = "v4"  # ADR-093 hotfix 2: IS-calibrated spread
 ATR_PERIOD = 14
 MA_FAST = 10  # was 5
 MA_SLOW = 50  # was 20
@@ -340,7 +340,7 @@ def _make_block_hash(
         "tp_mult": round(tp_mult, 6),
         "sl_mult": round(sl_mult, 6),
         "sl_mode": sl_mode,
-        "oos_cache_version": "v3",
+        "oos_cache_version": "v4",
     }
     raw = json.dumps(payload, sort_keys=True, default=str)
     return hashlib.sha256(raw.encode()).hexdigest()
@@ -1560,7 +1560,6 @@ def run_wfv(
     # Spread from ftmo_candles: spread_points is in MT5 points (1 point = 1/10 pip).
     # Use P80 to penalise marginal strategies with a conservative spread assumption.
     # PIP[instrument] / 10.0 converts MT5 points to price units.
-    avg_spread = float(df["spread_points"].quantile(0.80)) * (PIP[instrument] / 10.0)
     df = df.sort_index()
 
     df = compute_regime_features(df)
@@ -1602,6 +1601,10 @@ def run_wfv(
 
                 if len(is_df) < 1000 or len(oos_df) < 100:
                     continue
+
+                # Causal spread calculation — IS data only (ADR-093 hotfix 2, DeepSeek R1 audit)
+                # Placed after length check to avoid quantile on empty DataFrame
+                window_avg_spread = float(is_df["spread_points"].quantile(0.80)) * (PIP[instrument] / 10.0)
 
                 is_inds = compute_indicators(is_df, cfg=cfg)
                 oos_inds = compute_indicators(oos_df, cfg=cfg)
@@ -1718,7 +1721,7 @@ def run_wfv(
                     trades = sweep_simulation(
                         is_df, sig, anc,
                         combo["direction"], pip_size,
-                        is_inds["atr"], avg_spread,
+                        is_inds["atr"], window_avg_spread,
                         timeout_bars=timeout, sl_mode=sl_mode,
                         adx_arr=None, bbw_arr=None,
                         profile=profile_from_combo(combo),
@@ -1862,7 +1865,7 @@ def run_wfv(
                             combo["direction"],
                             pip_size,
                             oos_inds["atr"],
-                            avg_spread,
+                            window_avg_spread,
                             timeout_bars=timeout,
                             sl_mode=sl_mode,
                             adx_arr=None, bbw_arr=None,
