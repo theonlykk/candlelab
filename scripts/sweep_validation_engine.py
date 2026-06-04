@@ -893,7 +893,7 @@ def detect_signals(
     # Replaces static UTC frozenset which was incorrect in EST (winter).
     if isinstance(df.index, pd.DatetimeIndex):
         et_index = df.index.tz_convert("America/New_York")
-        dead_mask = et_index.hour.isin([17, 18, 19, 20]).to_numpy()
+        dead_mask = np.isin(et_index.hour, [17, 18, 19, 20])
     else:
         dead_mask = np.zeros(n, dtype=bool)
 
