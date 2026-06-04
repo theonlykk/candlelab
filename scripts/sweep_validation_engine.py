@@ -27,6 +27,7 @@ from regime_filter import (
     BBW_DEAD_ZONE,
 )
 
+from candlelab_core import RunningRSI, RunningEMA
 from candlelab_core.patterns import (
     engulfing as detect_engulfing,
     hammer_hanging_man as detect_hammer_hanging_man,
@@ -146,7 +147,7 @@ MIN_TRADES_ELIGIBLE = 3
 MIN_TRADES_WATCHLIST = 1
 MIN_SQN_ELIGIBLE = 1.0
 RELATIVE_SCORE_FRACTION = 0.80
-IS_CACHE_VERSION = "v5"  # ADR-095: ATR-scaled timeouts
+IS_CACHE_VERSION = "v6"  # ADR-096: spread physics + causal indicators
 ATR_PERIOD = 14
 MA_FAST = 10  # was 5
 MA_SLOW = 50  # was 20
@@ -340,7 +341,7 @@ def _make_block_hash(
         "tp_mult": round(tp_mult, 6),
         "sl_mult": round(sl_mult, 6),
         "sl_mode": sl_mode,
-        "oos_cache_version": "v5",
+        "oos_cache_version": "v6",
     }
     raw = json.dumps(payload, sort_keys=True, default=str)
     return hashlib.sha256(raw.encode()).hexdigest()
@@ -715,10 +716,20 @@ ORDER BY time ASC
     df["time"] = pd.to_datetime(df["time"], utc=True)
     df = df.set_index("time").sort_index()
 
-    df["bid_open"] = df["open"]
-    df["ask_open"] = df["open"]
-    df["bid_close"] = df["close"]
-    df["ask_close"] = df["close"]
+    # ADR-096A: reconstruct true bid/ask from spread_points
+    # spread_points is MT5 integer points (1 point = PIP/10)
+    # half_spread in price units = spread_points * (PIP[instrument] / 10.0) / 2
+    _half_sp = (
+        df["spread_points"]
+        .fillna(df["spread_points"].median())
+        .clip(lower=0)
+        * (PIP[instrument] / 10.0)
+        / 2.0
+    )
+    df["ask_open"]  = df["open"]  + _half_sp
+    df["bid_open"]  = df["open"]  - _half_sp
+    df["ask_close"] = df["close"] + _half_sp
+    df["bid_close"] = df["close"] - _half_sp
 
     # --- D1 MA_200 forward-fill merge ---
     try:
@@ -1018,12 +1029,16 @@ def compute_indicators(df: pd.DataFrame,
     return {"rsi": rsi, "sma_fast": sma_fast, "sma_slow": sma_slow, "atr": atr}
 
 
-def passes_rsi_envelope(
+def _passes_rsi_causal(
     rsi: np.ndarray,
     signal_idx: int,
     anchor_idx: int,
     direction: str,
 ) -> bool:
+    """
+    RSI envelope gate using causal (RunningRSI-derived) values. (ADR-096C)
+    Logic mirrors passes_rsi_envelope() but operates on pre-computed causal array.
+    """
     look_start = max(0, anchor_idx - 5)
     look_end = min(len(rsi) - 1, anchor_idx + 10)
     window_rsi = rsi[look_start : look_end + 1]
@@ -1040,7 +1055,7 @@ def passes_rsi_envelope(
     return phase1 and phase3
 
 
-def passes_ma_cross(
+def _passes_ma_causal(
     sma_fast: np.ndarray,
     sma_slow: np.ndarray,
     signal_idx: int,
@@ -1048,6 +1063,10 @@ def passes_ma_cross(
     direction: str,
     has_continuation: bool,
 ) -> bool:
+    """
+    MA cross gate using causal (RunningEMA-derived) values. (ADR-096C)
+    Logic mirrors passes_ma_cross() but operates on pre-computed causal array.
+    """
     start = anchor_idx if has_continuation else max(0, signal_idx - 5)
     end = signal_idx
     if end < start or end >= len(sma_fast):
@@ -1196,7 +1215,9 @@ def sweep_simulation(
             sl_dist = float(atr_i)
         else:
             sl_dist = max(5.0 * pip_size, float(atr_i))
-        spread_cost = avg_spread / sl_dist
+        # ADR-096A: spread cost retained as a conservative stop-hunt penalty
+        # (spread is already in entry/exit prices via bid/ask reconstruction)
+        spread_cost = avg_spread / sl_dist * 0.5
 
         if direction == "long":
             sl_price = entry - sl_dist * sl_mult
@@ -1389,20 +1410,20 @@ def _apply_indicator_filter(
                 filtered_anc[si] = 0
                 continue
             if combo["indicator"] == "rsi_envelope":
-                if not passes_rsi_envelope(
+                if not _passes_rsi_causal(
                     inds["rsi"], si, ai, combo["direction"]
                 ):
                     filtered_sig[si] = 0
                     filtered_anc[si] = 0
         else:
             if combo["indicator"] == "rsi_envelope":
-                if not passes_rsi_envelope(
+                if not _passes_rsi_causal(
                     inds["rsi"], si, ai, combo["direction"]
                 ):
                     filtered_sig[si] = 0
                     filtered_anc[si] = 0
             elif combo["indicator"] == "ma_cross":
-                if not passes_ma_cross(
+                if not _passes_ma_causal(
                     inds["sma_fast"],
                     inds["sma_slow"],
                     si,
@@ -1570,9 +1591,8 @@ def run_wfv(
     batch_id: str,
     cfg: dict | None = None,
 ) -> pd.DataFrame:
-    # Spread from ftmo_candles: spread_points is in MT5 points (1 point = 1/10 pip).
-    # Use P80 to penalise marginal strategies with a conservative spread assumption.
-    # PIP[instrument] / 10.0 converts MT5 points to price units.
+    # ADR-096A: spread is embedded in bid/ask prices via fetch_instrument_data().
+    # window_avg_spread is retained for the ATR-based stop distance guard only.
     df = df.sort_index()
 
     df = compute_regime_features(df)
@@ -1629,6 +1649,18 @@ def run_wfv(
                 atr_baseline = float(np.median(_is_atr_finite)) if len(_is_atr_finite) > 0 else 1.0
                 if atr_baseline <= 0:
                     atr_baseline = 1.0  # guard against zero/negative ATR
+
+                # ADR-096B: warm-start indicator accumulators from IS window closes
+                # Ensures OOS indicator values are computed causally — no future-data leakage
+                _is_closes = is_df["close"].to_numpy()
+                _rsi_acc = RunningRSI(period=RSI_PERIOD)
+                _ema_fast_acc = RunningEMA(period=MA_FAST)
+                _ema_slow_acc = RunningEMA(period=MA_SLOW)
+                for _c in _is_closes:
+                    _rsi_acc.update(_c)
+                    _ema_fast_acc.update(_c)
+                    _ema_slow_acc.update(_c)
+                # Accumulators are now at IS-window-end state — ready for OOS incremental updates
 
                 is_start_pos = (
                     df.index.get_loc(is_df.index[0]) if len(is_df) > 0 else 0
@@ -1828,6 +1860,21 @@ def run_wfv(
                     print(f"  [is_cache] window fully cached ({n_cached} hits, 0 writes)")
 
                 promoted = [r for r in is_rows if r["oos_eligible"]]
+
+                # ADR-096B: compute causal OOS indicators bar-by-bar using warm-started accumulators
+                _oos_closes = oos_df["close"].to_numpy()
+                _n_oos = len(_oos_closes)
+                _causal_rsi = np.full(_n_oos, np.nan)
+                _causal_ema_fast = np.full(_n_oos, np.nan)
+                _causal_ema_slow = np.full(_n_oos, np.nan)
+                for _bi, _c in enumerate(_oos_closes):
+                    _causal_rsi[_bi] = _rsi_acc.update(_c)
+                    _causal_ema_fast[_bi] = _ema_fast_acc.update(_c)
+                    _causal_ema_slow[_bi] = _ema_slow_acc.update(_c)
+                # ADR-096B: override precomputed (lookahead) OOS indicators with causal values
+                oos_inds["rsi"] = _causal_rsi
+                oos_inds["sma_fast"] = _causal_ema_fast
+                oos_inds["sma_slow"] = _causal_ema_slow
 
                 print(
                     f"  Window {window_idx + 1:02d}/{_n_win} | "
