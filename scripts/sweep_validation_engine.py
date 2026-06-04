@@ -146,7 +146,7 @@ MIN_TRADES_ELIGIBLE = 3
 MIN_TRADES_WATCHLIST = 1
 MIN_SQN_ELIGIBLE = 1.0
 RELATIVE_SCORE_FRACTION = 0.80
-IS_CACHE_VERSION = "v4"  # ADR-093 hotfix 2: IS-calibrated spread
+IS_CACHE_VERSION = "v5"  # ADR-095: ATR-scaled timeouts
 ATR_PERIOD = 14
 MA_FAST = 10  # was 5
 MA_SLOW = 50  # was 20
@@ -340,7 +340,7 @@ def _make_block_hash(
         "tp_mult": round(tp_mult, 6),
         "sl_mult": round(sl_mult, 6),
         "sl_mode": sl_mode,
-        "oos_cache_version": "v4",
+        "oos_cache_version": "v5",
     }
     raw = json.dumps(payload, sort_keys=True, default=str)
     return hashlib.sha256(raw.encode()).hexdigest()
@@ -1119,6 +1119,7 @@ def sweep_simulation(
     bbw_arr: np.ndarray | None = None,
     profile: str = "Hybrid",
     instrument: str = "",
+    atr_baseline: float = 1.0,
 ) -> list[dict]:
     n = len(df)
     high = df["high"].to_numpy()
@@ -1127,6 +1128,7 @@ def sweep_simulation(
     ask_open = df["ask_open"].to_numpy()
     bid_close = df["bid_close"].to_numpy()
     ask_close = df["ask_close"].to_numpy()
+    atr_array = atr  # ADR-095: numpy array scoped outside loop (caller-provided)
 
     if direction == "long":
         sig_val = 1
@@ -1203,7 +1205,18 @@ def sweep_simulation(
             sl_price = entry + sl_dist * sl_mult
             tp_price = entry - sl_dist * tp_mult
 
-        bars_remaining = max(0, (sig_idx + timeout_bars - fill_idx) - 1)
+        # ADR-095: ATR-scaled timeout — O(1) at entry
+        _atr_at_entry = atr_array[fill_idx] if np.isfinite(atr_array[fill_idx]) else atr_baseline
+        _atr_ratio = (_atr_at_entry / atr_baseline) if atr_baseline > 0 else 1.0
+        _atr_ratio = float(np.clip(_atr_ratio, 0.1, 10.0))  # prevent extreme scaling
+
+        scaled_timeout = int(np.clip(
+            int(timeout_bars / _atr_ratio),
+            int(timeout_bars * 0.25),   # floor: 25% of base (e.g. 20→5)
+            int(timeout_bars * 3.0),    # ceiling: 3x base (e.g. 20→60)
+        ))
+
+        bars_remaining = max(0, (sig_idx + scaled_timeout - fill_idx) - 1)
 
         r_multiple = float("nan")
         result = ""
@@ -1609,6 +1622,14 @@ def run_wfv(
                 is_inds = compute_indicators(is_df, cfg=cfg)
                 oos_inds = compute_indicators(oos_df, cfg=cfg)
 
+                # ADR-095: IS-calibrated ATR baseline for dynamic timeout scaling
+                # Median IS-window ATR — causal, mirrors Gate threshold calibration pattern
+                _is_atr = is_inds["atr"]
+                _is_atr_finite = _is_atr[np.isfinite(_is_atr)]
+                atr_baseline = float(np.median(_is_atr_finite)) if len(_is_atr_finite) > 0 else 1.0
+                if atr_baseline <= 0:
+                    atr_baseline = 1.0  # guard against zero/negative ATR
+
                 is_start_pos = (
                     df.index.get_loc(is_df.index[0]) if len(is_df) > 0 else 0
                 )
@@ -1726,6 +1747,7 @@ def run_wfv(
                         adx_arr=None, bbw_arr=None,
                         profile=profile_from_combo(combo),
                         instrument=instrument,
+                        atr_baseline=atr_baseline,
                     )
                     r_mults = [float(t["r_multiple"]) for t in trades]
                     n = len(r_mults)
@@ -1871,6 +1893,7 @@ def run_wfv(
                             adx_arr=None, bbw_arr=None,
                             profile=profile_from_combo(combo),
                             instrument=instrument,
+                            atr_baseline=atr_baseline,
                         )
                         oos_r = [float(t["r_multiple"]) for t in oos_trades]
                         _cache_store(block_hash, instrument, oos_start_ts, oos_end_ts,
