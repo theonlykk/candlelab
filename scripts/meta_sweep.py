@@ -51,10 +51,9 @@ NEIGHBORHOOD_THRESHOLD = 1.0   # weighted distance <= 1.0 = valid neighbor
 MIN_NEIGHBORS          = 2   # ADR-088: reduced from 3 — single-pattern combos have constrained neighbor space
 SPIKE_TOLERANCE        = 1.0   # candidate SQN cannot exceed neighborhood by > 1.0
 NPR_ABS_FLOOR          = 0.20  # absolute minimum neighborhood quality score
-NQS_ABS_FLOOR          = 0.0   # absolute minimum nqs
+NQS_GLOBAL_FLOOR       = 0.30  # ADR-094: absolute global standard — no relative ranking
 
-# Discovery uses P70, Stability uses P60
-DISCOVERY_PERCENTILE   = 70
+# Stability uses P60 (discovery uses NQS_GLOBAL_FLOOR — ADR-094)
 STABILITY_PERCENTILE   = 60
 
 # ---------------------------------------------------------------------------
@@ -105,6 +104,49 @@ def find_neighbors(candidate: dict, universe: list[dict]) -> list[dict]:
     ]
 
 
+def apply_sap(oos_mean_r: float, timeout_bars: int) -> float:
+    """
+    Slippage Asymmetry Penalty (ADR-094).
+    Discounts oos_mean_r for short-timeout combos which are more vulnerable
+    to stop-hunts and spread blowouts at session edges.
+    Penalty schedule (M30):
+        timeout_bars <= 20:  15% discount
+        timeout_bars <= 40:  10% discount
+        timeout_bars <= 60:   5% discount
+        timeout_bars >  60:   0% discount
+    Note: Full sl_mult-based SAP deferred to ADR-096 (combo space expansion).
+    """
+    if timeout_bars <= 20:
+        discount = 0.15
+    elif timeout_bars <= 40:
+        discount = 0.10
+    elif timeout_bars <= 60:
+        discount = 0.05
+    else:
+        discount = 0.0
+    return oos_mean_r * (1.0 - discount)
+
+
+def compute_nqs_with_cvsp(neighbor_mean_rs: list) -> float:
+    """
+    Neighborhood Quality Score with Cross-Validation Stability Penalty (ADR-094).
+
+    NQS_raw = mean of max(0, r) for r in neighbor_mean_rs
+    CVSP    = 1 + sqrt(variance of neighbor_mean_rs)
+    NQS     = NQS_raw / CVSP
+
+    A low-variance neighborhood (stable plateau) → minimal penalty.
+    A high-variance neighborhood (fragile spike) → heavy penalty.
+    Requires MIN_NEIGHBORS = 2 for variance to be defined.
+    """
+    if len(neighbor_mean_rs) < 2:
+        return 0.0
+    nqs_raw = float(np.mean([max(0.0, r) for r in neighbor_mean_rs]))
+    variance = float(np.var(neighbor_mean_rs, ddof=1))
+    cvsp = 1.0 + np.sqrt(variance)
+    return nqs_raw / cvsp
+
+
 def score_candidate(
     candidate: dict,
     universe: list[dict],
@@ -118,8 +160,11 @@ def score_candidate(
     if n < MIN_NEIGHBORS:
         return None
 
-    # Weighted NPR — average clipped mean_r of neighbors
-    nqs = sum(max(0.0, r["oos_mean_r"]) for r in neighbors) / n
+    neighbor_mean_rs = [
+        apply_sap(r["oos_mean_r"], r["timeout_bars"])
+        for r in neighbors
+    ]
+    nqs = compute_nqs_with_cvsp(neighbor_mean_rs)
 
     # SQN gap — spike filter
     neighbor_sqns = [r["oos_sqn100"] for r in neighbors]
@@ -270,14 +315,7 @@ def run_discovery(conn, granularity: str, cfg: dict) -> None:
                     )
             continue
 
-        # Per-instrument threshold — no cross-instrument contamination
-        nqs_vals = [s["neighborhood_quality_score"]
-                    for s in instrument_scores]
-        nqs_p70  = float(np.percentile(nqs_vals, DISCOVERY_PERCENTILE))
-        threshold = max(nqs_p70, NPR_ABS_FLOOR)
-
-        print(f"  {instrument}: NQS P{DISCOVERY_PERCENTILE}="
-              f"{nqs_p70:.4f} | threshold={threshold:.4f}")
+        print(f"  {instrument}: NQS_GLOBAL_FLOOR={NQS_GLOBAL_FLOOR:.2f}")
 
         n_green = n_red = n_spike = n_thin = 0
 
@@ -286,8 +324,8 @@ def run_discovery(conn, granularity: str, cfg: dict) -> None:
             nqs       = s["neighborhood_quality_score"]
             sqn_gap   = s["sqn_gap"]
 
-            if (nqs >= threshold
-                    and nqs > NQS_ABS_FLOOR
+            if (nqs >= NQS_GLOBAL_FLOOR
+                    and nqs > 0
                     and sqn_gap <= SPIKE_TOLERANCE):
                 status = "GREEN"
                 n_green += 1
