@@ -245,7 +245,7 @@ def write_meta_status(
             cur.execute("SAVEPOINT meta_write")
             cur.execute(sql, (
                 scores.get("neighbor_count"),
-                scores.get("neighborhood_quality_score"),
+                float(scores.get("neighborhood_quality_score")),
                 scores.get("sqn_gap"),
                 status,
                 granularity, instrument,
