@@ -1,5 +1,5 @@
-# ADR-096C: bumped to v1.3.0 2026-06-04
-candlelab-core @ git+https://github.com/theonlykk/candlelab-core.git@v1.3.0
+# ADR-098: bumped to v1.4.0 2026-06-05
+candlelab-core @ git+https://github.com/theonlykk/candlelab-core.git@v1.4.0
 flask>=3.0.0
 gunicorn>=21.2.0
 pandas>=2.1.0
