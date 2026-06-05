@@ -39,7 +39,7 @@ PARAM_WEIGHTS: dict[str, float] = {
     "combo_type":    10.0,  # 1R vs 2R = different universe
     "continuation":   5.0,  # pattern change = structural shift
     "anchor":         1.0,  # minor topology tweak = valid neighbor
-    "timeout_bars":   1.0,  # minor parameter tweak = valid neighbor
+    "timeout_bars":   5.0,  # holding period is structurally distinct — not a minor tweak
     # zero-weight — part of identity but excluded from distance
     "anchor2":        0.0,
     "continuation2":  0.0,
@@ -194,6 +194,7 @@ def fetch_universe(conn, granularity: str, instrument: str,
             anchor, anchor2, continuation, continuation2,
             gap, indicator, direction, combo_type, timeout_bars,
             oos_sqn100, oos_mean_r, n_windows_promoted,
+            promoted_window_indices,
             neighborhood_quality_score, sqn_gap, meta_status
         FROM sweep_leaderboard
         WHERE granularity = %s
@@ -302,6 +303,25 @@ def run_discovery(conn, granularity: str, cfg: dict) -> None:
     for instrument in sorted(instruments):
         universe = fetch_universe(conn, granularity, instrument,
                                   min_windows)
+        # Pre-compute global recency threshold ONCE across all candidates.
+        # Must use the global max window index — never per-candidate max.
+        # A candidate is recent if promoted in any of the last 5 windows
+        # relative to the most recent window in the entire sweep.
+        # WARNING: never compute max_window from per-candidate history —
+        # that gives every candidate a local threshold of -2 or lower and
+        # makes the recency gate a no-op. (Gemini ruling ADR-101.)
+        all_windows: list[int] = []
+        for _cand in universe:
+            raw = _cand.get("promoted_window_indices")
+            if isinstance(raw, str):
+                import json as _json
+                all_windows.extend(int(w) for w in _json.loads(raw))
+            elif isinstance(raw, list):
+                all_windows.extend(int(w) for w in raw)
+        global_max_window = max(all_windows) if all_windows else 0
+        global_recency_threshold = global_max_window - 4
+        # e.g. if max window is 27, threshold is 23 — candidate must
+        # appear in at least one of windows 23, 24, 25, 26, or 27.
         if not universe:
             continue
 
@@ -331,17 +351,43 @@ def run_discovery(conn, granularity: str, cfg: dict) -> None:
         print(f"  {instrument}: NQS_GLOBAL_FLOOR={NQS_GLOBAL_FLOOR:.2f}")
 
         n_green = n_red = n_spike = n_thin = 0
+        n_stale = 0
+        n_weak  = 0
 
         for s in instrument_scores:
             candidate = s["candidate"]
             nqs       = s["neighborhood_quality_score"]
             sqn_gap   = s["sqn_gap"]
 
+            # Parse promoted_window_indices for recency gate.
+            # global_recency_threshold pre-computed above — never
+            # use per-candidate max (Gemini ruling ADR-101 fatal leak).
+            raw_pwi = candidate.get("promoted_window_indices")
+            if isinstance(raw_pwi, str):
+                import json as _json
+                promoted_windows = _json.loads(raw_pwi)
+            elif isinstance(raw_pwi, list):
+                promoted_windows = raw_pwi
+            else:
+                promoted_windows = []
+
+            is_recent = any(
+                w >= global_recency_threshold for w in promoted_windows
+            )
+
             if (nqs >= NQS_GLOBAL_FLOOR
                     and nqs > 0
-                    and sqn_gap <= SPIKE_TOLERANCE):
+                    and sqn_gap <= SPIKE_TOLERANCE
+                    and candidate["oos_sqn100"] >= 0.8
+                    and is_recent):
                 status = "GREEN"
                 n_green += 1
+            elif not is_recent:
+                status = "RED_STALE"
+                n_stale += 1
+            elif candidate["oos_sqn100"] < 0.8:
+                status = "RED_WEAK_SQN"
+                n_weak += 1
             elif sqn_gap > SPIKE_TOLERANCE:
                 status = "RED_SPIKE"
                 n_spike += 1
@@ -370,7 +416,8 @@ def run_discovery(conn, granularity: str, cfg: dict) -> None:
 
         conn.commit()
         print(f"  {instrument}: GREEN={n_green} RED={n_red} "
-              f"RED_SPIKE={n_spike} RED_THIN={n_thin}")
+              f"RED_SPIKE={n_spike} RED_THIN={n_thin} "
+              f"RED_STALE={n_stale} RED_WEAK_SQN={n_weak}")
 
 
 # ---------------------------------------------------------------------------

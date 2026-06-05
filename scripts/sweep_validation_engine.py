@@ -147,7 +147,7 @@ MIN_TRADES_ELIGIBLE = 3
 MIN_TRADES_WATCHLIST = 1
 MIN_SQN_ELIGIBLE = 1.0
 RELATIVE_SCORE_FRACTION = 0.80
-IS_CACHE_VERSION = "v7"
+IS_CACHE_VERSION = "v8"
 ATR_PERIOD = 14
 MA_FAST = 10  # was 5
 MA_SLOW = 50  # was 20
@@ -2457,14 +2457,24 @@ def _write_leaderboard(
             ) if _std > 0 else 0.0
         else:
             sqn = 0.0
+        # Collect all window indices in which this combo was promoted.
+        # Preserved as a sorted list for recency gate in meta_sweep.
+        # Guard on column existence — defensive against future schema changes.
+        if "window_idx" in g.columns:
+            promoted_windows = sorted(
+                int(w) for w in g["window_idx"].dropna().unique()
+            )
+        else:
+            promoted_windows = []
         return pd.Series({
-            "oos_sqn100":         sqn,
-            "oos_mean_r":         oos_mean,
-            "oos_n_trades":       nt,
-            "n_windows_promoted": int(len(g)),
+            "oos_sqn100":              sqn,
+            "oos_mean_r":              oos_mean,
+            "oos_n_trades":            nt,
+            "n_windows_promoted":      int(len(g)),
             "mdd":    float(g["mdd"].mean()) if "mdd" in g.columns else 0.0,
             "sharpe": float(g["sharpe"].mean()) if "sharpe" in g.columns else 0.0,
-            "oos_r_list": pooled_r,
+            "oos_r_list":              pooled_r,
+            "promoted_window_indices": promoted_windows,
         })
 
     existing_combo_cols = [c for c in combo_cols if c in wfv_df.columns]
@@ -2482,6 +2492,7 @@ def _write_leaderboard(
             timeout_bars,
             oos_sqn100, oos_mean_r, oos_n_trades,
             n_windows_promoted, mdd, sharpe, oos_r_list,
+            promoted_window_indices,
             sweep_run_id
         ) VALUES (
             %s, %s,
@@ -2490,6 +2501,7 @@ def _write_leaderboard(
             %s,
             %s, %s, %s,
             %s, %s, %s, %s,
+            %s,
             %s
         )
         ON CONFLICT (
@@ -2498,15 +2510,16 @@ def _write_leaderboard(
             gap, indicator, direction, combo_type,
             timeout_bars
         ) DO UPDATE SET
-            oos_sqn100         = EXCLUDED.oos_sqn100,
-            oos_mean_r         = EXCLUDED.oos_mean_r,
-            oos_n_trades       = EXCLUDED.oos_n_trades,
-            n_windows_promoted = EXCLUDED.n_windows_promoted,
-            mdd                = EXCLUDED.mdd,
-            sharpe             = EXCLUDED.sharpe,
-            oos_r_list         = EXCLUDED.oos_r_list,
-            sweep_run_id       = EXCLUDED.sweep_run_id,
-            updated_at         = NOW()
+            oos_sqn100              = EXCLUDED.oos_sqn100,
+            oos_mean_r              = EXCLUDED.oos_mean_r,
+            oos_n_trades            = EXCLUDED.oos_n_trades,
+            n_windows_promoted      = EXCLUDED.n_windows_promoted,
+            mdd                     = EXCLUDED.mdd,
+            sharpe                  = EXCLUDED.sharpe,
+            oos_r_list              = EXCLUDED.oos_r_list,
+            promoted_window_indices = EXCLUDED.promoted_window_indices,
+            sweep_run_id            = EXCLUDED.sweep_run_id,
+            updated_at              = NOW()
     """
 
     def _safe_float(v):
@@ -2539,6 +2552,12 @@ def _write_leaderboard(
                     [float(r) for r in r_list if r == r]
                 ) if r_list else json.dumps([])
 
+                # Serialize promoted_window_indices as JSONB
+                raw_pwi = row.get("promoted_window_indices", [])
+                pwi_json = json.dumps(
+                    [int(w) for w in raw_pwi] if raw_pwi else []
+                )
+
                 cur.execute(sql, (
                     (cfg["granularity"] if cfg is not None else GRANULARITY), instrument,
                     _safe_str(row.get("anchor")),
@@ -2557,6 +2576,7 @@ def _write_leaderboard(
                     _safe_float(row.get("mdd")),
                     _safe_float(row.get("sharpe")),
                     r_list_json,
+                    pwi_json,
                     run_id,
                 ))
                 cur.execute("RELEASE SAVEPOINT row_write")
