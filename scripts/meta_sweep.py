@@ -272,6 +272,21 @@ def run_discovery(conn, granularity: str, cfg: dict) -> None:
     Score all eligible candidates per instrument.
     Assign meta_status = GREEN (promoted) or RED (rejected/spike/thin).
     """
+    # ADR-097B: wipe stale meta_status before scoring.
+    # Ensures no results from a previous meta_sweep run (with different
+    # parameters) contaminate the current leaderboard.
+    with conn.cursor() as cur:
+        cur.execute("""
+            UPDATE sweep_leaderboard
+            SET meta_status                = NULL,
+                neighborhood_quality_score = NULL,
+                neighbor_count             = NULL,
+                sqn_gap                    = NULL
+            WHERE granularity = %s
+        """, (granularity,))
+    conn.commit()
+    print(f"  [meta] wiped stale meta_status for {granularity}")
+
     min_windows = cfg.get("min_windows_promoted", 5)
 
     # Fetch all instruments in this granularity

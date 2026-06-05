@@ -1346,6 +1346,11 @@ def sqn100(r_multiples: list[float], n_min: int = SQN_MIN_TRADES) -> float:
     std_r = np.std(r, ddof=1)
     if std_r == 0.0 or not np.isfinite(std_r):
         return 0.0
+    # ADR-097A: variance floor prevents degenerate SQN from near-zero sigma.
+    # Trades with homogeneous R-multiples (std_r < floor) are not statistically
+    # meaningful — clamp to floor rather than producing hallucinated SQN values.
+    STD_FLOOR = 0.05
+    std_r = max(std_r, STD_FLOOR)
     return round((mean_r / std_r) * np.sqrt(min(n, 100)), 4)
 
 
