@@ -147,7 +147,7 @@ MIN_TRADES_ELIGIBLE = 3
 MIN_TRADES_WATCHLIST = 1
 MIN_SQN_ELIGIBLE = 1.0
 RELATIVE_SCORE_FRACTION = 0.80
-IS_CACHE_VERSION = "v6"  # ADR-096: spread physics + causal indicators
+IS_CACHE_VERSION = "v7"
 ATR_PERIOD = 14
 MA_FAST = 10  # was 5
 MA_SLOW = 50  # was 20
@@ -650,7 +650,10 @@ def precompute_currency_matrix(conn, cfg: dict) -> dict:
     P = P.sort_index()
 
     P = P.ffill()
-    P = P.fillna(0.0)
+    # fillna(0.0) removed — zero prices produce log(0) = -inf which corrupts
+    # the currency strength matrix. Leading NaN prices remain NaN; the return
+    # calculation below converts them to 0.0 log-return, which is correct
+    # (no return for bars with missing price history).
 
     R = np.log(P / P.shift(1)).fillna(0.0)
 
@@ -1345,6 +1348,12 @@ def sqn100(r_multiples: list[float], n_min: int = SQN_MIN_TRADES) -> float:
     mean_r = np.mean(r)
     std_r = np.std(r, ddof=1)
     if std_r == 0.0 or not np.isfinite(std_r):
+        return 0.0
+    if std_r < 1e-8:
+        # Float-precision guard: near-identical R-multiples produce microscopic
+        # but non-zero std_r that would pass the check above, get floored to
+        # STD_FLOOR, and produce hallucinated SQN values (e.g. SQN 3436).
+        # 1e-8 is below any plausible real R-multiple variance.
         return 0.0
     # ADR-097A: variance floor prevents degenerate SQN from near-zero sigma.
     # Trades with homogeneous R-multiples (std_r < floor) are not statistically
@@ -2060,8 +2069,13 @@ def compute_window_thresholds(
         "dist_ma_p70":   None,
     }
     try:
-        adx_vals  = np.array(is_inds.get("adx", []), dtype=float)
-        bbw_vals  = np.array(is_inds.get("bbw", []), dtype=float)
+        adx_vals  = np.array(is_inds.get("adx", []), dtype=float)[200:]
+        bbw_vals  = np.array(is_inds.get("bbw", []), dtype=float)[200:]
+        # Clip first 200 bars to remove Wilder EWM warmup bias. Both ADX and
+        # BBW use EWM smoothing without a warmup period, causing inflated values
+        # in early bars. Clipping here (not upstream) keeps raw is_inds intact
+        # for debugging and other consumers. If IS window has fewer than ~250
+        # bars, len(adx_clean) < 20 triggers SAFE fallback — correct behaviour.
         adx_clean = adx_vals[np.isfinite(adx_vals)]
         bbw_clean = bbw_vals[np.isfinite(bbw_vals)]
 
