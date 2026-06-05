@@ -166,9 +166,26 @@ def score_candidate(
     nqs = compute_nqs_with_cvsp(neighbor_mean_rs)
 
     # SQN gap — spike filter
-    neighbor_sqns = [r["oos_sqn100"] for r in neighbors]
-    neighbor_median_sqn = float(median(neighbor_sqns))
-    sqn_gap = float(candidate["oos_sqn100"]) - neighbor_median_sqn
+    # Guard: filter None/NaN from neighbor SQN list before median.
+    # NULL oos_sqn100 from DB becomes None via psycopg2; NaN from
+    # degenerate combos must also be excluded. If all neighbors are
+    # None/NaN, fall back to 0.0 to avoid StatisticsError crash.
+    neighbor_sqns = [
+        r["oos_sqn100"] for r in neighbors
+        if r["oos_sqn100"] is not None
+        and r["oos_sqn100"] == r["oos_sqn100"]  # NaN != NaN
+    ]
+    if not neighbor_sqns:
+        neighbor_median_sqn = 0.0
+    else:
+        neighbor_median_sqn = float(median(neighbor_sqns))
+
+    # Guard: candidate oos_sqn100 may also be None/NaN from DB.
+    raw_cand_sqn = candidate.get("oos_sqn100")
+    if raw_cand_sqn is None or raw_cand_sqn != raw_cand_sqn:
+        sqn_gap = float("nan")
+    else:
+        sqn_gap = float(raw_cand_sqn) - neighbor_median_sqn
 
     return {
         "neighbor_count":             n,
@@ -268,7 +285,8 @@ def write_meta_status(
 # Discovery mode
 # ---------------------------------------------------------------------------
 
-def run_discovery(conn, granularity: str, cfg: dict) -> None:
+def run_discovery(conn, granularity: str, cfg: dict,
+                  instrument_filter: str | None = None) -> None:
     """
     Score all eligible candidates per instrument.
     Assign meta_status = GREEN (promoted) or RED (rejected/spike/thin).
@@ -298,6 +316,16 @@ def run_discovery(conn, granularity: str, cfg: dict) -> None:
         )
         instruments = [r[0] for r in cur.fetchall()]
 
+    # Single-instrument filter for dry-run validation (--instrument flag).
+    if instrument_filter is not None:
+        if instrument_filter not in instruments:
+            print(f"  [meta] WARNING: {instrument_filter} not found in "
+                  f"leaderboard for {granularity}. Available: "
+                  f"{sorted(instruments)}")
+            return
+        instruments = [instrument_filter]
+        print(f"  [meta] DRY-RUN: single instrument mode → {instrument_filter}")
+
     print(f"\nDiscovery — {granularity} ({len(instruments)} instruments)")
 
     for instrument in sorted(instruments):
@@ -318,10 +346,24 @@ def run_discovery(conn, granularity: str, cfg: dict) -> None:
                 all_windows.extend(int(w) for w in _json.loads(raw))
             elif isinstance(raw, list):
                 all_windows.extend(int(w) for w in raw)
-        global_max_window = max(all_windows) if all_windows else 0
-        global_recency_threshold = global_max_window - 4
-        # e.g. if max window is 27, threshold is 23 — candidate must
-        # appear in at least one of windows 23, 24, 25, 26, or 27.
+        if not all_windows:
+            # No candidate has promoted_window_indices data.
+            # This means either: first run (no sweep data yet), or
+            # _write_leaderboard failed to populate the column.
+            # Set threshold to +inf so ALL candidates fail recency
+            # and are labeled RED_STALE. Never default to -4 which
+            # would disable the gate entirely. (DeepSeek SF-2 ruling.)
+            print(
+                "  [meta] WARNING: no promoted_window_indices data found "
+                "across entire universe. Recency gate will reject all "
+                "candidates. Check _write_leaderboard window_idx column."
+            )
+            global_recency_threshold = float("inf")
+        else:
+            global_max_window = max(all_windows)
+            global_recency_threshold = global_max_window - 4
+            # e.g. if max window is 26 (0-indexed), threshold is 22 —
+            # candidate must appear in at least one of windows 22–26.
         if not universe:
             continue
 
@@ -375,20 +417,30 @@ def run_discovery(conn, granularity: str, cfg: dict) -> None:
                 w >= global_recency_threshold for w in promoted_windows
             )
 
+            # Guard: resolve oos_sqn100 safely — None or NaN from DB
+            # must not reach the >= comparison (raises TypeError).
+            cand_sqn = candidate.get("oos_sqn100")
+            if cand_sqn is None or cand_sqn != cand_sqn:
+                cand_sqn = 0.0  # treat missing SQN as zero — fails gate
+
+            # Guard: sqn_gap may be NaN if candidate or neighbor SQN
+            # was missing. Treat NaN gap as spike (unsafe candidate).
+            safe_sqn_gap = sqn_gap if sqn_gap == sqn_gap else float("inf")
+
             if (nqs >= NQS_GLOBAL_FLOOR
                     and nqs > 0
-                    and sqn_gap <= SPIKE_TOLERANCE
-                    and candidate["oos_sqn100"] >= 0.8
+                    and safe_sqn_gap <= SPIKE_TOLERANCE
+                    and cand_sqn >= 0.8
                     and is_recent):
                 status = "GREEN"
                 n_green += 1
             elif not is_recent:
                 status = "RED_STALE"
                 n_stale += 1
-            elif candidate["oos_sqn100"] < 0.8:
+            elif cand_sqn < 0.8:
                 status = "RED_WEAK_SQN"
                 n_weak += 1
-            elif sqn_gap > SPIKE_TOLERANCE:
+            elif safe_sqn_gap > SPIKE_TOLERANCE:
                 status = "RED_SPIKE"
                 n_spike += 1
             else:
@@ -453,6 +505,14 @@ def parse_args():
         "--tf", choices=["M30", "H1"],
         default="M30", help="Timeframe (default: M30)"
     )
+    parser.add_argument(
+        "--instrument", default=None,
+        help=(
+            "Optional: run discovery on a single instrument only "
+            "(e.g. --instrument GBP_JPY). Useful for dry-run validation "
+            "before running the full universe. Default: all instruments."
+        )
+    )
     args, _ = parser.parse_known_args()
     return args
 
@@ -463,7 +523,8 @@ if __name__ == "__main__":
 
     with psycopg2.connect(DB_URL) as conn:
         if args.mode == "discovery":
-            run_discovery(conn, args.tf, cfg)
+            run_discovery(conn, args.tf, cfg,
+                          instrument_filter=getattr(args, "instrument", None))
         else:
             run_stability(conn, args.tf, cfg)
 
