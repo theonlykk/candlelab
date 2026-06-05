@@ -2465,6 +2465,14 @@ def _write_leaderboard(
                 int(w) for w in g["window_idx"].dropna().unique()
             )
         else:
+            import warnings
+            warnings.warn(
+                "[_lb_agg_db] 'window_idx' column missing from wfv_df — "
+                "promoted_window_indices will be empty. All candidates will "
+                "fail the recency gate. Check upstream wfv_df construction.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
             promoted_windows = []
         return pd.Series({
             "oos_sqn100":              sqn,
