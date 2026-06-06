@@ -60,7 +60,7 @@ def _fetch_oanda_candles(oanda_instrument: str, from_ts, granularity: str = "M5"
     sql = """
         SELECT time, open, high, low, close, bid_open, bid_close,
                ask_open, ask_close, volume
-        FROM oanda_candles
+        FROM oanda_candles_x
         WHERE instrument = %s AND granularity = %s AND time >= %s
           AND (%s IS NULL OR time <= %s)
         ORDER BY time ASC

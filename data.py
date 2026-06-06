@@ -279,7 +279,7 @@ def insert_oanda_candles(instrument: str, df: pd.DataFrame, granularity: str = "
             )
         )
     insert_sql = """
-INSERT INTO oanda_candles
+INSERT INTO oanda_candles_x
     (instrument, granularity, time, open, high, low, close,
      bid_open, bid_close, ask_open, ask_close, volume)
 VALUES %s

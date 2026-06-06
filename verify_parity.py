@@ -71,7 +71,7 @@ def _fetch_source_a(conn, cutoff_iso: str) -> pd.DataFrame:
 def _fetch_source_b(conn, cutoff_utc: datetime) -> pd.DataFrame:
     sql = """
         SELECT time, open, high, low, close
-        FROM oanda_candles
+        FROM oanda_candles_x
         WHERE instrument = %s AND time >= %s
         ORDER BY time ASC
     """

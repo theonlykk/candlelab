@@ -1298,7 +1298,7 @@ def _fetch_local_cad_usd_map(from_ts, to_ts) -> dict:
             cur.execute(
                 """
                 SELECT time, close
-                FROM oanda_candles
+                FROM oanda_candles_x
                 WHERE instrument = 'USD_CAD'
                 AND granularity = 'M5'
                 AND time >= %s
