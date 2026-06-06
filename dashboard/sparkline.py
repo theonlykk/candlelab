@@ -34,39 +34,11 @@ def build_sparkline(
     else:
         promoted = set()
 
-    max_window        = max(promoted) if promoted else n_windows - 1
-    recency_threshold = max_window - (RECENCY_COUNT - 1)
-
-    cells             = []
-    recency_start_idx = n_windows - RECENCY_COUNT
-    recency_x         = recency_start_idx * (CELL_W + GAP)
-    recency_bg_w      = RECENCY_COUNT * (CELL_W + GAP) - GAP
-    cells.append(
-        f'<rect x="{recency_x}" y="0" '
-        f'width="{recency_bg_w + 2}" height="{CELL_H}" '
-        f'rx="2" ry="2" fill="{COLOR_RECENCY_BG}" />'
-    )
-
+    recency_start = n_windows - RECENCY_COUNT
+    chars = []
     for i in range(n_windows):
-        x           = i * (CELL_W + GAP)
-        is_promoted = i in promoted
-        is_recent   = i >= recency_threshold
-        if is_promoted and is_recent:
-            fill = COLOR_PROMOTED_RECENT
-        elif is_promoted:
-            fill = COLOR_PROMOTED
+        if i in promoted:
+            chars.append("▓" if i < recency_start else "█")
         else:
-            fill = COLOR_EMPTY
-        cells.append(
-            f'<rect x="{x}" y="0" width="{CELL_W}" '
-            f'height="{CELL_H}" rx="{RADIUS}" ry="{RADIUS}" '
-            f'fill="{fill}" />'
-        )
-
-    svg_body = "\n  ".join(cells)
-    return (
-        f'<svg xmlns="http://www.w3.org/2000/svg" '
-        f'width="{TOTAL_W}" height="{TOTAL_H}" '
-        f'viewBox="0 0 {TOTAL_W} {TOTAL_H}">\n  '
-        f'{svg_body}\n</svg>'
-    )
+            chars.append("░" if i < recency_start else "▒")
+    return "".join(chars)

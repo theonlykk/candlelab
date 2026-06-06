@@ -310,7 +310,6 @@ def get_layout() -> html.Div:
                         id="leaderboard-table",
                         columns=LEADERBOARD_COLUMNS,
                         row_selectable="single",
-                        dangerously_allow_html=True,
                         sort_action="native",
                         style_table={"overflowX": "auto"},
                         style_header={
