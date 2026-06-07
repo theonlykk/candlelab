@@ -257,3 +257,13 @@ def register(app) -> None:
             height=320,
         )
         return fig
+
+    @app.callback(
+        Output("help-panel", "style"),
+        Input("help-toggle", "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def toggle_help(n_clicks):
+        if n_clicks % 2 == 1:
+            return {"display": "block"}
+        return {"display": "none"}
