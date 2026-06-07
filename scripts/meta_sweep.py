@@ -306,7 +306,7 @@ def run_discovery(conn, granularity: str, cfg: dict,
     conn.commit()
     print(f"  [meta] wiped stale meta_status for {granularity}")
 
-    min_windows = cfg.get("min_windows_promoted", 5)
+    min_windows = cfg.get("min_windows_promoted", 3)
 
     # Fetch all instruments in this granularity
     with conn.cursor() as cur:
@@ -331,6 +331,8 @@ def run_discovery(conn, granularity: str, cfg: dict,
     for instrument in sorted(instruments):
         universe = fetch_universe(conn, granularity, instrument,
                                   min_windows)
+        if not universe:
+            continue
         # Pre-compute global recency threshold ONCE across all candidates.
         # Must use the global max window index — never per-candidate max.
         # A candidate is recent if promoted in any of the last 5 windows
@@ -364,8 +366,6 @@ def run_discovery(conn, granularity: str, cfg: dict,
             global_recency_threshold = global_max_window - 4
             # e.g. if max window is 26 (0-indexed), threshold is 22 —
             # candidate must appear in at least one of windows 22–26.
-        if not universe:
-            continue
 
         instrument_scores = []
         for candidate in universe:
@@ -388,6 +388,7 @@ def run_discovery(conn, granularity: str, cfg: dict,
                          "sqn_gap": 0.0},
                         "RED_THIN",
                     )
+            conn.commit()
             continue
 
         print(f"  {instrument}: NQS_GLOBAL_FLOOR={NQS_GLOBAL_FLOOR:.2f}")
