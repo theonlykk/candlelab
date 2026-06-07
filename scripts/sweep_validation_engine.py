@@ -78,6 +78,7 @@ TIMEFRAME_CONFIGS = {
         "oos_weeks":             4,
         "n_windows":             27,
         "min_windows_promoted":  3,
+        "recency_lookback_windows": 5,    # ADR-101/105: M30 recency = last 5 windows (~20 weeks)
         "sqn_min_trades_is":     5,
         "sqn_min_trades":        10,
         "sqn_promote_threshold": 1.2,
@@ -95,15 +96,16 @@ TIMEFRAME_CONFIGS = {
     },
     "H1": {
         "granularity":           "H1",
-        "is_weeks":              16,
-        "oos_weeks":             4,
+        "is_weeks":              24,   # ADR-105: bar-count equivalent to M30 12wk IS (~2016 bars)
+        "oos_weeks":             8,    # ADR-105: bar-count equivalent to M30 4wk OOS (~672 bars)
         "n_windows":             27,
         "min_windows_promoted":  3,
-        "sqn_min_trades_is":     3,
-        "sqn_min_trades":        8,
+        "recency_lookback_windows": 3,    # ADR-105: H1 recency = last 3 windows (~24 weeks)
+        "sqn_min_trades_is":     5,
+        "sqn_min_trades":        20,   # ADR-105: raised from 8 — minimum for meaningful SQN
         "sqn_promote_threshold": 1.2,
         "timeout_bars_default":  20,
-        "min_trades_eligible":   2,
+        "min_trades_eligible":   3,
         "min_trades_watchlist":  1,
         "atr_period":            14,
         "ma_fast":               10,
@@ -147,7 +149,7 @@ MIN_TRADES_ELIGIBLE = 3
 MIN_TRADES_WATCHLIST = 1
 MIN_SQN_ELIGIBLE = 1.0
 RELATIVE_SCORE_FRACTION = 0.80
-IS_CACHE_VERSION = "v8"
+IS_CACHE_VERSION = "v9"
 ATR_PERIOD = 14
 MA_FAST = 10  # was 5
 MA_SLOW = 50  # was 20
@@ -1351,15 +1353,12 @@ def sqn100(r_multiples: list[float], n_min: int = SQN_MIN_TRADES) -> float:
         return 0.0
     if std_r < 1e-8:
         # Float-precision guard: near-identical R-multiples produce microscopic
-        # but non-zero std_r that would pass the check above, get floored to
-        # STD_FLOOR, and produce hallucinated SQN values (e.g. SQN 3436).
-        # 1e-8 is below any plausible real R-multiple variance.
+        # but non-zero std_r that would pass the check above and produce
+        # hallucinated SQN values. 1e-8 is below any plausible real variance.
         return 0.0
-    # ADR-097A: variance floor prevents degenerate SQN from near-zero sigma.
-    # Trades with homogeneous R-multiples (std_r < floor) are not statistically
-    # meaningful — clamp to floor rather than producing hallucinated SQN values.
-    STD_FLOOR = 0.05
-    std_r = max(std_r, STD_FLOOR)
+    # ADR-105: STD_FLOOR removed. It artificially suppressed SQN for strategies
+    # with consistent R-multiples (low variance = genuine edge, not a bug).
+    # The 1e-8 guard above catches true degeneracy. No floor needed.
     return round((mean_r / std_r) * np.sqrt(min(n, 100)), 4)
 
 

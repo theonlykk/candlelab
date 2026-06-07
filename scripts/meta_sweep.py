@@ -39,7 +39,10 @@ PARAM_WEIGHTS: dict[str, float] = {
     "combo_type":    10.0,  # 1R vs 2R = different universe
     "continuation":   5.0,  # pattern change = structural shift
     "anchor":         1.0,  # minor topology tweak = valid neighbor
-    "timeout_bars":   5.0,  # holding period is structurally distinct — not a minor tweak
+    "timeout_bars":   0.5,  # ADR-105: lowered from 5.0 — different timeouts are neighbours;
+                            # weight 0.5 allows cross-timeout NQS while respecting holding
+                            # period distinction. Weight 5.0 destroyed neighbourhoods in
+                            # sparse V8 universe.
     # zero-weight — part of identity but excluded from distance
     "anchor2":        0.0,
     "continuation2":  0.0,
@@ -363,9 +366,13 @@ def run_discovery(conn, granularity: str, cfg: dict,
             global_recency_threshold = float("inf")
         else:
             global_max_window = max(all_windows)
-            global_recency_threshold = global_max_window - 4
-            # e.g. if max window is 26 (0-indexed), threshold is 22 —
-            # candidate must appear in at least one of windows 22–26.
+            # Recency lookback adapts to timeframe (Gemini ADR-105 ruling):
+            # H1 uses last 3 windows (~24 weeks) to match M30's ~20-week
+            # recency window. M30 uses last 5 windows (~20 weeks).
+            _recency_lookback = cfg.get("recency_lookback_windows", 5)
+            global_recency_threshold = global_max_window - (_recency_lookback - 1)
+            # e.g. H1: max=26, lookback=3 → threshold=24 (windows 24,25,26)
+            # e.g. M30: max=26, lookback=5 → threshold=22 (windows 22-26)
 
         instrument_scores = []
         for candidate in universe:
