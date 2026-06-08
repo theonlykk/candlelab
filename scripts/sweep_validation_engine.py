@@ -2321,7 +2321,7 @@ def compute_shadow_status(wfv_df: pd.DataFrame, instrument: str,
     grouped = wfv_df.groupby(
         combo_cols, sort=False, dropna=False
     ).apply(_combo_agg).reset_index()
-    _sqn_min = cfg["sqn_min_trades"] if cfg is not None else SQN_MIN_TRADES
+    _sqn_min = cfg.get("sqn_min_trades", SQN_MIN_TRADES) if cfg is not None else SQN_MIN_TRADES
     eligible_combos = grouped[grouped["oos_n_trades"] >= _sqn_min]
     if len(eligible_combos) == 0:
         top_combo_str = ""
@@ -2408,7 +2408,7 @@ def write_leaderboard_csv(wfv_df: pd.DataFrame, instrument: str,
                     (df["oos_mean_r"] > 0)
                     & (df["mdd"] < 0.05)
                     & (df["sharpe"] > 1.0)
-                    & (df["oos_n_trades"] >= 10)
+                    & (df["oos_n_trades"] >= (cfg.get("sqn_min_trades", SQN_MIN_TRADES) if cfg is not None else SQN_MIN_TRADES))
                 )
             )
         )
@@ -2490,6 +2490,11 @@ def _write_leaderboard(
         .apply(_lb_agg_db)
         .reset_index()
     )
+
+    _sqn_min = cfg.get("sqn_min_trades", SQN_MIN_TRADES) if cfg is not None else SQN_MIN_TRADES
+    before = len(grouped)
+    grouped = grouped[grouped["oos_n_trades"] >= _sqn_min]
+    print(f"  [leaderboard] dropped {before - len(grouped)} combos below sqn_min_trades={_sqn_min}")
 
     sql = """
         INSERT INTO sweep_leaderboard (
