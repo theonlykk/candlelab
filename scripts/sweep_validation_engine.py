@@ -103,7 +103,7 @@ TIMEFRAME_CONFIGS = {
         "recency_lookback_windows": 3,    # ADR-105: H1 recency = last 3 windows (~24 weeks)
         "sqn_min_trades_is":     5,
         "sqn_min_trades":        20,   # ADR-105: raised from 8 — minimum for meaningful SQN
-        "sqn_promote_threshold": 1.2,
+        "sqn_promote_threshold": 0.85,
         "timeout_bars_default":  20,
         "min_trades_eligible":   3,
         "min_trades_watchlist":  1,
