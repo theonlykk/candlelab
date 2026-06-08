@@ -2445,6 +2445,9 @@ def _write_leaderboard(
 
     def _lb_agg_db(g: pd.DataFrame) -> pd.Series:
         nt = int(g["oos_n_trades"].sum())
+        _sqn_min = cfg.get("sqn_min_trades", SQN_MIN_TRADES) if cfg is not None else SQN_MIN_TRADES
+        if nt < _sqn_min:
+            return None
         oos_mean = float(
             (g["oos_mean_r"] * g["oos_n_trades"]).sum() / nt
         ) if nt > 0 else 0.0
@@ -2488,13 +2491,9 @@ def _write_leaderboard(
     grouped = (
         wfv_df.groupby(existing_combo_cols, sort=False, dropna=False)
         .apply(_lb_agg_db)
+        .dropna(subset=["oos_n_trades"])
         .reset_index()
     )
-
-    _sqn_min = cfg.get("sqn_min_trades", SQN_MIN_TRADES) if cfg is not None else SQN_MIN_TRADES
-    before = len(grouped)
-    grouped = grouped[grouped["oos_n_trades"] >= _sqn_min]
-    print(f"  [leaderboard] dropped {before - len(grouped)} combos below sqn_min_trades={_sqn_min}")
 
     sql = """
         INSERT INTO sweep_leaderboard (
