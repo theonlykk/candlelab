@@ -147,9 +147,8 @@ TIMEOUT_BARS = 28
 SQN_SHRINKAGE_K = 10.0
 MIN_TRADES_ELIGIBLE = 3
 MIN_TRADES_WATCHLIST = 1
-MIN_SQN_ELIGIBLE = 1.0
 RELATIVE_SCORE_FRACTION = 0.80
-IS_CACHE_VERSION = "v9"
+IS_CACHE_VERSION = "v10"
 ATR_PERIOD = 14
 MA_FAST = 10  # was 5
 MA_SLOW = 50  # was 20
@@ -1719,6 +1718,7 @@ def run_wfv(
 
                 # --- IS EVALUATION (ALL combos) ---
                 is_rows: list[dict] = []
+                _promote_thresh = cfg.get("sqn_promote_threshold", 1.0) if cfg is not None else 1.0
 
                 # Bulk-fetch entire window cache in one network call
                 window_is_cache = _load_window_is_cache(
@@ -1804,7 +1804,7 @@ def run_wfv(
                     adjusted_score = raw_sqn * shrink
 
                     # Bucket assignment
-                    if n < 1 or mean_r <= 0 or adjusted_score < MIN_SQN_ELIGIBLE:
+                    if n < 1 or mean_r <= 0 or adjusted_score < _promote_thresh:
                         initial_bucket = "REJECTED"
                     elif n < (cfg["min_trades_eligible"] if cfg else MIN_TRADES_ELIGIBLE) and mean_r > 0:
                         initial_bucket = "WATCHLIST"
@@ -1838,7 +1838,7 @@ def run_wfv(
                     if r["initial_bucket"] == "ELIGIBLE":
                         # Gemini patch: if best_score <= 0, nothing promoted
                         passes_band = (
-                            best_score >= MIN_SQN_ELIGIBLE
+                            best_score >= _promote_thresh
                             and r["adjusted_score"] >= best_score * RELATIVE_SCORE_FRACTION
                         )
                         r["passes_band"] = passes_band
