@@ -147,7 +147,7 @@ def _parse_args():
     )
     parser.add_argument(
         "--tf",
-        choices=["M30", "H1"],
+        choices=["M30", "M15", "H1"],
         default="M30",
         help="Timeframe to sweep (default: M30)",
     )
