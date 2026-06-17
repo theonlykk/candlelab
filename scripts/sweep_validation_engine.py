@@ -2754,17 +2754,19 @@ def main():
 
     with psycopg2.connect(db_url) as conn:
         strength_dict = precompute_currency_matrix(conn, cfg)
-        for instrument in INSTRUMENTS:
-            if not ENABLED_INSTRUMENTS.get(instrument, True):
-                print(f"  Skipping {instrument} (disabled in ENABLED_INSTRUMENTS)")
-                continue
-            print(f"\n{'='*60}")
-            print(f"Sweeping {instrument}")
-            print(f"{'='*60}")
 
-            instrument_batch_id = str(uuid.uuid4())
+    for instrument in INSTRUMENTS:
+        if not ENABLED_INSTRUMENTS.get(instrument, True):
+            print(f"  Skipping {instrument} (disabled in ENABLED_INSTRUMENTS)")
+            continue
+        print(f"\n{'='*60}")
+        print(f"Sweeping {instrument}")
+        print(f"{'='*60}")
 
-            try:
+        instrument_batch_id = str(uuid.uuid4())
+
+        try:
+            with psycopg2.connect(db_url) as conn:
                 df = fetch_instrument_data(
                     instrument, conn, cfg=cfg,
                     strength_dict=strength_dict,
@@ -2776,43 +2778,44 @@ def main():
                     global_run_id, instrument_batch_id,
                     cfg=cfg,
                 )
-            except ValueError as e:
-                print(f"  Skipping {instrument}: {e}")
-                continue
 
-            if wfv_df.empty:
-                print(
-                    f"  WARNING: No promoted combos for {instrument} — "
-                    f"check data coverage and SQN threshold"
-                )
-                shadow = {
-                    "instrument": instrument,
-                    "status": "PAUSE",
-                    "agg_mean_r": 0.0,
-                    "base_rate": 0.0,
-                    "top_combo": "",
-                    "sqn100": 0.0,
-                    "top_configs": [],
+                if wfv_df.empty:
+                    print(
+                        f"  WARNING: No promoted combos for {instrument} — "
+                        f"check data coverage and SQN threshold"
+                    )
+                    shadow = {
+                        "instrument": instrument,
+                        "status": "PAUSE",
+                        "agg_mean_r": 0.0,
+                        "base_rate": 0.0,
+                        "top_combo": "",
+                        "sqn100": 0.0,
+                        "top_configs": [],
+                    }
+                else:
+                    write_leaderboard_csv(wfv_df, instrument, cfg=cfg)
+                    _write_leaderboard(wfv_df, instrument, global_run_id, conn, cfg=cfg)
+                    print(f"  Leaderboard written: output/leaderboard_{instrument}.csv")
+                    shadow = compute_shadow_status(wfv_df, instrument, cfg=cfg)
+
+                all_shadow_rows.append(shadow)
+                roster["instruments"][instrument] = {
+                    "shadow_status": shadow["status"],
+                    "agg_mean_r": shadow["agg_mean_r"],
+                    "base_rate": shadow["base_rate"],
+                    "top_configs": shadow["top_configs"],
                 }
-            else:
-                write_leaderboard_csv(wfv_df, instrument, cfg=cfg)
-                _write_leaderboard(wfv_df, instrument, global_run_id, conn, cfg=cfg)
-                print(f"  Leaderboard written: output/leaderboard_{instrument}.csv")
-                shadow = compute_shadow_status(wfv_df, instrument, cfg=cfg)
+                print(
+                    f"  {instrument}: {shadow['status']} | "
+                    f"agg_mean_r={shadow['agg_mean_r']:.4f} | "
+                    f"base_rate={shadow['base_rate']:.2%}"
+                )
+        except ValueError as e:
+            print(f"  Skipping {instrument}: {e}")
+            continue
 
-            all_shadow_rows.append(shadow)
-            roster["instruments"][instrument] = {
-                "shadow_status": shadow["status"],
-                "agg_mean_r": shadow["agg_mean_r"],
-                "base_rate": shadow["base_rate"],
-                "top_configs": shadow["top_configs"],
-            }
-            print(
-                f"  {instrument}: {shadow['status']} | "
-                f"agg_mean_r={shadow['agg_mean_r']:.4f} | "
-                f"base_rate={shadow['base_rate']:.2%}"
-            )
-
+    with psycopg2.connect(db_url) as conn:
         write_shadow_book_state(all_shadow_rows, conn)
         print("\nShadow book state written to Postgres.")
 
